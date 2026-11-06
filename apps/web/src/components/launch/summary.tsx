@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import Link from "next/link";
-import { Activity, AlertCircle, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
+import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
 import { Address } from "@/components/address";
 import { api } from "@/lib/api";
 import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
@@ -188,13 +188,20 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
               </ul>
             )}
             {view?.status === "FAILED" && view.error && <p className="mt-3 rounded-[var(--radius-sm)] border border-sell/30 bg-[var(--sell-soft)] p-2.5 text-[12.5px] text-sell">La creación falló: {view.error}. No se creó ningún token; corrige y vuelve a simular.</p>}
-            <button onClick={() => launch(d)} disabled={!canLaunch || busy === "launch"} aria-describedby="launch-why" className="cta cta-fill mt-4 flex h-12 w-full items-center justify-center gap-2 text-[14px] font-semibold">
-              {busy === "launch" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}
-              {busy === "launch" ? "Enviando…" : "Lanzar"}
-            </button>
-            <p id="launch-why" className="mt-2 text-center text-[11.5px] text-faint">
-              {chainOff ? "Sin RPC configurado." : blockers.length ? "Resuelve la lista para habilitar el lanzamiento." : "Se crea el token con el dev buy y luego compran los holders en orden."}
-            </p>
+            {view?.schedule ? (
+              <ScheduledCard />
+            ) : (
+              <>
+                <button onClick={() => launch(d)} disabled={!canLaunch || busy === "launch"} aria-describedby="launch-why" className="cta cta-fill mt-4 flex h-12 w-full items-center justify-center gap-2 text-[14px] font-semibold">
+                  {busy === "launch" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}
+                  {busy === "launch" ? "Enviando…" : "Lanzar"}
+                </button>
+                <p id="launch-why" className="mt-2 text-center text-[11.5px] text-faint">
+                  {chainOff ? "Sin RPC configurado." : blockers.length ? "Resuelve la lista para habilitar el lanzamiento." : "Se crea el token con el dev buy y luego compran los holders en orden."}
+                </p>
+                <ScheduleForm disabled={!canLaunch} />
+              </>
+            )}
           </>
         ) : (
           <LaunchResult />
@@ -259,6 +266,85 @@ function LaunchResult() {
           <Activity className="size-4" aria-hidden /> Abrir en Live
         </Link>
       )}
+    </div>
+  );
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const toLocalInput = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+/** REQ-LAUNCH-015: programar con la misma validación que «Lanzar» (dry-run en verde). */
+function ScheduleForm({ disabled }: { disabled: boolean }) {
+  const d = useDraft((s) => s.draft);
+  const busy = useLaunchRun((s) => s.busy);
+  const schedule = useLaunchRun((s) => s.schedule);
+  const [open, setOpen] = useState(false);
+  const [when, setWhen] = useState(() => toLocalInput(Date.now() + 5 * 60_000));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const at = new Date(when).getTime();
+  const tooSoon = !Number.isFinite(at) || at < now + 20_000;
+  if (!open)
+    return (
+      <button onClick={() => setOpen(true)} disabled={disabled} className="btn mt-2 h-9 w-full text-[12.5px]">
+        <CalendarClock className="size-3.5" aria-hidden /> Programar para más tarde
+      </button>
+    );
+  return (
+    <div className="mt-3 rounded-[var(--radius-md)] border border-line bg-surface-2/50 p-3">
+      <label htmlFor="launch-at" className="mb-1.5 block text-[12px] font-medium">
+        Lanzar a esta hora (local)
+      </label>
+      <input id="launch-at" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="field num h-9 text-[12.5px]" aria-invalid={tooSoon} />
+      <p className="mt-1.5 text-[11px] text-faint">Se guarda en este equipo y se lanza aunque reinicies la app, si la bóveda está abierta a esa hora. Si está bloqueada, queda en pausa hasta que confirmes. Cancelable hasta 10 s antes.</p>
+      <div className="mt-2.5 flex gap-2">
+        <button onClick={() => setOpen(false)} className="btn h-8 flex-1 text-[12px]">
+          Cancelar
+        </button>
+        <button onClick={() => schedule(d, at)} disabled={disabled || tooSoon || busy !== null} className="cta cta-fill flex h-8 flex-1 items-center justify-center gap-1.5 text-[12px] font-semibold">
+          {busy === "schedule" && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Programar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ScheduledCard() {
+  const view = useLaunchRun((s) => s.view)!;
+  const busy = useLaunchRun((s) => s.busy);
+  const cancel = useLaunchRun((s) => s.cancelSchedule);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const s = view.schedule!;
+  const left = Math.max(0, Math.round((s.at - now) / 1000));
+  const canCancel = s.state !== "WAITING" || now < s.cancellableUntil;
+  return (
+    <div aria-live="polite" className={`mt-4 rounded-[var(--radius-md)] border p-3 ${s.state === "FAILED" ? "border-sell/30 bg-[var(--sell-soft)]" : s.state === "PAUSED" ? "border-warn/30 bg-[var(--warn-soft)]" : "border-accent-b/30 bg-surface-2/60"}`}>
+      <p className="flex items-center gap-2 text-[13px] font-semibold">
+        <CalendarClock className="size-4 text-accent-b" aria-hidden />
+        {s.state === "WAITING" ? "Programado" : s.state === "PAUSED" ? "Programado · en pausa" : "No se lanzó a su hora"}
+      </p>
+      <p className="num mt-1 text-[12px] text-muted">{new Date(s.at).toLocaleString("es-ES", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>
+      {s.state === "WAITING" && (
+        <p className="num mt-2 text-[22px] leading-none">
+          {pad(Math.floor(left / 3600))}:{pad(Math.floor((left % 3600) / 60))}:{pad(left % 60)}
+        </p>
+      )}
+      {s.state === "PAUSED" && <p className="mt-2 text-[12px] text-warn">La bóveda estaba bloqueada. Confírmalo desde el aviso de tareas en pausa o desde Lanzamientos.</p>}
+      {s.state === "FAILED" && s.error && <p className="mt-2 text-[12px] text-sell">{s.error}</p>}
+      <button onClick={() => cancel(view.id)} disabled={!canCancel || busy !== null} className="btn mt-3 h-8 w-full text-[12px]">
+        {busy === "schedule" ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <XCircle className="size-3.5" aria-hidden />}
+        {canCancel ? (s.state === "WAITING" ? "Cancelar la programación" : "Quitar la programación") : "Ya no se puede cancelar"}
+      </button>
     </div>
   );
 }

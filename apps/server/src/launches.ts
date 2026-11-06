@@ -32,7 +32,12 @@ export const LaunchConfig = z.object({
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
 
 type Status = "PREPARED" | "CREATING" | "CREATED" | "BUYING" | "DONE" | "FAILED" | "PAUSED";
-type Row = { id: string; status: Status; paused_from: Status | null; config: string; preflight_fp: string | null; mint: string; create_sig: string | null; error: string | null; created_at: number; updated_at: number };
+type Row = { id: string; status: Status; paused_from: Status | null; config: string; preflight_fp: string | null; mint: string; create_sig: string | null; error: string | null; created_at: number; updated_at: number; scheduled_at: number | null; schedule_state: "WAITING" | "PAUSED" | "FIRED" | "FAILED" | null; schedule_error: string | null };
+
+/** Margen mínimo para programar y última ventana para cancelar (REQ-LAUNCH-015: «hasta T−10 s»). */
+export const SCHEDULE_MIN_LEAD_MS = 20_000;
+export const SCHEDULE_CANCEL_CUTOFF_MS = 10_000;
+const SCHEDULE_MAX_LEAD_MS = 30 * 86_400_000;
 type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; units?: number; action?: "create-alt" };
 type Stored = LaunchConfig & { uri: string; preflight?: { ok: boolean; checks: Check[]; at: number } };
 
@@ -50,7 +55,11 @@ export class Launches {
     private profile: Profile,
     private priority: () => number,
     private log: (m: string) => void,
+    private clock: () => number = Date.now,
   ) {}
+
+  private scheduler: NodeJS.Timeout | null = null;
+  private firing = new Set<string>();
 
   private row(id: string) {
     return this.db().prepare("SELECT * FROM launch WHERE id = ?").get(id) as Row | undefined;
@@ -66,7 +75,8 @@ export class Launches {
     if (!r) throw Object.assign(new Error("Lanzamiento no encontrado"), { statusCode: 404 });
     const cfg = JSON.parse(r.config) as Stored;
     const buys = this.db().prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord").all(id);
-    return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at };
+    const scheduled = r.scheduled_at !== null && (r.schedule_state === "WAITING" || r.schedule_state === "PAUSED" || r.schedule_state === "FAILED") && r.status === "PREPARED";
+    return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
   }
 
   /** Lanzamientos ya creados en cadena (para abrir su Live Workspace). */
@@ -80,12 +90,13 @@ export class Launches {
 
   /** /launches: todos los lanzamientos (estado, progreso de compras y error); los archivados, aparte. */
   listAll(archived = false) {
-    const rows = this.db().prepare("SELECT id, status, paused_from, mint, config, create_sig, error, created_at, updated_at FROM launch WHERE archived = ? AND status != 'PREPARED' ORDER BY created_at DESC LIMIT 500").all(archived ? 1 : 0) as Row[];
+    const rows = this.db().prepare("SELECT * FROM launch WHERE archived = ? AND (status != 'PREPARED' OR schedule_state IN ('WAITING','PAUSED','FAILED')) ORDER BY COALESCE(scheduled_at, created_at) DESC LIMIT 500").all(archived ? 1 : 0) as Row[];
     const buys = this.db().prepare("SELECT status, COUNT(*) AS n FROM launch_buy WHERE launch_id = ? GROUP BY status");
     return rows.map((r) => {
       const c = JSON.parse(r.config) as Stored;
       const counts = Object.fromEntries((buys.all(r.id) as { status: string; n: number }[]).map((b) => [b.status, b.n]));
-      return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, name: c.name, symbol: c.symbol, mode: c.mode, devBuyLamports: c.devBuyLamports, holders: c.holders.length, buys: { ok: counts.OK ?? 0, failed: counts.FAILED ?? 0, skipped: counts.SKIPPED ?? 0, pending: counts.PENDING ?? 0 }, createSignature: r.create_sig, error: r.error, createdAt: r.created_at, updatedAt: r.updated_at };
+      const sched = r.status === "PREPARED" && r.scheduled_at ? r.schedule_state : null;
+      return { id: r.id, status: sched === "WAITING" ? "SCHEDULED" : sched === "PAUSED" ? "PAUSED" : sched === "FAILED" ? "FAILED" : r.status, pausedFrom: r.paused_from, mint: r.mint, name: c.name, symbol: c.symbol, mode: c.mode, devBuyLamports: c.devBuyLamports, holders: c.holders.length, buys: { ok: counts.OK ?? 0, failed: counts.FAILED ?? 0, skipped: counts.SKIPPED ?? 0, pending: counts.PENDING ?? 0 }, createSignature: r.create_sig, error: sched === "FAILED" ? r.schedule_error : r.error, createdAt: r.created_at, updatedAt: r.updated_at, scheduledAt: r.scheduled_at, scheduleState: sched };
     });
   }
 
@@ -168,7 +179,9 @@ export class Launches {
     this.db()
       .prepare(
         `INSERT INTO launch(id, status, config, preflight_fp, mint, created_at, updated_at) VALUES(?, 'PREPARED', ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET status = 'PREPARED', config = excluded.config, preflight_fp = excluded.preflight_fp, error = NULL, updated_at = excluded.updated_at`,
+         ON CONFLICT(id) DO UPDATE SET status = 'PREPARED', config = excluded.config, preflight_fp = excluded.preflight_fp, error = NULL, updated_at = excluded.updated_at,
+           scheduled_at = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.scheduled_at ELSE NULL END,
+           schedule_state = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.schedule_state ELSE NULL END`,
       )
       .run(cfg.draftId, JSON.stringify(stored), ok ? fp(cfg, mint) : null, mint, now, now);
     return this.view(cfg.draftId);
@@ -190,7 +203,8 @@ export class Launches {
         const ins = db.prepare("INSERT INTO launch_buy(launch_id, ord, wallet_id, lamports, status) VALUES(?, ?, ?, ?, 'PENDING')");
         cfg.holders.forEach((h, i) => ins.run(id, i, h.walletId, Number(h.lamports)));
       }
-      db.prepare("UPDATE launch SET status = 'CREATING', updated_at = ? WHERE id = ?").run(Date.now(), id);
+      // lanzar a mano un programado lo da por disparado (no vuelve a lanzarse a su hora)
+      db.prepare("UPDATE launch SET status = 'CREATING', schedule_state = CASE WHEN schedule_state IS NULL THEN NULL ELSE 'FIRED' END, updated_at = ? WHERE id = ?").run(Date.now(), id);
     })();
     logActivity(db, "launch.start", `Lanzamiento de $${cfg.symbol} (${cfg.mode === "quick" ? `Quick, ${cfg.holders.length} holders` : "Manual"}) · mint ${r.mint}`);
     void this.run(id);
@@ -200,6 +214,16 @@ export class Launches {
   async resume(id: string) {
     if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
     const r = this.row(id);
+    // Programado en pausa: si su hora aún no ha llegado vuelve a esperar; si ya pasó, confirmar = lanzar ahora
+    if (r && r.status === "PREPARED" && r.schedule_state === "PAUSED") {
+      this.dropPaused(id);
+      if ((r.scheduled_at ?? 0) > this.clock()) {
+        this.db().prepare("UPDATE launch SET schedule_state = 'WAITING', updated_at = ? WHERE id = ?").run(this.clock(), id);
+        return this.view(id);
+      }
+      await this.fire(id, true);
+      return this.view(id);
+    }
     if (!r || r.status !== "PAUSED") return this.view(id);
     this.db().prepare("UPDATE launch SET status = ?, paused_from = NULL, updated_at = ? WHERE id = ?").run(r.paused_from ?? "CREATING", Date.now(), id);
     void this.run(id);
@@ -222,6 +246,110 @@ export class Launches {
     const v = this.view(id);
     const list = JSON.parse(kvGet(this.db(), "paused") ?? "[]") as { id: string; kind: string; label: string }[];
     if (!list.some((p) => p.id === id)) kvSet(this.db(), "paused", JSON.stringify([...list, { id, kind: "lanzamiento", label: `Lanzamiento de $${v.symbol}` }]));
+  }
+
+  // ── REQ-LAUNCH-015: lanzamiento programado ─────────────────────────
+  /** Programa un lanzamiento con el dry-run en verde. Persiste en SQLite: sobrevive a un reinicio. */
+  schedule(id: string, at: number) {
+    if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
+    const r = this.row(id);
+    if (!r) throw Object.assign(new Error("Primero haz el dry-run."), { statusCode: 400 });
+    if (r.status !== "PREPARED") throw Object.assign(new Error("Este lanzamiento ya no se puede programar."), { statusCode: 409 });
+    const cfg = JSON.parse(r.config) as Stored;
+    if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint)) throw Object.assign(new Error("El dry-run no está en verde para esta configuración. Vuelve a simular."), { statusCode: 409 });
+    const now = this.clock();
+    if (at < now + SCHEDULE_MIN_LEAD_MS) throw Object.assign(new Error("Programa con al menos 20 s de margen (se puede cancelar hasta 10 s antes)."), { statusCode: 400 });
+    if (at > now + SCHEDULE_MAX_LEAD_MS) throw Object.assign(new Error("Como mucho, 30 días vista."), { statusCode: 400 });
+    this.db().prepare("UPDATE launch SET scheduled_at = ?, schedule_state = 'WAITING', schedule_error = NULL, updated_at = ? WHERE id = ?").run(at, now, id);
+    logActivity(this.db(), "launch.schedule", `Lanzamiento de $${cfg.symbol} programado para ${new Date(at).toISOString()}`);
+    return this.view(id);
+  }
+
+  /** Cancelar hasta T−10 s (comprobado aquí, no solo en la interfaz). */
+  cancelSchedule(id: string) {
+    const r = this.row(id);
+    if (!r || r.status !== "PREPARED" || !r.scheduled_at || !["WAITING", "PAUSED", "FAILED"].includes(r.schedule_state ?? "")) throw Object.assign(new Error("No hay un lanzamiento programado que cancelar."), { statusCode: 409 });
+    if (r.schedule_state === "WAITING" && this.clock() > r.scheduled_at - SCHEDULE_CANCEL_CUTOFF_MS) throw Object.assign(new Error("Faltan menos de 10 s: ya no se puede cancelar."), { statusCode: 409 });
+    this.db().prepare("UPDATE launch SET scheduled_at = NULL, schedule_state = NULL, schedule_error = NULL, updated_at = ? WHERE id = ?").run(this.clock(), id);
+    this.dropPaused(id);
+    logActivity(this.db(), "launch.unschedule", `Lanzamiento de $${(JSON.parse(r.config) as Stored).symbol} desprogramado`);
+    return this.view(id);
+  }
+
+  private dropPaused(id: string) {
+    const list = JSON.parse(kvGet(this.db(), "paused") ?? "[]") as { id: string }[];
+    if (list.some((p) => p.id === id)) kvSet(this.db(), "paused", JSON.stringify(list.filter((p) => p.id !== id)));
+  }
+
+  /** Al bloquear (REQ-VAULT-003) los programados pasan a PAUSED y se listan para confirmar al desbloquear. */
+  pauseScheduled(reason: "lock" | "due-locked") {
+    const rows = this.db().prepare(`SELECT id, config FROM launch WHERE status = 'PREPARED' AND schedule_state = 'WAITING' ${reason === "due-locked" ? "AND scheduled_at <= ?" : ""}`).all(...(reason === "due-locked" ? [this.clock()] : [])) as { id: string; config: string }[];
+    if (!rows.length) return 0;
+    const list = JSON.parse(kvGet(this.db(), "paused") ?? "[]") as { id: string; kind: string; label: string }[];
+    for (const r of rows) {
+      this.db().prepare("UPDATE launch SET schedule_state = 'PAUSED', updated_at = ? WHERE id = ?").run(this.clock(), r.id);
+      if (!list.some((p) => p.id === r.id)) list.push({ id: r.id, kind: "lanzamiento", label: `Lanzamiento programado de $${(JSON.parse(r.config) as Stored).symbol}` });
+    }
+    kvSet(this.db(), "paused", JSON.stringify(list));
+    logActivity(this.db(), "launch.schedule.paused", `${rows.length} lanzamientos programados en pausa (${reason === "lock" ? "bloqueo" : "llegó la hora con la bóveda bloqueada"})`);
+    return rows.length;
+  }
+
+  startScheduler(intervalMs = 1000) {
+    this.scheduler ??= setInterval(() => void this.tickSchedule().catch((e) => this.log(`Programador: ${(e as Error).message}`)), intervalMs);
+    this.scheduler.unref?.();
+  }
+
+  stopScheduler() {
+    if (this.scheduler) clearInterval(this.scheduler);
+    this.scheduler = null;
+  }
+
+  /** Dispara los programados vencidos: con la bóveda bloqueada no se lanza nada y quedan en pausa. */
+  async tickSchedule() {
+    const due = this.db().prepare("SELECT id FROM launch WHERE status = 'PREPARED' AND schedule_state = 'WAITING' AND scheduled_at <= ?").all(this.clock()) as { id: string }[];
+    if (!due.length) return 0;
+    if (!this.vault.isUnlocked()) return this.pauseScheduled("due-locked");
+    for (const d of due) await this.fire(d.id, false);
+    return due.length;
+  }
+
+  /** Vuelve a hacer el dry-run con la configuración guardada y solo lanza si sigue en verde. */
+  private async fire(id: string, confirmed: boolean) {
+    if (this.firing.has(id)) return;
+    this.firing.add(id);
+    try {
+      const r = this.row(id)!;
+      const cfg = JSON.parse(r.config) as Stored;
+      this.db().prepare("UPDATE launch SET schedule_state = 'FIRED', updated_at = ? WHERE id = ?").run(this.clock(), id);
+      const { uri: _uri, preflight: _pf, ...plain } = cfg;
+      void _uri;
+      void _pf;
+      let v;
+      try {
+        v = await this.preflight(plain);
+      } catch (e) {
+        if (e instanceof VaultError && e.code === "LOCKED") return this.pauseScheduled("due-locked");
+        v = null;
+        this.failSchedule(id, cfg.symbol, (e as Error).message, r.scheduled_at);
+        return;
+      }
+      if (!v.preflight?.ok) {
+        const why = (v.preflight?.checks ?? []).filter((c) => !c.ok).map((c) => `${c.label}: ${c.reason ?? "falló"}`).join(" · ");
+        return this.failSchedule(id, cfg.symbol, `El dry-run a la hora programada no está en verde: ${why}`, r.scheduled_at);
+      }
+      // el dry-run deja la fila PREPARED con su hora; se marca como disparado y se ejecuta
+      this.db().prepare("UPDATE launch SET schedule_state = 'FIRED', updated_at = ? WHERE id = ?").run(this.clock(), id);
+      logActivity(this.db(), "launch.schedule.fire", `Lanzamiento programado de $${cfg.symbol}${confirmed ? " (confirmado tras la pausa)" : ""}`);
+      await this.execute(id);
+    } finally {
+      this.firing.delete(id);
+    }
+  }
+
+  private failSchedule(id: string, symbol: string, msg: string, at: number | null) {
+    this.db().prepare("UPDATE launch SET schedule_state = 'FAILED', schedule_error = ?, scheduled_at = COALESCE(scheduled_at, ?), updated_at = ? WHERE id = ?").run(msg, at, this.clock(), id);
+    logActivity(this.db(), "launch.schedule.failed", `Lanzamiento programado de $${symbol} no ejecutado: ${msg}`);
   }
 
   pauseAllRunning() {

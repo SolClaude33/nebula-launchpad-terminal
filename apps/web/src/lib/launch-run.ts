@@ -17,6 +17,8 @@ export type LaunchView = {
   mode: "quick" | "manual";
   preflight: { ok: boolean; checks: Check[]; at: number } | null;
   buys: { ord: number; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null }[];
+  /** REQ-LAUNCH-015: programación activa (esperando, en pausa o fallida a su hora) */
+  schedule: { at: number; state: "WAITING" | "PAUSED" | "FAILED"; error: string | null; cancellableUntil: number } | null;
 };
 
 /** Huella de lo que se simuló: si cambia el borrador, el dry-run deja de valer. */
@@ -25,12 +27,14 @@ export const fingerprint = (d: Draft) => JSON.stringify({ ...toConfig(d), draftI
 type RunStore = {
   view: LaunchView | null;
   fp: string | null;
-  busy: "dry" | "alt" | "launch" | null;
+  busy: "dry" | "alt" | "launch" | "schedule" | null;
   error: string | null;
   load: (id: string) => Promise<void>;
   runDry: (d: Draft) => Promise<void>;
   createAlt: (payerWalletId: string, d: Draft) => Promise<void>;
   launch: (d: Draft) => Promise<void>;
+  schedule: (d: Draft, at: number) => Promise<void>;
+  cancelSchedule: (id: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -44,7 +48,7 @@ export const useLaunchRun = create<RunStore>((set, get) => {
       try {
         const v = await api<LaunchView>(`/launches/${id}`);
         set({ view: v });
-        if (!active(v.status)) clearInterval(poll);
+        if (!active(v.status) && v.schedule?.state !== "WAITING") clearInterval(poll);
       } catch {}
     }, 1000);
   };
@@ -57,7 +61,7 @@ export const useLaunchRun = create<RunStore>((set, get) => {
       try {
         const v = await api<LaunchView>(`/launches/${id}`);
         set({ view: v, fp: null });
-        if (active(v.status)) watch(id);
+        if (active(v.status) || v.schedule?.state === "WAITING") watch(id);
       } catch {
         set({ view: null });
       }
@@ -92,6 +96,27 @@ export const useLaunchRun = create<RunStore>((set, get) => {
         const v = await api<LaunchView>(`/launches/${d.draftId}/execute`, { method: "POST", body: {} });
         set({ view: v });
         if (active(v.status)) watch(v.id);
+      } catch (e) {
+        set({ error: (e as ApiError).message });
+      }
+      set({ busy: null });
+    },
+    // REQ-LAUNCH-015: el servidor lo guarda en SQLite y lo dispara a su hora (si la bóveda está abierta)
+    schedule: async (d, at) => {
+      set({ busy: "schedule", error: null });
+      try {
+        const v = await api<LaunchView>(`/launches/${d.draftId}/schedule`, { method: "POST", body: { at } });
+        set({ view: v });
+        watch(v.id);
+      } catch (e) {
+        set({ error: (e as ApiError).message });
+      }
+      set({ busy: null });
+    },
+    cancelSchedule: async (id) => {
+      set({ busy: "schedule", error: null });
+      try {
+        set({ view: await api<LaunchView>(`/launches/${id}/schedule/cancel`, { method: "POST", body: {} }) });
       } catch (e) {
         set({ error: (e as ApiError).message });
       }

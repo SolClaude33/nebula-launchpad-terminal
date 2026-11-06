@@ -224,6 +224,13 @@ const MIGRATIONS: string[] = [
   );
   ALTER TABLE launch ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- REQ-LAUNCH-015: lanzamiento programado. Un lanzamiento PREPARED (dry-run en verde) con hora:
+  -- WAITING → (a su hora, bóveda abierta) FIRED; bóveda bloqueada → PAUSED; cancelado hasta T−10 s.
+  ALTER TABLE launch ADD COLUMN scheduled_at INTEGER;
+  ALTER TABLE launch ADD COLUMN schedule_state TEXT CHECK (schedule_state IN ('WAITING','PAUSED','FIRED','FAILED'));
+  ALTER TABLE launch ADD COLUMN schedule_error TEXT;
+  `,
 ];
 
 export function openDb(dir: string): DB {

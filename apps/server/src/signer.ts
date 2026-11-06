@@ -64,7 +64,7 @@ export async function unwrapDek(meta: Meta, password: string): Promise<Buffer | 
   }
 }
 
-export type LockListener = (reason: "manual" | "auto" | "restore") => void;
+export type LockListener = (reason: "manual" | "auto" | "restore" | "shutdown") => void;
 
 export class Vault {
   private dek: Buffer | null = null;
@@ -132,7 +132,7 @@ export class Vault {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    this.lock("manual");
+    this.lock("shutdown");
   }
 
   async setup(password: string) {
@@ -186,7 +186,7 @@ export class Vault {
     this.emitUnlock();
   }
 
-  lock(reason: "manual" | "auto" | "restore" = "manual") {
+  lock(reason: "manual" | "auto" | "restore" | "shutdown" = "manual") {
     const was = this.dek !== null;
     this.dek?.fill(0);
     this.dek = null;

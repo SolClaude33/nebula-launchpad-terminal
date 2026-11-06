@@ -8,7 +8,8 @@ const MAX_BYTES = 3 * 1024 * 1024; // la vista previa de una imagen de 2 MB en b
 
 export type DraftRow = { id: string; name: string; symbol: string; updatedAt: number; createdAt: number; launch: { status: string; mint: string } | null; image: string | null; mode: string | null };
 
-const UNLAUNCHED = "(l.id IS NULL OR l.status IN ('PREPARED','FAILED'))";
+// sin lanzar: sin fila en launch, o con el dry-run preparado/fallido y sin una programación activa
+const UNLAUNCHED = "(l.id IS NULL OR (l.status IN ('PREPARED','FAILED') AND COALESCE(l.schedule_state, '') NOT IN ('WAITING','PAUSED','FIRED')))";
 
 export class Drafts {
   constructor(private db: () => DB) {}

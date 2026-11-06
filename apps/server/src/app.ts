@@ -168,9 +168,13 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     const s = JSON.parse((getDb().prepare("SELECT value FROM kv WHERE key = 'settings'").get() as { value: string } | undefined)?.value ?? "{}") as { priorityFeeSol?: number };
     return Math.max(1, Math.round(((s.priorityFeeSol ?? 0.0001) * 1e9 * 1e6) / 400_000));
   };
-  launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb, vault, opts.ipfs), opts.profile, priority, (m) => logger.info(m));
+  launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb, vault, opts.ipfs), opts.profile, priority, (m) => logger.info(m), opts.clock ?? Date.now);
   launches.pauseAllRunning();
   vault.onLock(() => launches?.pauseAllRunning());
+  // REQ-LAUNCH-015 / REQ-VAULT-003: un reinicio NO pausa los programados (se lanzan a su hora si la bóveda
+  // está abierta); bloquear sí, y llegar la hora con la bóveda bloqueada también
+  vault.onLock((reason) => reason !== "shutdown" && launches?.pauseScheduled("lock"));
+  if (!opts.clock) launches.startScheduler();
   live = new Live(getDb, chainManager, (m) => logger.info(m));
   trading = new Trading(getDb, chainManager, vault, live, priority, (m) => logger.info(m));
   trading.pauseAllRunning();
@@ -231,6 +235,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     vault.stop();
     automations?.stop();
     pnl?.stop();
+    launches?.stopScheduler();
     live?.stopAll();
     chainManager?.stop();
     ctx.closeDb();

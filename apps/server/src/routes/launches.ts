@@ -42,6 +42,17 @@ export const launchRoutes =
       return ctx.launches.execute(id);
     });
 
+    // REQ-LAUNCH-015: programar y cancelar (hasta T−10 s)
+    app.post("/launches/:id/schedule", async (req) => {
+      const { id } = z.object({ id: z.string() }).parse(req.params);
+      const { at } = z.object({ at: z.number().int() }).parse(req.body);
+      return ctx.launches.schedule(id, at);
+    });
+    app.post("/launches/:id/schedule/cancel", async (req) => {
+      const { id } = z.object({ id: z.string() }).parse(req.params);
+      return ctx.launches.cancelSchedule(id);
+    });
+
     app.post("/launches/:id/resume", async (req) => {
       const { id } = z.object({ id: z.string() }).parse(req.params);
       return ctx.launches.resume(id);
