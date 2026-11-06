@@ -51,6 +51,7 @@ describe("NFR-SEC-004 · E2E-17 nada secreto en los logs", () => {
     await a.call("POST", "/api/vault/setup", { password: PW, ack: true });
     const ids = (await a.call("POST", "/api/wallets", { count: 2 })).json.created;
     await a.call("POST", "/api/vault/confirm", { password: "contraseña-mala-xyz", action: "export-keys" });
+    await new Promise((r) => setTimeout(r, 2100)); // retardo tras el fallo
     const keys = (await a.call("POST", "/api/wallets/export", { ids }, { "x-nebula-stepup": await a.stepUp("export-keys") })).json.keys as { secretKey: string }[];
     await a.call("PUT", "/api/settings", { rpcKey: "helius-api-key-confidencial" });
     // Aunque alguien intente registrar secretos por error, la redacción los tapa

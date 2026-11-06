@@ -34,9 +34,22 @@ export async function api<T = unknown>(path: string, opts: Opts = {}): Promise<T
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 500 && !data.code) throw new ApiError(503, "OFFLINE", "La API local no responde. ¿Está corriendo `pnpm dev`?");
+    // La API se reinició y generó un token nuevo: recarga una vez para recibirlo en el HTML.
+    if (data.code === "BAD_SESSION") recoverSession();
     throw new ApiError(res.status, data.code ?? "ERROR", data.message ?? `Error ${res.status}`, data.retryInSec ?? 0);
   }
   return data as T;
+}
+
+function recoverSession() {
+  try {
+    const last = Number(sessionStorage.getItem("nebula.sessionReload") ?? 0);
+    if (Date.now() - last < 15_000) return; // evita bucles si la API sigue caída
+    sessionStorage.setItem("nebula.sessionReload", String(Date.now()));
+  } catch {
+    return;
+  }
+  location.reload();
 }
 
 /** Reconfirmación de contraseña (REQ-VAULT-004): devuelve un token de un solo uso para una acción. */

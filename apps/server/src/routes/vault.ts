@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import Database from "better-sqlite3";
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { ChangePasswordBody, ConfirmBody, PasswordBody, SetupBody, STEP_UP_HEADER, type VaultStatus } from "@nebula/shared";
@@ -62,7 +62,6 @@ export const vaultRoutes =
 
     app.post("/confirm", async (req) => {
       const { password, action } = ConfirmBody.parse(req.body);
-      vault.touch();
       return vault.issueStepUp(password, action);
     });
 
@@ -91,8 +90,18 @@ export const vaultRoutes =
     });
 
     app.post("/restore", { bodyLimit: 64 * 1024 * 1024 }, async (req) => {
-      const { fileB64, password } = z.object({ fileB64: z.string().min(16), password: z.string().min(1).max(256) }).parse(req.body);
-      if (vault.isUnlocked()) vault.consumeStepUp(req.headers[STEP_UP_HEADER] as string | undefined, "restore");
+      const { fileB64, password, currentPassword } = z
+        .object({ fileB64: z.string().min(16), password: z.string().min(1).max(256), currentPassword: z.string().max(256).optional() })
+        .parse(req.body);
+      // Restaurar sustituye la bóveda: si ya existe una, hay que demostrar que es tuya
+      // (reconfirmación si está abierta, contraseña actual si está bloqueada).
+      if (vault.isInitialized()) {
+        if (vault.isUnlocked()) vault.consumeStepUp(req.headers[STEP_UP_HEADER] as string | undefined, "restore");
+        else {
+          if (!currentPassword) throw new VaultError("BAD_STEP_UP", "Indica la contraseña de la bóveda actual para sustituirla.");
+          (await vault.checkPassword(currentPassword)).fill(0);
+        }
+      }
       const dir = join(ctx.dataDir, "tmp");
       mkdirSync(dir, { recursive: true });
       const tmp = join(dir, `restore-${Date.now()}.sqlite`);
@@ -117,16 +126,25 @@ export const vaultRoutes =
         throw new VaultError("BAD_PASSWORD", "La contraseña no abre esta copia.");
       }
       dek.fill(0);
-      // Sustituye la base actual por la copia verificada
+      // Antes de sustituir, guarda la bóveda actual en backups/pre-restore-<fecha>.sqlite
+      let saved: string | null = null;
+      if (vault.isInitialized()) {
+        const bdir = join(ctx.dataDir, "backups");
+        mkdirSync(bdir, { recursive: true });
+        saved = join(bdir, `pre-restore-${Date.now()}.sqlite`);
+        await ctx.db().backup(saved);
+      }
       vault.lock("restore");
       ctx.closeDb();
       const target = join(ctx.dataDir, "nebula.sqlite");
       for (const ext of ["-wal", "-shm"]) if (existsSync(target + ext)) rmSync(target + ext, { force: true });
-      copyFileSync(tmp, target);
+      // Escritura atómica: copia a .tmp y renombra encima
+      copyFileSync(tmp, `${target}.tmp`);
+      renameSync(`${target}.tmp`, target);
       rmSync(tmp, { force: true });
       ctx.reopenDb();
       await vault.unlock(password);
-      logActivity(ctx.db(), "vault.restore", "Bóveda restaurada desde copia");
+      logActivity(ctx.db(), "vault.restore", saved ? `Bóveda restaurada; la anterior quedó en backups/` : "Bóveda restaurada desde copia");
       return status();
     });
   };

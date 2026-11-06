@@ -27,7 +27,9 @@ export const useVault = create<VaultStore>((set, get) => ({
       set({ status: s, error: null, readAt: Date.now() });
       return s;
     } catch (e) {
-      set({ error: e as ApiError });
+      const err = e as ApiError;
+      // Si la API ya no reconoce la sesión o no responde, no seguimos mostrando datos de una bóveda abierta.
+      set({ error: err, ...(err.code === "BAD_SESSION" || err.code === "OFFLINE" ? { status: null } : {}) });
       return null;
     }
   },

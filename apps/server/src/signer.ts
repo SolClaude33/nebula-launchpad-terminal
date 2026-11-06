@@ -144,8 +144,11 @@ export class Vault {
     return m;
   }
 
-  /** REQ-VAULT-002: contraseña errónea no descifra nada y el retardo crece y persiste entre reinicios. */
-  async unlock(password: string) {
+  /**
+   * REQ-VAULT-002: toda comprobación de la contraseña actual (desbloquear, reconfirmar, restaurar)
+   * comparte el mismo contador; una contraseña errónea no descifra nada y el retardo crece y persiste.
+   */
+  async checkPassword(password: string): Promise<Buffer> {
     const retry = this.retryInSec();
     if (retry > 0) throw new VaultError("RETRY_LATER", `Espera ${retry} s antes de volver a intentarlo.`, retry);
     const dek = await unwrapDek(this.meta(), password);
@@ -158,6 +161,11 @@ export class Vault {
     }
     kvSet(this.db, "unlock.fails", "0");
     kvSet(this.db, "unlock.nextAt", "0");
+    return dek;
+  }
+
+  async unlock(password: string) {
+    const dek = await this.checkPassword(password);
     this.dek?.fill(0);
     this.dek = dek;
     this.lastActivity = Date.now();
@@ -176,17 +184,11 @@ export class Vault {
     return this.dek;
   }
 
-  async verifyPassword(password: string) {
-    this.requireDek();
-    const dek = await unwrapDek(this.meta(), password);
-    if (!dek) return false;
-    dek.fill(0);
-    return true;
-  }
-
-  // ── Reconfirmación (REQ-VAULT-004), aplicada en el servidor ─────
+  // ── Reconfirmación (REQ-VAULT-004), aplicada en el servidor y con el mismo retardo ─────
   async issueStepUp(password: string, action: string) {
-    if (!(await this.verifyPassword(password))) throw new VaultError("BAD_PASSWORD", "Contraseña incorrecta.");
+    this.requireDek();
+    (await this.checkPassword(password)).fill(0);
+    this.touch();
     const token = randomUUID();
     this.stepUps.set(token, { action, exp: Date.now() + 60_000 });
     return { token, expiresInSec: 60 };

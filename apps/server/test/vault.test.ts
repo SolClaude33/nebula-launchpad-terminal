@@ -77,7 +77,11 @@ describe("REQ-VAULT-004 · reconfirmación en el servidor", () => {
     await call("POST", "/api/vault/setup", { password: PW, ack: true });
     const ids = (await call("POST", "/api/wallets", { count: 1 })).json.created;
     expect((await call("POST", "/api/wallets/export", { ids })).status).toBe(403);
-    expect((await call("POST", "/api/vault/confirm", { password: "mala-contraseña", action: "export-keys" })).status).toBe(400);
+    const bad = await call("POST", "/api/vault/confirm", { password: "mala-contraseña", action: "export-keys" });
+    expect(bad.status).toBe(400);
+    // la reconfirmación comparte el retardo creciente del desbloqueo
+    expect((await call("POST", "/api/vault/confirm", { password: PW, action: "export-keys" })).status).toBe(429);
+    await sleep(2100);
     const wrongAction = await stepUp("delete-wallet");
     expect((await call("POST", "/api/wallets/export", { ids }, { "x-nebula-stepup": wrongAction })).status).toBe(403);
     const t = await stepUp("export-keys");
@@ -132,6 +136,32 @@ describe("REQ-VAULT-005 · E2E-22 copia y restauración", () => {
     const restored = (await b.call("GET", "/api/wallets")).json.wallets;
     const addrs = (l: { address: string }[]) => l.map((w) => w.address).sort();
     expect(addrs(restored)).toEqual(addrs(created));
+  });
+});
+
+describe("REQ-VAULT-005 · restaurar sobre una bóveda existente", () => {
+  it("con la bóveda bloqueada exige la contraseña actual y guarda la anterior en backups/", async () => {
+    const other = track(await makeApp());
+    await other.call("POST", "/api/vault/setup", { password: "bóveda de otra persona 99", ack: true });
+    const foreign = Buffer.from((await other.call("GET", "/api/vault/backup")).raw).toString("base64");
+
+    const mine = track(await makeApp());
+    await mine.call("POST", "/api/vault/setup", { password: PW, ack: true });
+    const myWallets = (await mine.call("POST", "/api/wallets", { count: 2 })).json.wallets;
+    await mine.call("POST", "/api/vault/lock");
+    const noCurrent = await mine.call("POST", "/api/vault/restore", { fileB64: foreign, password: "bóveda de otra persona 99" });
+    expect(noCurrent.status).toBe(403);
+    const wrongCurrent = await mine.call("POST", "/api/vault/restore", { fileB64: foreign, password: "bóveda de otra persona 99", currentPassword: "no es la mía" });
+    expect(wrongCurrent.status).toBe(400);
+    // la bóveda propia sigue intacta
+    await sleep(2100);
+    expect((await mine.call("POST", "/api/vault/unlock", { password: PW })).status).toBe(200);
+    expect((await mine.call("GET", "/api/wallets")).json.wallets).toHaveLength(myWallets.length);
+    await mine.call("POST", "/api/vault/lock");
+    const ok = await mine.call("POST", "/api/vault/restore", { fileB64: foreign, password: "bóveda de otra persona 99", currentPassword: PW });
+    expect(ok.status).toBe(200);
+    const { readdirSync } = await import("node:fs");
+    expect(readdirSync(join(mine.dataDir, "backups")).some((f) => f.startsWith("pre-restore-"))).toBe(true);
   });
 });
 

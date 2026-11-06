@@ -9,21 +9,23 @@ import { useVault } from "@/lib/vault";
 /** REQ-VAULT-005: restaurar una copia. Sustituye la bóveda actual de este perfil. */
 export function RestoreDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const setStatus = useVault((s) => s.set);
+  const initialized = useVault((s) => s.status?.initialized ?? false);
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
+  const [current, setCurrent] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function restore(e: React.FormEvent) {
     e.preventDefault();
-    if (!file || !password) return;
+    if (!file || !password || (initialized && !current)) return;
     setBusy(true);
     setError("");
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
       let bin = "";
       for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      const s = await api<VaultStatus>("/vault/restore", { method: "POST", body: { fileB64: btoa(bin), password } });
+      const s = await api<VaultStatus>("/vault/restore", { method: "POST", body: { fileB64: btoa(bin), password, ...(initialized ? { currentPassword: current } : {}) } });
       setStatus(s);
       onDone();
     } catch (err) {
@@ -51,6 +53,15 @@ export function RestoreDialog({ onClose, onDone }: { onClose: () => void; onDone
           Contraseña de la copia
         </label>
         <input id="restore-pw" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} className="field h-10" />
+        {initialized && (
+          <>
+            <label htmlFor="restore-current" className="mt-3 mb-1.5 block text-[13px] font-medium">
+              Contraseña de la bóveda actual
+            </label>
+            <input id="restore-current" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} className="field h-10" />
+            <p className="mt-1 text-[11.5px] text-faint">Demuestra que la bóveda que vas a sustituir es tuya. Se guarda una copia en backups/ antes de reemplazarla.</p>
+          </>
+        )}
         <p aria-live="polite" className="mt-2 min-h-5 text-[12.5px] text-sell">
           {error}
         </p>
@@ -58,7 +69,7 @@ export function RestoreDialog({ onClose, onDone }: { onClose: () => void; onDone
           <button type="button" onClick={onClose} disabled={busy} className="btn h-9">
             Cancelar
           </button>
-          <button type="submit" disabled={!file || !password || busy} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
+          <button type="submit" disabled={!file || !password || (initialized && !current) || busy} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
             {busy && <Loader2 className="mr-1.5 inline size-3.5 animate-spin" aria-hidden />}
             {busy ? "Restaurando…" : "Restaurar"}
           </button>
