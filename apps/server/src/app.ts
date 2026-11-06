@@ -22,6 +22,8 @@ import { Live } from "./live";
 import { Trading } from "./trading";
 import { Rewards } from "./rewards";
 import { liveRoutes } from "./routes/live";
+import { Automations } from "./automations";
+import { automationRoutes } from "./routes/automations";
 
 export type Ctx = {
   profile: Profile;
@@ -37,6 +39,7 @@ export type Ctx = {
   live: Live;
   trading: Trading;
   rewards: Rewards;
+  automations: Automations;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -68,7 +71,7 @@ export function createLogger(dataDir: string, toStdout = true) {
   return pino({ level: "info", redact: { paths: REDACT_PATHS, censor: "[redactado]" } }, pino.multistream(streams));
 }
 
-export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean; chainMode?: "rpc" | "mock" }) {
+export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean; chainMode?: "rpc" | "mock"; clock?: () => number }) {
   await sodiumReady();
   let db: DB | null = openDb(opts.dataDir);
   const getDb = () => {
@@ -82,6 +85,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let live: Live | null = null;
   let trading: Trading | null = null;
   let rewards: Rewards | null = null;
+  let automations: Automations | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -106,6 +110,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get rewards() {
       return rewards!;
+    },
+    get automations() {
+      return automations!;
     },
     closeDb: () => {
       db?.close();
@@ -138,6 +145,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   rewards = new Rewards(getDb, chainManager, vault, priority, (m) => logger.info(m));
   rewards.pauseAllRunning();
   vault.onLock(() => rewards?.pauseAllRunning());
+  // REQ-AUTO: el motor solo trabaja con la bóveda abierta; al bloquear, pauseRunningTasks deja lo RUNNING en PAUSED
+  automations = new Automations(getDb, vault, trading, live, opts.clock ?? Date.now, (m) => logger.info(m));
+  automations.start();
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -177,9 +187,11 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(operationRoutes(ctx), { prefix: "/api" });
   await app.register(launchRoutes(ctx), { prefix: "/api" });
   await app.register(liveRoutes(ctx), { prefix: "/api" });
+  await app.register(automationRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();
+    automations?.stop();
     live?.stopAll();
     chainManager?.stop();
     ctx.closeDb();

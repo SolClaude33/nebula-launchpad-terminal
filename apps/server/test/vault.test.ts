@@ -182,7 +182,7 @@ describe("REQ-VAULT-003 · REQ-AUTO-008 · E2E-02/14 bloqueo y pausa", () => {
     expect(status()).toBe("PAUSED");
     vi.useRealTimers();
     const st = await call("POST", "/api/vault/unlock", { password: PW });
-    expect(st.json.paused).toEqual([{ id: "t1", kind: "dca", label: "DCA venta KEPLER" }]);
+    expect(st.json.paused).toEqual([{ id: "t1", kind: "automatización", label: "DCA venta KEPLER" }]);
     expect(status()).toBe("PAUSED"); // nunca se reanuda sola
   });
 

@@ -238,6 +238,19 @@ export class Live {
     return ser({ supply: info.supply, decimals: info.decimals, priceLamports: price, items, total: { tokens: held, costLamports: sum("costLamports"), valueLamports: sum("valueLamports"), realizedLamports: sum("realizedLamports"), lamports: items.reduce((a, i) => a + BigInt(i.lamports), 0n) } });
   }
 
+  /**
+   * REQ-AUTO-002/005: market cap en USD para las automatizaciones, con el `tokenInfo` del vigilante (TTL 1 s)
+   * y el precio SOL/USD de Pyth. Mantiene vivo el vigilante del mint mientras haya una tarea activa.
+   * `mcUsd` es null si el oráculo no tiene un precio vigente: entonces no se dispara nada.
+   */
+  async market(mint: string) {
+    const w = this.watch(mint);
+    const info = await this.info(mint, w);
+    const solUsd = await w.chain.reader.solUsd().catch(() => null);
+    const mcUsd = solUsd ? (Number(info.marketCapLamports) / 1e9) * solUsd.usd : null;
+    return { info, solUsd, mcUsd };
+  }
+
   /** Tras una orden propia: indexa ya sus firmas sin esperar al siguiente sondeo. */
   async refresh(mint: string) {
     const w = this.watchers.get(mint);

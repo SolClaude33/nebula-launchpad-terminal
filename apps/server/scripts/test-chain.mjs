@@ -5,5 +5,5 @@ if (!ping?.ok) {
   console.error("Surfpool no responde en 127.0.0.1:8899. Arráncalo con `pnpm surfpool` en la raíz.");
   process.exit(1);
 }
-const r = spawnSync("pnpm", ["exec", "vitest", "run", "--no-file-parallelism", "--test-timeout=180000", "test/contract.test.ts", "test/operations.test.ts", "test/launch.test.ts", "test/live.test.ts"], { stdio: "inherit", shell: true, env: { ...process.env, NEBULA_CHAIN_TESTS: "1" } });
+const r = spawnSync("pnpm", ["exec", "vitest", "run", "--no-file-parallelism", "--test-timeout=180000", "test/contract.test.ts", "test/operations.test.ts", "test/launch.test.ts", "test/live.test.ts", "test/automations.test.ts"], { stdio: "inherit", shell: true, env: { ...process.env, NEBULA_CHAIN_TESTS: "1" } });
 process.exit(r.status ?? 1);

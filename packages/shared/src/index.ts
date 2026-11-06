@@ -102,3 +102,4 @@ export const PutSettingsBody = SettingsDto.omit({ ipfsKeySet: true, rpcKeySet: t
 
 export const ActivityDto = z.object({ id: z.number(), at: z.number(), kind: z.string(), detail: z.string() });
 export type ActivityDto = z.infer<typeof ActivityDto>;
+export * from "./automations";

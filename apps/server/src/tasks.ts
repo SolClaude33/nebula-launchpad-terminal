@@ -9,7 +9,8 @@ export function pauseRunningTasks(db: DB, reason: "lock" | "restart") {
   if (rows.length === 0) return [];
   db.prepare("UPDATE task SET status = 'PAUSED', updated_at = ? WHERE status = 'RUNNING'").run(Date.now());
   const prev = pausedList(db);
-  const items = [...prev, ...rows.map((r) => ({ id: r.id, kind: r.type, label: r.label }))];
+  // las tareas de la tabla task son automatizaciones (DCA, límite): se reanudan con /automations/:id/resume
+  const items = [...prev.filter((p) => !rows.some((r) => r.id === p.id)), ...rows.map((r) => ({ id: r.id, kind: "automatización", label: r.label }))];
   kvSet(db, "paused", JSON.stringify(items));
   logActivity(db, "tasks.paused", `${rows.length} tareas en pausa (${reason === "lock" ? "bloqueo" : "reinicio"})`);
   return rows;

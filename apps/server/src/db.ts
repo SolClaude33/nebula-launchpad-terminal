@@ -181,6 +181,25 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (claim_id, ord)
   );
   `,
+  `
+  -- REQ-AUTO-001…010: automatizaciones sobre la tabla task (estado de ejecución en JSON) y una fila por
+  -- ejecución que apunta a su orden hija (trade_order con id auto-<tarea>-<generación>-<n>)
+  ALTER TABLE task ADD COLUMN mint TEXT;
+  ALTER TABLE task ADD COLUMN state TEXT NOT NULL DEFAULT '{}';
+  CREATE INDEX task_mint ON task(mint, status);
+  CREATE TABLE task_run (
+    task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+    generation INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    order_id TEXT NOT NULL,
+    target INTEGER,
+    mc_usd REAL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, generation, seq)
+  );
+  -- REQ-AUTO-007: reintentos por wallet (pasos tras el primero)
+  ALTER TABLE trade_order_item ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(dir: string): DB {

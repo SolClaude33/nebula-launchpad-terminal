@@ -39,6 +39,12 @@ const base = {
 export const QuoteInput = z.object(base);
 export const OrderInput = z.object({ ...base, id: z.string().uuid(), mode: z.enum(["parallel", "staggered"]).default("parallel"), source: z.enum(["ticket", "instant"]).default("ticket") });
 export type OrderInput = z.infer<typeof OrderInput>;
+/**
+ * Orden creada por el servidor (REQ-AUTO): `taskId` la ata a su automatización, que es quien la pausa y la
+ * reanuda (no entra en la lista de pausadas por su cuenta). `tokensEach`: venta de un número fijo de tokens
+ * por wallet, recortado a su saldo.
+ */
+export type InternalOrder = Omit<OrderInput, "source"> & { source: "ticket" | "instant" | "auto"; taskId?: string; tokensEach?: string; label?: string };
 
 type ItemStatus = "PENDING" | "OK" | "FAILED" | "SKIPPED";
 type W = { id: string; label: string; address: string };
@@ -156,19 +162,19 @@ export class Trading {
     const o = this.db().prepare("SELECT * FROM trade_order WHERE id = ?").get(id) as { id: string; mint: string; side: string; status: string; config: string; created_at: number; updated_at: number } | undefined;
     if (!o) throw Object.assign(new Error("Orden no encontrada"), { statusCode: 404 });
     const items = this.db()
-      .prepare("SELECT i.ord, i.wallet_id AS walletId, w.label, w.address, i.status, i.amount, i.result, i.signature, i.reason FROM trade_order_item i LEFT JOIN wallet w ON w.id = i.wallet_id WHERE i.order_id = ? ORDER BY i.ord")
-      .all(id) as { ord: number; walletId: string; label: string; address: string; status: ItemStatus; amount: string | null; result: string | null; signature: string | null; reason: string | null }[];
-    const cfg = JSON.parse(o.config) as OrderInput;
-    return { id: o.id, mint: o.mint, side: o.side, status: o.status, mode: cfg.mode, source: cfg.source, slippagePct: cfg.slippagePct, lamportsEach: cfg.lamportsEach ?? null, pct: cfg.pct ?? null, items, createdAt: o.created_at, updatedAt: o.updated_at };
+      .prepare("SELECT i.ord, i.wallet_id AS walletId, w.label, w.address, i.status, i.amount, i.result, i.signature, i.reason, MAX(i.attempts - 1, 0) AS retries FROM trade_order_item i LEFT JOIN wallet w ON w.id = i.wallet_id WHERE i.order_id = ? ORDER BY i.ord")
+      .all(id) as { ord: number; walletId: string; label: string; address: string; status: ItemStatus; amount: string | null; result: string | null; signature: string | null; reason: string | null; retries: number }[];
+    const cfg = JSON.parse(o.config) as InternalOrder;
+    return { id: o.id, mint: o.mint, side: o.side, status: o.status, mode: cfg.mode, source: cfg.source, slippagePct: cfg.slippagePct, lamportsEach: cfg.lamportsEach ?? null, pct: cfg.pct ?? null, tokensEach: cfg.tokensEach ?? null, taskId: cfg.taskId ?? null, items, createdAt: o.created_at, updatedAt: o.updated_at };
   }
 
   /** Crea y lanza la orden. Repetir con el mismo id devuelve la misma orden (doble clic). */
-  async create(input: OrderInput) {
+  async create(input: OrderInput | InternalOrder) {
     if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
     const existing = this.db().prepare("SELECT id FROM trade_order WHERE id = ?").get(input.id);
     if (existing) return this.view(input.id);
     if (input.side === "buy" && !(BigInt(input.lamportsEach ?? "0") > 0n)) throw Object.assign(new Error("Indica el SOL por wallet."), { statusCode: 400 });
-    if (input.side === "sell" && !input.pct) throw Object.assign(new Error("Indica el porcentaje a vender."), { statusCode: 400 });
+    if (input.side === "sell" && !input.pct && !("tokensEach" in input && input.tokensEach && BigInt(input.tokensEach) > 0n)) throw Object.assign(new Error("Indica el porcentaje a vender."), { statusCode: 400 });
     const wallets = this.walletsOf(input.walletIds);
     const info = await this.chain.get().adapter.tokenInfo(input.mint);
     if (info.venue === "migrating") throw Object.assign(new Error("La curva está completa y la migración a PumpSwap aún no ha ocurrido. Espera a que exista el pool."), { statusCode: 409, code: "MIGRATING" });
@@ -181,14 +187,17 @@ export class Trading {
       const ins = db.prepare("INSERT INTO trade_order_item(order_id, ord, wallet_id, status, amount) VALUES(?, ?, ?, 'PENDING', ?)");
       wallets.forEach((w, i) => ins.run(input.id, i, w.id, input.side === "buy" ? input.lamportsEach! : null));
     })();
-    logActivity(db, `trade.${input.side}`, `${input.side === "buy" ? "Compra" : "Venta"} (${input.source === "instant" ? "Instant Trade" : "ticket"}, ${input.mode === "parallel" ? "en paralelo" : "escalonada"}) en ${wallets.length} wallets · ${input.side === "buy" ? `${Number(input.lamportsEach) / 1e9} SOL por wallet` : `${input.pct} %`} · mint ${input.mint}`);
+    const sellDesc = "tokensEach" in input && input.tokensEach ? `${input.tokensEach} unidades por wallet` : `${input.pct} %`;
+    const via = input.source === "instant" ? "Instant Trade" : input.source === "auto" ? `automatización${"label" in input && input.label ? ` «${input.label}»` : ""}` : "ticket";
+    logActivity(db, `trade.${input.side}`, `${input.side === "buy" ? "Compra" : "Venta"} (${via}, ${input.mode === "parallel" ? "en paralelo" : "escalonada"}) en ${wallets.length} wallets · ${input.side === "buy" ? `${Number(input.lamportsEach) / 1e9} SOL por wallet` : sellDesc} · mint ${input.mint}`);
     void this.run(input.id);
     return this.view(input.id);
   }
 
-  async resume(id: string) {
+  async resume(id: string, internal = false) {
     if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
     const v = this.view(id);
+    if (v.taskId && !internal) throw Object.assign(new Error("Esta orden pertenece a una automatización: se reanuda desde la tarea."), { statusCode: 409 });
     if (v.status !== "PAUSED") return v;
     this.db().prepare("UPDATE trade_order SET status = 'RUNNING', updated_at = ? WHERE id = ?").run(Date.now(), id);
     void this.run(id);
@@ -210,7 +219,7 @@ export class Trading {
     this.running.add(id);
     try {
       const o = this.db().prepare("SELECT mint, config FROM trade_order WHERE id = ?").get(id) as { mint: string; config: string };
-      const cfg = JSON.parse(o.config) as OrderInput;
+      const cfg = JSON.parse(o.config) as InternalOrder;
       const items = this.db().prepare("SELECT ord, wallet_id, amount FROM trade_order_item WHERE order_id = ? AND status = 'PENDING' ORDER BY ord").all(id) as { ord: number; wallet_id: string; amount: string | null }[];
       let pause: string | null = null;
       const one = async (it: (typeof items)[number]) => {
@@ -239,12 +248,14 @@ export class Trading {
   }
 
   /** Ejecuta una wallet. Devuelve un motivo si la orden debe pausarse. */
-  private async item(id: string, mint: string, cfg: OrderInput, it: { ord: number; wallet_id: string; amount: string | null }): Promise<string | null> {
+  private async item(id: string, mint: string, cfg: InternalOrder, it: { ord: number; wallet_id: string; amount: string | null }): Promise<string | null> {
     const chain = this.chain.get();
     const upd = this.db().prepare("UPDATE trade_order_item SET status = ?, amount = COALESCE(?, amount), result = ?, signature = ?, reason = ? WHERE order_id = ? AND ord = ?");
     const w = this.db().prepare("SELECT address FROM wallet WHERE id = ?").get(it.wallet_id) as { address: string } | undefined;
     if (!w) return void upd.run("SKIPPED", null, null, null, "La wallet ya no existe.", id, it.ord), null;
     const key = `trade:${id}:${it.wallet_id}`;
+    // REQ-AUTO-007: cada paso por la wallet cuenta; los reintentos son los pasos tras el primero
+    this.db().prepare("UPDATE trade_order_item SET attempts = attempts + 1 WHERE order_id = ? AND ord = ?").run(id, it.ord);
     const sent = this.db().prepare("SELECT status FROM tx WHERE idempotency_key = ?").get(key) as { status: string } | undefined;
     try {
       const [sol, tok] = await Promise.all([chain.reader.balances([w.address]), chain.reader.tokenBalance(mint, w.address)]);
@@ -260,7 +271,8 @@ export class Trading {
         }
       } else {
         // Venta: los tokens salen del saldo en cadena al ejecutar y se guardan ANTES de enviar
-        amount = it.amount ? BigInt(it.amount) : (tok * BigInt(Math.round((cfg.pct ?? 100) * 100))) / 10_000n;
+        // `tokensEach` (automatizaciones): número fijo de tokens, recortado al saldo de la wallet
+        amount = it.amount ? BigInt(it.amount) : cfg.tokensEach ? (BigInt(cfg.tokensEach) < tok ? BigInt(cfg.tokensEach) : tok) : (tok * BigInt(Math.round((cfg.pct ?? 100) * 100))) / 10_000n;
         if (!it.amount) {
           if (amount <= 0n) return void upd.run("SKIPPED", null, null, null, "Sin tokens de este token.", id, it.ord), null;
           if (s < this.fee() + (await chain.adapter.tradeAccountsRent({ mint, user: w.address, side: "sell" }))) return void upd.run("SKIPPED", null, null, null, "Sin SOL para la fee de red y el rent de la operación.", id, it.ord), null;
@@ -315,8 +327,29 @@ export class Trading {
     const r = this.db().prepare("UPDATE trade_order SET status = 'PAUSED', updated_at = ? WHERE id = ? AND status = 'RUNNING'").run(Date.now(), id);
     if (!r.changes) return;
     const v = this.view(id);
+    if (v.taskId) return; // la pausa la gestiona su automatización
     const list = JSON.parse(kvGet(this.db(), "paused") ?? "[]") as { id: string; kind: string; label: string }[];
     if (!list.some((p) => p.id === id)) kvSet(this.db(), "paused", JSON.stringify([...list, { id, kind: "orden", label: `${v.side === "buy" ? "Compra" : "Venta"} en ${v.items.length} wallets` }]));
+  }
+
+  /** La automatización pausa o para su orden: no se envía nada más (lo ya emitido termina). */
+  halt(id: string) {
+    this.db().prepare("UPDATE trade_order SET status = 'PAUSED', updated_at = ? WHERE id = ? AND status = 'RUNNING'").run(Date.now(), id);
+  }
+
+  /** Tarea parada: lo que no llegó a enviarse queda omitido con el motivo y la orden se cierra. */
+  async cancel(id: string, reason: string) {
+    this.halt(id);
+    await this.waitIdle(id, 60_000);
+    const db = this.db();
+    const items = db.prepare("SELECT ord, wallet_id FROM trade_order_item WHERE order_id = ? AND status = 'PENDING'").all(id) as { ord: number; wallet_id: string }[];
+    for (const it of items) {
+      const sent = db.prepare("SELECT status FROM tx WHERE idempotency_key = ?").get(`trade:${id}:${it.wallet_id}`) as { status: string } | undefined;
+      // un envío ya emitido (SENT) se queda pendiente: la conciliación con la cadena dirá si entró
+      if (sent?.status === "CONFIRMED") db.prepare("UPDATE trade_order_item SET status = 'OK', reason = NULL WHERE order_id = ? AND ord = ?").run(id, it.ord);
+      else if (!sent || sent.status === "FAILED" || sent.status === "EXPIRED") db.prepare("UPDATE trade_order_item SET status = 'SKIPPED', reason = ? WHERE order_id = ? AND ord = ?").run(reason, id, it.ord);
+    }
+    if (this.status(id) === "PAUSED") this.finish(id);
   }
 
   /** Al bloquear o reiniciar: lo RUNNING pasa a PAUSED y solo se reanuda con confirmación (REQ-AUTO-008). */
