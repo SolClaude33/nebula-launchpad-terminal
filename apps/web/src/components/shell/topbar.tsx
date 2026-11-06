@@ -87,7 +87,7 @@ export function Topbar() {
   };
 
   const [section, page] = titleFor(pathname);
-  const demo = pathname.startsWith("/t/") || pathname.startsWith("/launch");
+  const demo = pathname.startsWith("/t/");
   const mm = String(Math.max(0, Math.floor(left / 60))).padStart(2, "0");
   const ss = String(Math.max(0, left % 60)).padStart(2, "0");
   const warn = left <= 60;

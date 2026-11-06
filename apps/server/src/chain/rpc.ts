@@ -15,6 +15,9 @@ export const isLoopback = (url: string) => {
 
 const NETWORK_ERR = /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|timeout|aborted|socket hang up|50[234]/i;
 export const isNetworkError = (e: unknown) => NETWORK_ERR.test(String((e as Error)?.message ?? e));
+/** Errores transitorios del propio RPC (límite de peticiones, error interno, fallo al traer cuentas remotas). */
+const TRANSIENT_ERR = /Internal error|429|Too Many Requests|rate limit|Failed to fetch accounts from remote|-32603/i;
+export const isTransientRpcError = (e: unknown) => TRANSIENT_ERR.test(String((e as Error)?.message ?? e));
 
 type Slot = { ep: Endpoint; conn: Connection; healthy: boolean; latencyMs: number | null };
 
@@ -75,7 +78,7 @@ export class RpcPool {
     for (let attempt = 0; attempt < this.slots.length; attempt++) {
       const s = this.slots[this.active];
       try {
-        return await fn(s.conn);
+        return await this.withRetry(() => fn(s.conn));
       } catch (e) {
         if (!isNetworkError(e)) throw e;
         lastErr = e;
@@ -85,6 +88,18 @@ export class RpcPool {
       }
     }
     throw lastErr;
+  }
+
+  /** Reintenta en el mismo endpoint ante errores transitorios del RPC, con espera creciente. */
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let i = 0; ; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        if (i >= 3 || !isTransientRpcError(e)) throw e;
+        await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+      }
+    }
   }
 
   status(): RpcStatus {

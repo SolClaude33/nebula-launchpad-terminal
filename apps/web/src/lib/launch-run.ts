@@ -1,52 +1,105 @@
 "use client";
 
 import { create } from "zustand";
-import { planAmounts, type Draft, type DryRow } from "@/lib/draft";
+import { api, ApiError } from "@/lib/api";
+import { toConfig, type Draft } from "@/lib/draft";
 
-type DryState = { status: "idle" | "running" | "ok" | "fail"; rows: DryRow[]; fingerprint?: string };
-type LaunchState = { status: "idle" | "pending" | "confirmed" | "scheduled"; key?: string; sig?: string };
-
-/** Huella de lo que se simuló: si cambia el borrador, el dry-run deja de valer. */
-export const fingerprint = (d: Draft) =>
-  JSON.stringify([d.name, d.symbol, d.devBuy, d.launchMode, d.amountMode, d.fixedAmount, d.rangeMin, d.rangeMax, d.slippage, d.priorityFee, d.jitoTip, d.plan.map((p) => [p.id, p.balance]), d.devBalance, d.mode, d.feeMode]);
-
-type RunStore = {
-  dry: DryState;
-  launch: LaunchState;
-  runDry: (d: Draft) => Promise<void>;
-  launchNow: (d: Draft) => Promise<void>;
-  resetRun: () => void;
+export type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; units?: number; action?: "create-alt" };
+export type LaunchView = {
+  id: string;
+  status: "PREPARED" | "CREATING" | "CREATED" | "BUYING" | "DONE" | "FAILED" | "PAUSED";
+  pausedFrom: string | null;
+  mint: string;
+  createSignature: string | null;
+  error: string | null;
+  name: string;
+  symbol: string;
+  mode: "quick" | "manual";
+  preflight: { ok: boolean; checks: Check[]; at: number } | null;
+  buys: { ord: number; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null }[];
 };
 
-export const useLaunchRun = create<RunStore>((set, get) => ({
-  dry: { status: "idle", rows: [] },
-  launch: { status: "idle" },
-  runDry: async (d) => {
-    set({ dry: { status: "running", rows: [] } });
-    const amounts = planAmounts(d);
-    const rows: DryRow[] = [{ label: "Crear token + dev buy (bundle Jito)", kind: "create", ok: true, units: 182_400 }];
-    d.plan.forEach((w, i) => {
-      if (d.launchMode === "manual") return;
-      const ok = w.balance >= amounts[i] + 0.0035;
-      rows.push({ label: `Compra · ${w.label}`, kind: "buy", ok, units: 64_000 + ((i * 1733) % 9000), reason: ok ? undefined : "Saldo insuficiente: monto + fees + rent" });
-    });
-    for (let i = 0; i < rows.length; i++) {
-      await new Promise((r) => setTimeout(r, 140));
-      set({ dry: { status: "running", rows: rows.slice(0, i + 1) } });
-    }
-    set({ dry: { status: rows.every((r) => r.ok) ? "ok" : "fail", rows, fingerprint: fingerprint(d) } });
-  },
-  launchNow: async (d) => {
-    // Idempotencia: el mismo borrador nunca produce dos tokens (REQ-LAUNCH-016)
-    if (get().launch.status !== "idle") return;
-    const key = `draft-${Math.abs([...fingerprint(d)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7)).toString(36)}`;
-    if (d.schedule === "at") {
-      set({ launch: { status: "scheduled", key } });
-      return;
-    }
-    set({ launch: { status: "pending", key } });
-    await new Promise((r) => setTimeout(r, 2200));
-    set({ launch: { status: "confirmed", key, sig: "5kQx9Wd3eMoTnB2rVa8LpHc4YzN7uFsGj1Ki6RtEwXbP" } });
-  },
-  resetRun: () => set({ dry: { status: "idle", rows: [] }, launch: { status: "idle" } }),
-}));
+/** Huella de lo que se simuló: si cambia el borrador, el dry-run deja de valer. */
+export const fingerprint = (d: Draft) => JSON.stringify({ ...toConfig(d), draftId: undefined });
+
+type RunStore = {
+  view: LaunchView | null;
+  fp: string | null;
+  busy: "dry" | "alt" | "launch" | null;
+  error: string | null;
+  load: (id: string) => Promise<void>;
+  runDry: (d: Draft) => Promise<void>;
+  createAlt: (payerWalletId: string, d: Draft) => Promise<void>;
+  launch: (d: Draft) => Promise<void>;
+  reset: () => void;
+};
+
+let poll: ReturnType<typeof setInterval> | undefined;
+const active = (s?: string) => s === "CREATING" || s === "CREATED" || s === "BUYING";
+
+export const useLaunchRun = create<RunStore>((set, get) => {
+  const watch = (id: string) => {
+    clearInterval(poll);
+    poll = setInterval(async () => {
+      try {
+        const v = await api<LaunchView>(`/launches/${id}`);
+        set({ view: v });
+        if (!active(v.status)) clearInterval(poll);
+      } catch {}
+    }, 1000);
+  };
+  return {
+    view: null,
+    fp: null,
+    busy: null,
+    error: null,
+    load: async (id) => {
+      try {
+        const v = await api<LaunchView>(`/launches/${id}`);
+        set({ view: v, fp: null });
+        if (active(v.status)) watch(id);
+      } catch {
+        set({ view: null });
+      }
+    },
+    runDry: async (d) => {
+      set({ busy: "dry", error: null });
+      try {
+        const v = await api<LaunchView>("/launches/preflight", { method: "POST", body: toConfig(d) });
+        set({ view: v, fp: fingerprint(d) });
+      } catch (e) {
+        set({ error: (e as ApiError).message });
+      }
+      set({ busy: null });
+    },
+    createAlt: async (payerWalletId, d) => {
+      set({ busy: "alt", error: null });
+      try {
+        await api("/launches/alt", { method: "POST", body: { payerWalletId } });
+        set({ busy: null });
+        await get().runDry(d);
+        return;
+      } catch (e) {
+        set({ error: (e as ApiError).message });
+      }
+      set({ busy: null });
+    },
+    // REQ-LAUNCH-016: el servidor ignora el segundo clic (un lanzamiento por draftId)
+    launch: async (d) => {
+      if (get().busy === "launch") return;
+      set({ busy: "launch", error: null });
+      try {
+        const v = await api<LaunchView>(`/launches/${d.draftId}/execute`, { method: "POST", body: {} });
+        set({ view: v });
+        if (active(v.status)) watch(v.id);
+      } catch (e) {
+        set({ error: (e as ApiError).message });
+      }
+      set({ busy: null });
+    },
+    reset: () => {
+      clearInterval(poll);
+      set({ view: null, fp: null, busy: null, error: null });
+    },
+  };
+});

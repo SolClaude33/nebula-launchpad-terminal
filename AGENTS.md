@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. La API, la bóveda y las wallets ya son reales; el Live Workspace y el asistente siguen siendo una demo con datos simulados.
+Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. Ya son reales la API, la bóveda, las wallets, los movimientos de fondos y el lanzamiento desde el asistente (verificados en el perfil `test` con Surfpool); el Live Workspace sigue siendo una demo con datos simulados.
 
 ## Estructura
 - `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
@@ -10,6 +10,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
   - `src/proxy.ts` valida el Host.
   - El token de sesión va en `<meta>` y se envía en la cabecera `x-nebula-session`.
   - Las pantallas demo usan `lib/sim.ts` y `lib/draft.ts`.
+- `apps/server/src/launches.ts` y `operations.ts`: máquinas de estados del servidor, con idempotency keys y pausa al bloquear. La creación con dev buy necesita la tabla de direcciones propia (`chain/alt.ts`). En mainnet, IPFS queda bloqueado hasta verificar Pinata (`ipfs.ts`).
 - `packages/shared`: esquemas zod. Las rutas de datos están en `./node` (`~/.nebula/<perfil>`, con `NEBULA_PROFILE` y `NEBULA_DATA_DIR`).
 - `apps/web/AGENTS.md`: gestionado por Next.js; no se edita.
 

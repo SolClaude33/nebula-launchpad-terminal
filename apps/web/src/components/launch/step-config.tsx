@@ -1,8 +1,11 @@
 "use client";
 
-import { ShieldAlert, TriangleAlert } from "lucide-react";
+import Link from "next/link";
+import { CalendarClock, ShieldAlert, TriangleAlert } from "lucide-react";
 import { fieldErrors, useDraft } from "@/lib/draft";
+import { fmtLamports } from "@/lib/chain";
 import { Field, RadioCard, SectionTitle, Suffix } from "./ui";
+import { useLaunchData } from "./use-launch-data";
 
 const PADS = [
   { id: "pumpfun", name: "Pump.fun", chain: "Solana", ready: true },
@@ -15,10 +18,12 @@ export function StepConfig() {
   const d = useDraft((s) => s.draft);
   const set = useDraft((s) => s.set);
   const fe = fieldErrors(d);
+  const { wallets, balances, loaded } = useLaunchData();
+  const candidates = wallets.filter((w) => w.kind === "wallet" && !w.archived).sort((a, b) => Number(b.role === "dev") - Number(a.role === "dev"));
 
   return (
     <div className="rise space-y-8">
-      <SectionTitle index="Paso 2 de 4 · Configuración" title="Cómo se lanza" body="Opciones del pad, dev buy, modo de lanzamiento y parámetros de envío." />
+      <SectionTitle index="Paso 2 de 4 · Configuración" title="Cómo se lanza" body="Opciones del pad, wallet dev, dev buy y modo de lanzamiento." />
 
       <fieldset>
         <legend className="mb-2 text-[13px] font-medium">Launchpad</legend>
@@ -33,6 +38,23 @@ export function StepConfig() {
         </div>
       </fieldset>
 
+      <Field id="devWallet" label="Wallet dev" hint="Crea el token y hace el dev buy. Las comisiones de creador van a esta wallet." error={!d.devWalletId && loaded && candidates.length === 0 ? "No hay wallets: crea una con rol dev en Wallets." : undefined}>
+        <div className="flex gap-2">
+          <select id="devWallet" value={d.devWalletId} onChange={(e) => set({ devWalletId: e.target.value, plan: d.plan.filter((p) => p !== e.target.value) })} className="field h-10 py-0">
+            <option value="">Elige una wallet…</option>
+            {candidates.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.label}
+                {w.role ? ` · ${w.role}` : ""} · {fmtLamports(balances[w.address], 3)}
+              </option>
+            ))}
+          </select>
+          <Link href="/wallets" className="btn h-10 shrink-0">
+            Gestionar wallets
+          </Link>
+        </div>
+      </Field>
+
       <div className="grid grid-cols-2 gap-6">
         <fieldset>
           <legend className="mb-2 text-[13px] font-medium">Modo del pad</legend>
@@ -46,7 +68,7 @@ export function StepConfig() {
             Destino de las comisiones <span className="chip h-5 border-warn/30 px-1.5 text-[10.5px] text-warn">irreversible</span>
           </legend>
           <div className="space-y-2">
-            <RadioCard name="fee" value="creator" checked={d.feeMode === "creator"} onSelect={() => set({ feeMode: "creator", feeAck: false })} title="Creator Fees" body="Las comisiones de creador van a la wallet dev y se reclaman desde Comisiones." />
+            <RadioCard name="fee" value="creator" checked={d.feeMode === "creator"} onSelect={() => set({ feeMode: "creator", feeAck: false })} title="Creator Fees" body="Las comisiones de creador van a la wallet dev." />
             <RadioCard name="fee" value="holders" checked={d.feeMode === "holders"} onSelect={() => set({ feeMode: "holders", feeAck: false })} title="Holder Rewards" body="Las comisiones se reparten entre holders. No podrás reclamarlas tú." />
           </div>
           <label id="feeAck" className={`mt-3 flex cursor-pointer items-start gap-2.5 rounded-[var(--radius-sm)] border p-3 text-[12.5px] ${d.feeAck ? "border-line bg-surface-1" : "border-warn/35 bg-[var(--warn-soft)]"}`}>
@@ -59,40 +81,26 @@ export function StepConfig() {
         </fieldset>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
-        <Field id="devBuy" label="Dev buy" error={fe.devBuy} hint="Va en la misma transacción que la creación (bundle Jito, todo o nada).">
+      <div className="grid grid-cols-2 gap-4">
+        <Field id="devBuy" label="Dev buy" error={fe.devBuy} hint="Va en la misma transacción que la creación: todo o nada.">
           <div className="relative">
             <input id="devBuy" inputMode="decimal" value={d.devBuy} onChange={(e) => set({ devBuy: e.target.value })} aria-invalid={!!fe.devBuy} aria-describedby="devBuy-msg" className="field num h-10 pr-12" />
             <Suffix>SOL</Suffix>
           </div>
         </Field>
-        <Field id="slippage" label="Slippage de compra" error={fe.slippage} hint="Se envía exactamente este valor. Nunca 100 % en silencio.">
+        <Field id="slippage" label="Slippage de compra" error={fe.slippage} hint="Se envía exactamente este valor. Nunca 100 % en silencio. La priority fee sale de Ajustes.">
           <div className="relative">
             <input id="slippage" inputMode="decimal" value={d.slippage} onChange={(e) => set({ slippage: e.target.value })} aria-invalid={!!fe.slippage} aria-describedby="slippage-msg" className="field num h-10 pr-8" />
             <Suffix>%</Suffix>
           </div>
         </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field id="priorityFee" label="Priority fee">
-            <div className="relative">
-              <input id="priorityFee" inputMode="decimal" value={d.priorityFee} onChange={(e) => set({ priorityFee: e.target.value })} className="field num h-10 pr-10" />
-              <Suffix>SOL</Suffix>
-            </div>
-          </Field>
-          <Field id="jitoTip" label="Propina Jito">
-            <div className="relative">
-              <input id="jitoTip" inputMode="decimal" value={d.jitoTip} onChange={(e) => set({ jitoTip: e.target.value })} className="field num h-10 pr-10" />
-              <Suffix>SOL</Suffix>
-            </div>
-          </Field>
-        </div>
       </div>
 
       <fieldset>
         <legend className="mb-2 text-[13px] font-medium">Modo de lanzamiento</legend>
         <div className="grid grid-cols-2 gap-2">
-          <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Tras el dev buy compran tus wallets holder del plan (paso 3). Verás la supply total que queda en wallets propias." />
-          <RadioCard name="lm" value="manual" checked={d.launchMode === "manual"} onSelect={() => set({ launchMode: "manual" })} title="Manual" body="Solo crea el token con el dev buy. El resto lo operas desde el Live Workspace." />
+          <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Tras crear el token compran, en orden, las wallets holder del plan (paso 3). Verás la supply que queda en wallets propias." />
+          <RadioCard name="lm" value="manual" checked={d.launchMode === "manual"} onSelect={() => set({ launchMode: "manual" })} title="Manual" body="Solo crea el token con el dev buy." />
         </div>
         {d.launchMode === "quick" && (
           <div className="mt-3 grid grid-cols-[auto_1fr] items-start gap-4 rounded-[var(--radius-md)] border border-line bg-surface-1 p-4">
@@ -123,50 +131,21 @@ export function StepConfig() {
         )}
       </fieldset>
 
-      <div className="grid grid-cols-2 gap-6">
-        <fieldset>
-          <legend className="mb-2 text-[13px] font-medium">Cuándo</legend>
-          <div className="space-y-2">
-            <RadioCard name="when" value="now" checked={d.schedule === "now"} onSelect={() => set({ schedule: "now" })} title="Ahora" body="Se lanza al confirmar en el paso 4." />
-            <RadioCard name="when" value="at" checked={d.schedule === "at"} onSelect={() => set({ schedule: "at" })} title="Programado" body="Persiste aunque reinicies. Si llega la hora con la bóveda bloqueada, queda en pausa." />
-          </div>
-          {d.schedule === "at" && (
-            <div className="mt-3">
-              <Field id="launchAt" label="Lanzar el" error={fe.launchAt} hint="Se puede cancelar hasta 10 s antes.">
-                <input id="launchAt" type="datetime-local" value={d.launchAt} onChange={(e) => set({ launchAt: e.target.value })} aria-invalid={!!fe.launchAt} className="field num h-10" />
-              </Field>
-            </div>
-          )}
-        </fieldset>
-
-        <fieldset>
-          <legend className="mb-2 flex items-center gap-2 text-[13px] font-medium">
-            <ShieldAlert className="size-4 text-accent-b" aria-hidden /> Launch Guard
-          </legend>
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5">
-            <input type="checkbox" checked={d.guard.enabled} onChange={(e) => set({ guard: { ...d.guard, enabled: e.target.checked } })} className="mt-0.5 size-4 accent-[var(--accent-a)]" />
-            <span className="text-[12.5px] leading-relaxed text-muted">
-              <span className="block text-[13.5px] font-medium text-fg">Completar antes si entran compras externas</span>
-              Si las compras externas acumuladas superan el umbral, se detienen las compras planificadas restantes. No vende nada.
-            </span>
-          </label>
-          {d.guard.enabled && (
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <Field id="guardThreshold" label="Umbral externo" error={fe.guardThreshold}>
-                <div className="relative">
-                  <input id="guardThreshold" inputMode="decimal" value={d.guard.thresholdSol} onChange={(e) => set({ guard: { ...d.guard, thresholdSol: e.target.value } })} className="field num h-9 pr-12" />
-                  <Suffix>SOL</Suffix>
-                </div>
-              </Field>
-              <Field id="guardTimeout" label="Termina a los" error={fe.guardTimeout}>
-                <div className="relative">
-                  <input id="guardTimeout" inputMode="numeric" value={d.guard.timeoutSec} onChange={(e) => set({ guard: { ...d.guard, timeoutSec: e.target.value } })} className="field num h-9 pr-8" />
-                  <Suffix>s</Suffix>
-                </div>
-              </Field>
-            </div>
-          )}
-        </fieldset>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex items-start gap-2.5 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 opacity-60" aria-disabled>
+          <CalendarClock className="mt-0.5 size-4 text-faint" aria-hidden />
+          <span className="text-[12.5px] text-muted">
+            <span className="block text-[13.5px] font-medium text-fg">Lanzamiento programado</span>
+            Próximamente: necesita guardar el borrador en el servidor para ejecutarse tras un reinicio.
+          </span>
+        </div>
+        <div className="flex items-start gap-2.5 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 opacity-60" aria-disabled>
+          <ShieldAlert className="mt-0.5 size-4 text-faint" aria-hidden />
+          <span className="text-[12.5px] text-muted">
+            <span className="block text-[13.5px] font-medium text-fg">Launch Guard y bundle Jito</span>
+            Próximamente. Hoy la creación y el dev buy ya van juntos en una sola transacción.
+          </span>
+        </div>
       </div>
     </div>
   );

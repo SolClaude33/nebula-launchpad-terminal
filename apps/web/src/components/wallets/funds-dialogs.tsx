@@ -374,10 +374,10 @@ export function TransferDialog({ from, own, onClose, onDone }: { from: WalletDto
 }
 
 // ── Dispersar desde un funder a varias wallets ───────────────────────────────
-export function DisperseDialog({ funders, targets, onClose, onDone }: { funders: WalletDto[]; targets: WalletDto[]; onClose: () => void; onDone: () => void }) {
+export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmount = "0,1" }: { funders: WalletDto[]; targets: WalletDto[]; onClose: () => void; onDone: () => void; defaultAmount?: string }) {
   const balances = useChain((s) => s.balances);
   const [fromId, setFromId] = useState(funders.find((f) => f.isDefaultFunder)?.id ?? funders[0]?.id ?? "");
-  const [amount, setAmount] = useState("0,1");
+  const [amount, setAmount] = useState(defaultAmount);
   const [input, setInput] = useState<OperationInput | null>(null);
   const lam = solToLamportsStr(amount);
   const from = funders.find((f) => f.id === fromId);

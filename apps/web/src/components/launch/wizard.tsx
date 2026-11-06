@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, RotateCcw, X } from "lucide-react";
 import { issues, useDraft } from "@/lib/draft";
 import { useLaunchRun } from "@/lib/launch-run";
-import { DEMO_ROUTE } from "@/lib/demo";
+import { useLaunchData } from "./use-launch-data";
 import { StepToken } from "./step-token";
 import { StepConfig } from "./step-config";
 import { StepFunding } from "./step-funding";
 import { StepReview } from "./step-review";
 import { LaunchSummary } from "./summary";
-import { DemoNotice } from "@/components/demo-notice";
 
 const STEPS = ["Token", "Configuración", "Financiación", "Revisar y lanzar"];
 
@@ -21,7 +20,9 @@ export function LaunchWizard() {
   const hydrated = useDraft((s) => s.hydrated);
   const reset = useDraft((s) => s.reset);
   const d = useDraft((s) => s.draft);
-  const resetRun = useLaunchRun((s) => s.resetRun);
+  const resetRun = useLaunchRun((s) => s.reset);
+  const loadRun = useLaunchRun((s) => s.load);
+  const { balances, addressOf } = useLaunchData();
   const [step, setStep] = useState(1);
 
   useEffect(() => {
@@ -29,10 +30,15 @@ export function LaunchWizard() {
     resetRun();
   }, [hydrate, resetRun]);
 
+  // Si este borrador ya se lanzó (o está en curso), se muestra su estado real
+  useEffect(() => {
+    if (hydrated) void loadRun(d.draftId);
+  }, [hydrated, d.draftId, loadRun]);
+
   // Esc cierra sin perder nada: el borrador ya está autoguardado (REQ-LAUNCH-004)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("[role=dialog]")) router.push(DEMO_ROUTE);
+      if (e.key === "Escape" && !document.querySelector("[role=dialog]")) router.push("/wallets");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -49,7 +55,7 @@ export function LaunchWizard() {
       }, 60);
   };
 
-  const all = issues(d);
+  const all = issues(d, { balances, addressOf });
   const stepIssues = (s: number) => all.filter((i) => i.step === s).length;
 
   if (!hydrated) return <div className="skeleton m-6 h-[70vh]" aria-busy="true" />;
@@ -57,9 +63,6 @@ export function LaunchWizard() {
   return (
     <div className="mx-auto grid max-w-[1320px] grid-cols-[minmax(0,1fr)_300px] gap-5 px-5 pt-5 pb-16 xl:grid-cols-[minmax(0,1fr)_370px]">
       <div className="min-w-0">
-        <div className="mb-4">
-          <DemoNotice what="El asistente de lanzamiento" />
-        </div>
         <div className="mb-7 flex items-center gap-3">
           <nav aria-label="Pasos del lanzamiento" className="flex-1">
             <ol className="flex items-center gap-2">
@@ -94,7 +97,7 @@ export function LaunchWizard() {
               })}
             </ol>
           </nav>
-          <button onClick={() => router.push(DEMO_ROUTE)} className="btn btn-ghost size-9 p-0" aria-label="Cerrar asistente (el borrador se conserva)" title="Cerrar · Esc">
+          <button onClick={() => router.push("/wallets")} className="btn btn-ghost size-9 p-0" aria-label="Cerrar asistente (el borrador se conserva)" title="Cerrar · Esc">
             <X className="size-4" />
           </button>
         </div>
@@ -112,7 +115,7 @@ export function LaunchWizard() {
           </button>
           <button
             onClick={() => {
-              if (confirm("¿Descartar este borrador y empezar de cero?")) {
+              if (confirm("¿Descartar este borrador y empezar uno nuevo? Un lanzamiento ya hecho no se ve afectado.")) {
                 reset();
                 resetRun();
                 setStep(1);

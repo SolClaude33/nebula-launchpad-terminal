@@ -56,3 +56,17 @@ describe("Clasificación de errores de envío", () => {
     expect(classify(["Transfer: insufficient lamports 100, need 200"], null).code).toBe("INSUFFICIENT_FUNDS");
   });
 });
+
+describe("Errores transitorios del RPC", () => {
+  it("reintenta un «Internal error» y devuelve el resultado", async () => {
+    const pool = new RpcPool([{ http: "http://127.0.0.1:1" }]);
+    let calls = 0;
+    const r = await pool.run(async () => {
+      calls++;
+      if (calls < 3) throw new Error("failed to get info for accounts X: Internal error");
+      return 7;
+    });
+    expect(r).toBe(7);
+    expect(calls).toBe(3);
+  });
+});

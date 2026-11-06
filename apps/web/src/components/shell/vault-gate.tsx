@@ -73,7 +73,8 @@ function PausedDialog({ status }: { status: VaultStatus }) {
     setBusy(id);
     setError("");
     try {
-      await api(`/operations/${id}/resume`, { method: "POST", body: {} });
+      const kind = status.paused.find((p) => p.id === id)?.kind;
+      await api(kind === "lanzamiento" ? `/launches/${id}/resume` : `/operations/${id}/resume`, { method: "POST", body: {} });
       await ack([id]);
     } catch (e) {
       setError((e as Error).message);
@@ -92,7 +93,7 @@ function PausedDialog({ status }: { status: VaultStatus }) {
             <li key={p.id} className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface-2/50 px-3 py-2 text-[13px]">
               <span className="flex-1">{p.label}</span>
               <span className="chip h-5 px-1.5 text-[10.5px]">{p.kind}</span>
-              {p.kind === "operación" ? (
+              {p.kind === "operación" || p.kind === "lanzamiento" ? (
                 <button onClick={() => resume(p.id)} disabled={!!busy} className="btn h-7 px-2.5 text-[12px]">
                   {busy === p.id ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
                   Reanudar
