@@ -66,6 +66,7 @@ export function SettingsView() {
           <RpcSection s={s} save={save} />
           <IpfsSection s={s} save={save} profile={profile} />
           <TradingSection s={s} save={save} />
+          <JitoSection />
           <SecuritySection s={s} save={save} />
           <BackupsPanel />
           <PasswordSection />
@@ -300,6 +301,26 @@ function TradingSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: st
         />
       </div>
     </Section>
+  );
+}
+
+/** REQ-SET-001 · Jito: decidido el 2026-11-06 que queda para F2. Hoy no se envía ninguna propina. */
+function JitoSection() {
+  return (
+    <section aria-labelledby="jito-t" className="panel p-5 opacity-80">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="telemetry">Envíos</p>
+          <h2 id="jito-t" className="mt-0.5 text-[16px] font-semibold">
+            Jito · bundles y propina
+          </h2>
+        </div>
+        <span className="chip h-6 text-[11px]">próximamente · F2</span>
+      </div>
+      <p className="mt-3 max-w-[640px] text-[12.5px] text-muted">
+        Endpoint de Jito y propina configurables, con su desglose en los costes y en el P&L. Por ahora no se envía ninguna propina: la creación y el dev buy ya van juntos en una sola transacción y los envíos usan la priority fee de arriba.
+      </p>
+    </section>
   );
 }
 

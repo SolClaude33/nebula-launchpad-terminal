@@ -2,7 +2,7 @@
 
 Documento para retomar el trabajo en otra sesión. El contexto general está en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
 
-## Estado: F1 casi completa (falta cerrar la suite E2E de interfaz, Jito y la prueba de humo en mainnet)
+## Estado: F1 casi completa (falta cerrar la suite E2E de interfaz y la prueba de humo en mainnet; Jito pasa a F2)
 
 Todo está en commits locales, sin push.
 - **F0:** aprobado.
@@ -65,7 +65,7 @@ Todo está en commits locales, sin push.
    - `ChainReader.tokenMetadata` lee la extensión de Token-2022 o, si no la hay, Metaplex.
    - `clone.ts` solo descarga por https y comprueba que la IP sea pública en cada redirección. Límites: 64 KB para el JSON y 2 MB para la imagen, cuyo tipo se detecta por su firma. Si una pasarela falla, prueba otras.
    - La imagen se vuelve a subir al almacén propio.
-9. **Jito:** pendiente de la decisión de Nicol (ver «Decisiones pendientes»).
+9. **Jito:** **queda para F2** (decisión de Nicol del 2026-11-06). En Ajustes aparece como «próximamente · F2»; no se envía ninguna propina. El P&L ya tiene la línea de propinas Jito (a 0).
 10. **Copias diarias** (`b7df4c7`, §7.3)
     - Usa `db.backup()` al arrancar y después cada hora si la última copia tiene más de 24 h. Conserva 7.
     - En Ajustes se pueden listar y descargar.
@@ -87,12 +87,11 @@ Todo está en commits locales, sin push.
 2. Ejecutar `pnpm test:chain` completo (la última vez fue en el bloque 1; después solo se ejecutaron contra Surfpool los archivos de cada bloque).
 3. Ejecutar `pnpm build && node scripts/js-budget.mjs` (≤ 300 KB).
 4. Actualizar `docs/E2E.md` y la nota del proyecto.
-5. Jito, según lo que decida Nicol.
+5. Pasarle a Nicol `docs/SMOKE-MAINNET.md` (Helius y Pinata) para que haga la prueba de humo.
 
 ## Decisiones pendientes de Nicol
 
-- **Jito (bloque 9):** ¿entra en F1? Se le preguntó a la sesión principal. Hoy, en Ajustes, el endpoint y la propina existen como campos, pero no se usan en los envíos. El P&L ya tiene la línea de propinas Jito (a 0).
-- **Q-05, proveedor de RPC:** la checklist funciona con cualquiera.
+- ~~Jito~~ y ~~Q-05~~: **resueltas el 2026-11-06**. Jito queda para F2, y el RPC de mainnet es **Helius** (la checklist está adaptada al plan Free y sus límites).
 - **Borrar automatizaciones en estados finales:** la spec dice «solo si está parada». Hoy se permite también en IDLE y en los estados finales.
 - **Q-01** (nombre) y **Q-06** (USDC): no bloquean.
 

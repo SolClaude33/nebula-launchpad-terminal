@@ -6,10 +6,22 @@ Criterio de salida de F1 (§12): la prueba de humo tiene que pasar. Hay que hace
 
 ## 0. Antes de empezar
 
-- **RPC de mainnet (Q-05).**
-  - Usa el proveedor que elijas: Helius, Triton, QuickNode u otro.
-  - Pega en Ajustes la URL **completa** que te da el proveedor. Nébula separa la clave sola: la URL queda con `{key}` y la clave se guarda cifrada en la bóveda.
-  - Si tienes un segundo RPC, añádelo como respaldo.
+- **RPC de mainnet: Helius** (decisión Q-05 del 2026-11-06; documentación consultada ese mismo día).
+  - Crea una cuenta en `https://dashboard.helius.dev/signup` y copia tu clave en `https://dashboard.helius.dev/api-keys`.
+  - **La clave nunca va por el chat, ni a notas ni a `.env`.** Se pega solo en Ajustes de Nébula.
+  - URL HTTP: `https://mainnet.helius-rpc.com/?api-key=TU_CLAVE`.
+  - URL WebSocket: `wss://mainnet.helius-rpc.com/?api-key=TU_CLAVE`.
+  - Nébula separa la clave sola: las URL quedan con `?api-key={key}` y la clave se guarda cifrada en la bóveda. La clave solo la usa la API local (Node); nunca llega al navegador.
+  - **El plan Free basta para esta prueba**, con estos límites:
+    - 10 peticiones/s de RPC.
+    - `sendTransaction` a 1/s.
+    - `getProgramAccounts` a 5/s.
+    - 5 conexiones WebSocket.
+    - 1 M de créditos al mes.
+  - Si una orden multi-wallet choca con el límite (HTTP 429), Nébula reintenta. Aun así, usa el modo **Escalonado** cuando operes con varias wallets en Free.
+  - Helius corta un WebSocket inactivo a los 10 minutos. Si se cae, el Live sigue sondeando firmas cada 2 s.
+  - **Respaldo (opcional):** el RPC público `https://api.mainnet-beta.solana.com`, con WS `wss://api.mainnet-beta.solana.com`. Está muy limitado, pero vale para el failover.
+  - Helius también ofrece «Sender» para enviar transacciones, pero exige una propina por transacción. Nébula **no lo usa** en F1: Jito y las propinas quedan para F2.
 - **Pinata.**
   - Crea una clave (JWT) con permiso de subida de archivos (`files: write`).
   - Los metadatos se suben como **públicos**. La URI se forma con la pasarela de Ajustes (por defecto `https://ipfs.io/ipfs/`).
@@ -35,9 +47,13 @@ Criterio de salida de F1 (§12): la prueba de humo tiene que pasar. Hay que hace
 
 ## 2. Ajustes (`/settings`)
 
-- [ ] **RPC principal.** Pega la URL HTTP completa y la de WebSocket, y guarda.
-  - Las URL se muestran con `{key}` y «cifrada».
-  - El chip de arriba muestra el host y la latencia en verde.
+- [ ] **RPC principal (Helius).**
+  - En «Principal · HTTP» pega `https://mainnet.helius-rpc.com/?api-key=…` y en «Principal · WebSocket» pega `wss://mainnet.helius-rpc.com/?api-key=…`, con tu clave en ambas. Guarda.
+  - Tras guardar, las URL muestran `?api-key={key}` y la clave aparece como «cifrada».
+  - El chip de arriba muestra `mainnet.helius-rpc.com` y la latencia en verde.
+  - Si el chip dice «Falta la clave del RPC principal», pégala en el campo «Clave del RPC principal».
+- [ ] Opcional: respaldo con el RPC público (HTTP y WS de arriba). Sin clave.
+- [ ] **Jito** aparece como «próximamente · F2». No hay nada que configurar.
 - [ ] **IPFS.** Pega el JWT de Pinata y pulsa **Probar** («Pinata acepta la clave»). Después, Guardar.
 - [ ] Revisa el slippage (15 % en compra, 5 % en venta) y la priority fee (0,0001 SOL por defecto).
 - [ ] Opcional: **Bloquear** y desbloquear. Con la bóveda bloqueada, el RPC con clave se desconecta; al desbloquear, vuelve.
