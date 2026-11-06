@@ -24,7 +24,7 @@ export const slipDown = (v: bigint, pct: number) => v - (v * BigInt(Math.floor(p
 
 export type PumpPayload = { instructions: import("@solana/web3.js").TransactionInstruction[] };
 
-export function createPumpFunAdapter(pool: RpcPool): LaunchpadAdapter {
+export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("@solana/web3.js").AddressLookupTableAccount | null = () => null): LaunchpadAdapter {
   const sdks = new WeakMap<Connection, OnlinePumpSdk>();
   const online = () => {
     const c = pool.current();
@@ -90,16 +90,38 @@ export function createPumpFunAdapter(pool: RpcPool): LaunchpadAdapter {
       return describe(global, c, { vQuote: big(c.virtualQuoteReserves) - out, vTok: big(c.virtualTokenReserves) + amount, realTok: big(c.realTokenReserves) + amount }, "sell", amount, out, slipDown(out, slippagePct), slippagePct);
     },
 
+    quoteLaunch: async ({ devBuyLamports, buys }) => {
+      const { global, feeConfig } = await globals();
+      const c = newBondingCurve(global);
+      const feeBps = BigInt(global.feeBasisPoints.toString());
+      const step = (l: bigint, first: boolean) => {
+        if (l <= 0n) return 0n;
+        const tokens = big(getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: first ? null : c.tokenTotalSupply, bondingCurve: first ? null : c, amount: bn(l), quoteMint: NATIVE_MINT }));
+        const net = l - (l * feeBps) / 10_000n;
+        c.virtualQuoteReserves = bn(big(c.virtualQuoteReserves) + net);
+        c.virtualTokenReserves = bn(big(c.virtualTokenReserves) - tokens);
+        c.realTokenReserves = bn(big(c.realTokenReserves) - tokens);
+        c.realQuoteReserves = bn(big(c.realQuoteReserves) + net);
+        return tokens;
+      };
+      const devTokens = step(devBuyLamports, true);
+      const buyTokens = buys.map((b, i) => step(b, devBuyLamports <= 0n && i === 0));
+      const mc = big(bondingCurveMarketCap({ mintSupply: c.tokenTotalSupply, virtualQuoteReserves: c.virtualQuoteReserves, virtualTokenReserves: c.virtualTokenReserves }));
+      const initReal = big(global.initialRealTokenReserves);
+      return { devTokens, buyTokens, supply: big(c.tokenTotalSupply), marketCapLamports: mc, graduationPct: Number(((initReal - big(c.realTokenReserves)) * 10_000n) / initReal) / 100, padFeeBps: Number(feeBps) };
+    },
+
     // REQ-LAUNCH-008: create_v2 + dev buy en una sola transacción (todo o nada)
     buildCreateTx: async (p) => {
       const { global, feeConfig } = await globals();
       const q = buyQuote(global, feeConfig, null, p.devBuyLamports, p.slippagePct);
-      const base = { mint: new PublicKey(p.mint), name: p.name, symbol: p.symbol, uri: p.uri, creator: new PublicKey(p.creator), user: new PublicKey(p.creator), mayhemMode: p.mayhem };
+      const base = { mint: new PublicKey(p.mint), name: p.name, symbol: p.symbol, uri: p.uri, creator: new PublicKey(p.creator), user: new PublicKey(p.creator), mayhemMode: p.mayhem, ...(p.holderReward ? { holderReward: true } : {}) };
       const instructions =
         p.devBuyLamports > 0n
           ? await PUMP_SDK.createV2AndBuyInstructions({ global, ...base, amount: bn(q.amountOut), solAmount: bn(p.devBuyLamports) })
           : [await PUMP_SDK.createV2Instruction(base)];
-      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { instructions } satisfies PumpPayload };
+      const alt = getLaunchAlt();
+      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { instructions } satisfies PumpPayload, ...(alt ? { lookupTables: [alt] } : {}) };
     },
 
     buildBuyTx: async ({ mint, user, lamports, slippagePct }) => {

@@ -33,11 +33,23 @@ export type CurveQuote = {
   complete: boolean;
 };
 
+export type LaunchQuote = {
+  devTokens: bigint;
+  buyTokens: bigint[];
+  supply: bigint;
+  marketCapLamports: bigint;
+  graduationPct: number;
+  /** fee del pad en puntos básicos, tal y como la informa el programa */
+  padFeeBps: number;
+};
+
 /** Transacción preparada por el adaptador. `payload` es opaco: solo lo entiende el sender del mismo backend. */
 export type PreparedTx = {
   kind: "create" | "buy" | "sell" | "claim" | "transfer";
   /** límite de CU solicitado; la priority fee se cobra sobre él */
   cuLimit?: number;
+  /** tablas de direcciones para compilar el mensaje v0 (solo el backend real) */
+  lookupTables?: import("@solana/web3.js").AddressLookupTableAccount[];
   payer: string;
   signers: string[];
   payload: unknown;
@@ -59,7 +71,9 @@ export interface LaunchpadAdapter {
   /** cotización para una curva que aún no existe (dev buy) */
   quoteCreate(p: { devBuyLamports: bigint; slippagePct: number }): Promise<CurveQuote>;
   quote(p: { mint: string; side: Side; amount: bigint; slippagePct: number }): Promise<CurveQuote>;
-  buildCreateTx(p: { name: string; symbol: string; uri: string; creator: string; mint: string; devBuyLamports: bigint; slippagePct: number; mayhem: boolean }): Promise<PreparedTx>;
+  /** dev buy y compras de holders en orden sobre una curva nueva (estimación del resumen, REQ-LAUNCH-011) */
+  quoteLaunch(p: { devBuyLamports: bigint; buys: bigint[] }): Promise<LaunchQuote>;
+  buildCreateTx(p: { name: string; symbol: string; uri: string; creator: string; mint: string; devBuyLamports: bigint; slippagePct: number; mayhem: boolean; holderReward?: boolean }): Promise<PreparedTx>;
   buildBuyTx(p: { mint: string; user: string; lamports: bigint; slippagePct: number }): Promise<PreparedTx>;
   buildSellTx(p: { mint: string; user: string; tokens: bigint; slippagePct: number }): Promise<PreparedTx>;
   claimableFees(creators: string[]): Promise<Map<string, bigint>>;
@@ -76,6 +90,7 @@ export interface TxSender {
 export interface ChainReader {
   balances(addresses: string[]): Promise<Map<string, bigint>>;
   tokenBalance(mint: string, owner: string): Promise<bigint>;
+  accountExists(address: string): Promise<boolean>;
   /** solo en el perfil de pruebas */
   airdrop?(address: string, lamports: bigint): Promise<void>;
 }
@@ -88,7 +103,14 @@ export type TransferBuilder = {
   rentExemptMin(): Promise<bigint>;
 };
 
-export type ChainEnv = { adapter: LaunchpadAdapter; sender: TxSender; reader: ChainReader; transfers: TransferBuilder };
+export type LaunchAltManager = {
+  /** ¿está lista la tabla de direcciones para crear tokens? (no envía nada) */
+  status(): Promise<{ ready: boolean; address: string | null; keys: number; rentLamports: bigint }>;
+  /** la crea si falta; la paga `payer` (una sola vez por perfil y versión del programa) */
+  ensure(payer: string): Promise<{ address: string; created: boolean }>;
+};
+
+export type ChainEnv = { adapter: LaunchpadAdapter; sender: TxSender; reader: ChainReader; transfers: TransferBuilder; launchAlt: LaunchAltManager };
 
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 export const solToLamports = (sol: number) => BigInt(Math.round(sol * 1e9));

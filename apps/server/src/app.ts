@@ -15,6 +15,9 @@ import { chainRoutes } from "./routes/chain";
 import { ChainManager } from "./chain-manager";
 import { Operations } from "./operations";
 import { operationRoutes } from "./routes/operations";
+import { Launches } from "./launches";
+import { launchRoutes } from "./routes/launches";
+import { metadataStoreFor } from "./ipfs";
 
 export type Ctx = {
   profile: Profile;
@@ -26,6 +29,7 @@ export type Ctx = {
   closeDb: () => void;
   chain: ChainManager;
   ops: Operations;
+  launches: Launches;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -67,6 +71,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   const vault = new Vault(getDb);
   let chainManager: ChainManager | null = null;
   let operations: Operations | null = null;
+  let launches: Launches | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -79,6 +84,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get ops() {
       return operations!;
+    },
+    get launches() {
+      return launches!;
     },
     closeDb: () => {
       db?.close();
@@ -97,6 +105,13 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   // Una operación que estaba en marcha cuando se cerró el proceso queda en pausa (REQ-AUTO-008)
   operations.pauseAllRunning();
   vault.onLock(() => operations?.pauseAllRunning());
+  const priority = () => {
+    const s = JSON.parse((getDb().prepare("SELECT value FROM kv WHERE key = 'settings'").get() as { value: string } | undefined)?.value ?? "{}") as { priorityFeeSol?: number };
+    return Math.max(1, Math.round(((s.priorityFeeSol ?? 0.0001) * 1e9 * 1e6) / 400_000));
+  };
+  launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb), opts.profile, priority, (m) => logger.info(m));
+  launches.pauseAllRunning();
+  vault.onLock(() => launches?.pauseAllRunning());
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -134,6 +149,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(settingsRoutes(ctx), { prefix: "/api" });
   await app.register(chainRoutes(ctx), { prefix: "/api" });
   await app.register(operationRoutes(ctx), { prefix: "/api" });
+  await app.register(launchRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();

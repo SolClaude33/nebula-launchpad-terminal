@@ -86,6 +86,34 @@ const MIGRATIONS: string[] = [
   -- REQ-FUND-003: direcciones externas guardadas
   CREATE TABLE address_book (address TEXT PRIMARY KEY, label TEXT NOT NULL, created_at INTEGER NOT NULL);
   `,
+  `
+  -- REQ-LAUNCH-016: un lanzamiento por borrador (draftId), con su máquina de estados persistida
+  CREATE TABLE launch (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('PREPARED','CREATING','CREATED','BUYING','DONE','FAILED','PAUSED')),
+    paused_from TEXT,
+    config TEXT NOT NULL,
+    preflight_fp TEXT,
+    mint TEXT NOT NULL,
+    create_sig TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE launch_buy (
+    launch_id TEXT NOT NULL REFERENCES launch(id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    wallet_id TEXT NOT NULL,
+    lamports INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','OK','FAILED','SKIPPED')),
+    tokens TEXT,
+    signature TEXT,
+    reason TEXT,
+    PRIMARY KEY (launch_id, ord)
+  );
+  -- Metadatos y medios en el almacén local del perfil de pruebas (direccionados por hash)
+  CREATE TABLE ipfs_local (cid TEXT PRIMARY KEY, content_type TEXT NOT NULL, bytes BLOB NOT NULL, created_at INTEGER NOT NULL);
+  `,
 ];
 
 export function openDb(dir: string): DB {

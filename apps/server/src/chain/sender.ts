@@ -53,7 +53,7 @@ export class SolanaSender implements TxSender {
       payerKey: new PublicKey(tx.payer),
       recentBlockhash: blockhash,
       instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: tx.cuLimit ?? this.opts.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.price }), ...instructions],
-    }).compileToV0Message();
+    }).compileToV0Message(tx.lookupTables);
     const vtx = new VersionedTransaction(msg);
     const bytes = vtx.message.serialize();
     for (const s of tx.signers) vtx.addSignature(new PublicKey(s), this.sign(s, bytes));

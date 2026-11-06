@@ -9,6 +9,9 @@ import { SolanaSender } from "./sender";
 import type { ChainEnv, ChainReader, MessageSigner, TransferBuilder } from "./types";
 import { transferCuLimit } from "./fees";
 import { chunkTransfers, transferInstructions } from "./transfers";
+import { altCreateInstructions, keysFingerprint, staticLaunchKeys } from "./alt";
+import { kvGet, kvSet } from "../db";
+import type { AddressLookupTableAccount } from "@solana/web3.js";
 
 export type Chain = ChainEnv & { status: () => RpcStatus; stop: () => void; reconcile: () => Promise<number>; kind: "rpc" | "mock"; ledger?: MockLedger };
 
@@ -42,6 +45,7 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
       const r = await pool.run((c) => c.getTokenAccountBalance(ata, "confirmed")).catch(() => null);
       return r ? BigInt(r.value.amount) : 0n;
     },
+    accountExists: async (address) => !!(await pool.run((c) => c.getAccountInfo(new PublicKey(address), "confirmed"))),
     airdrop:
       profile === "test"
         ? async (address, lamports) => {
@@ -62,6 +66,51 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
   pool.start();
   const sender = new SolanaSender(pool, opts.db, opts.sign, { computeUnitLimit: 400_000, priorityMicroLamports: opts.priorityMicroLamports });
   let rentMin: bigint | null = null;
+  let alt: AddressLookupTableAccount | null = null;
+  let staticKeys: string[] | null = null;
+  const adapter = createPumpFunAdapter(pool, () => alt);
+  const keys = async () => (staticKeys ??= await staticLaunchKeys(adapter));
+  const loadAlt = async (address: string, want: string[]) => {
+    const r = await pool.run((c) => c.getAddressLookupTable(new PublicKey(address)));
+    const acc = r.value;
+    if (!acc) return null;
+    const have = new Set(acc.state.addresses.map((a) => a.toBase58()));
+    return want.every((k) => have.has(k)) ? acc : null;
+  };
+  const launchAlt = {
+    status: async () => {
+      const want = await keys();
+      const fp = keysFingerprint(want);
+      const saved = JSON.parse(kvGet(opts.db(), `launchAlt:${opts.profile}`) ?? "null") as { address: string; fp: string } | null;
+      if (saved && saved.fp === fp) alt = await loadAlt(saved.address, want).catch(() => null);
+      else alt = null;
+      const rentLamports = BigInt(await pool.run((c) => c.getMinimumBalanceForRentExemption(56 + 32 * want.length)));
+      return { ready: !!alt, address: alt ? alt.key.toBase58() : null, keys: want.length, rentLamports };
+    },
+    ensure: async (payer: string) => {
+      const st = await launchAlt.status();
+      if (st.ready && st.address) return { address: st.address, created: false };
+      const want = await keys();
+      const slot = await pool.run((c) => c.getSlot("finalized"));
+      const { address, instructions } = altCreateInstructions(payer, slot, want);
+      const res = await sender.send({ kind: "transfer", payer, signers: [payer], cuLimit: 50_000, payload: { instructions } }, { idempotencyKey: `alt:${keysFingerprint(want)}:${slot}` });
+      if (res.status !== "confirmed") throw Object.assign(new Error(`No se pudo crear la tabla de direcciones: ${"message" in res ? res.message : res.status}`), { statusCode: 409 });
+      // La tabla se puede usar a partir del slot siguiente a la extensión
+      const created = await pool.run((c) => c.getSlot("confirmed"));
+      for (let i = 0; i < 40; i++) {
+        const acc = await loadAlt(address, want).catch(() => null);
+        const now = await pool.run((c) => c.getSlot("confirmed"));
+        if (acc && now > created) {
+          alt = acc;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      if (!alt) throw Object.assign(new Error("La tabla de direcciones no se activó a tiempo; vuelve a intentarlo."), { statusCode: 409 });
+      kvSet(opts.db(), `launchAlt:${opts.profile}`, JSON.stringify({ address, fp: keysFingerprint(want) }));
+      return { address, created: true };
+    },
+  };
   const transfers: TransferBuilder = {
     build: async (from, items) =>
       chunkTransfers(from, items).map((chunk) => ({ kind: "transfer", payer: from, signers: [from], cuLimit: transferCuLimit(chunk.length), payload: { instructions: transferInstructions(from, chunk) } })),
@@ -70,8 +119,9 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
   };
   return {
     transfers,
+    launchAlt,
     kind: "rpc",
-    adapter: createPumpFunAdapter(pool),
+    adapter,
     sender,
     reader: rpcReader(pool, opts.profile),
     status: () => pool.status(),

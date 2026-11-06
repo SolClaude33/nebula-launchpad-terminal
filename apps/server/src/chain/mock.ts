@@ -1,6 +1,6 @@
 // TEST-ENV-002: adaptador mock con el mismo contrato que el real y fallos inyectables.
 // Curva de constante producto con los parámetros iniciales de Pump.fun (30 SOL / 1.073 M tokens virtuales).
-import type { ChainEnv, ChainReader, CurveQuote, LaunchpadAdapter, MessageSigner, PreparedTx, SendErrorCode, SendResult, TransferBuilder, TxSender } from "./types";
+import type { ChainEnv, ChainReader, CurveQuote, LaunchQuote, LaunchpadAdapter, MessageSigner, PreparedTx, SendErrorCode, SendResult, TransferBuilder, TxSender } from "./types";
 import { RENT_EXEMPT_MIN_DEFAULT, transferCuLimit, txFee } from "./fees";
 import { chunkTransfers } from "./transfers";
 
@@ -184,6 +184,21 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     capabilities: () => ({ id: "mock", name: "Pump.fun (mock)", chain: "solana", modes: ["classic", "mayhem"], quotes: ["SOL"], bundleInSameTx: true, customMint: true, tokenDecimals: 6, graduatesTo: "PumpSwap" }),
     quoteCreate: async ({ devBuyLamports, slippagePct }) => quoteOf(fresh(), "buy", devBuyLamports, slippagePct),
     quote: async ({ mint, side, amount, slippagePct }) => quoteOf(curve(mint), side, amount, slippagePct),
+    quoteLaunch: async ({ devBuyLamports, buys }): Promise<LaunchQuote> => {
+      const c = fresh();
+      const step = (l: bigint) => {
+        if (l <= 0n) return 0n;
+        const out = MockLedger.buyOut(c, l);
+        const net = l - bpsOf(l, FEE_BPS);
+        c.vSol += net;
+        c.vTok -= out;
+        c.realTok -= out;
+        return out;
+      };
+      const devTokens = step(devBuyLamports);
+      const buyTokens = buys.map(step);
+      return { devTokens, buyTokens, supply: INIT.supply, marketCapLamports: (c.vSol * INIT.supply) / c.vTok, graduationPct: Number(((INIT.realTok - c.realTok) * 10_000n) / INIT.realTok) / 100, padFeeBps: Number(FEE_BPS) };
+    },
     buildCreateTx: async (p) => {
       const q = quoteOf(fresh(), "buy", p.devBuyLamports, p.slippagePct);
       return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { op: "create", mint: p.mint, creator: p.creator, devBuy: p.devBuyLamports, tokens: q.amountOut, maxSol: q.limit } satisfies Op };
@@ -234,6 +249,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
   const reader: ChainReader = {
     balances: async (addrs) => new Map(addrs.map((a) => [a, ledger.balance(a)])),
     tokenBalance: async (mint, owner) => ledger.tokenOf(mint, owner),
+    accountExists: async (a) => ledger.curves.has(a) || ledger.balance(a) > 0n,
     airdrop: async (a, l) => void ledger.sol.set(a, ledger.balance(a) + l),
   };
   const transfers: TransferBuilder = {
@@ -242,5 +258,6 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     feeOf,
     rentExemptMin: async () => RENT_EXEMPT_MIN_DEFAULT,
   };
-  return { adapter, sender, reader, ledger, transfers };
+  const launchAlt = { status: async () => ({ ready: true, address: null, keys: 0, rentLamports: 0n }), ensure: async () => ({ address: "mock", created: false }) };
+  return { adapter, sender, reader, ledger, transfers, launchAlt };
 }
