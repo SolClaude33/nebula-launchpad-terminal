@@ -77,7 +77,8 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
       // getTokenLargestAccounts (top 20) en RPCs reales; si no está, getProgramAccounts filtrando por mint
       // Una sola llamada directa (sin los reintentos de errores transitorios del pool)
       const largest = largestSupported === false ? null : await pool.current().getTokenLargestAccounts(m, "confirmed").catch(() => null);
-      if (largestSupported === null) largestSupported = !!largest;
+      // Solo en pruebas se recuerda que no existe (Surfpool); en mainnet un fallo puntual no cambia de método
+      if (largestSupported === null && profile === "test") largestSupported = !!largest;
       if (largest) {
         const accs = largest.value.filter((a) => a.amount !== "0");
         const infos = await pool.run((c) => c.getMultipleAccountsInfo(accs.map((a) => a.address), "confirmed"));
