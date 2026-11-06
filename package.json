@@ -9,7 +9,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter server test",
     "surfpool:install": "node scripts/surfpool.mjs install",
-    "surfpool": "node scripts/surfpool.mjs"
+    "surfpool": "node scripts/surfpool.mjs",
+    "test:chain": "pnpm --filter server test:chain"
   },
   "packageManager": "pnpm@10.23.0"
 }

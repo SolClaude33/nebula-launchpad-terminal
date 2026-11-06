@@ -40,6 +40,26 @@ const MIGRATIONS: string[] = [
     config TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
   );
   `,
+  `
+  -- Claves de mint (REQ-LAUNCH-006): se generan y sellan antes de enviar la creación
+  CREATE TABLE mint_key (id TEXT PRIMARY KEY, address TEXT NOT NULL UNIQUE, encrypted_key BLOB NOT NULL, created_at INTEGER NOT NULL);
+  -- NFR-TX-001/004/005: cada envío se registra ANTES de emitirse, con su idempotency key
+  CREATE TABLE tx (
+    idempotency_key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    signature TEXT,
+    last_valid_block_height INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('SENT','CONFIRMED','FAILED','EXPIRED')),
+    error_code TEXT,
+    error TEXT,
+    fee_lamports INTEGER,
+    payer TEXT NOT NULL,
+    mint TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX tx_status ON tx(status);
+  `,
 ];
 
 export function openDb(dir: string): DB {

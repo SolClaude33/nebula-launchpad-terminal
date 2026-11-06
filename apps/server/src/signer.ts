@@ -234,6 +234,32 @@ export class Vault {
     return out;
   }
 
+  /** Genera la clave de un mint nuevo y la sella en la bóveda antes de usarla (REQ-LAUNCH-006). */
+  async createMintKey() {
+    const { address, sk } = await this.generateKey();
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO mint_key(id, address, encrypted_key, created_at) VALUES(?, ?, ?, ?)").run(id, address, seal(this.requireDek(), `mint:${id}`, sk), Date.now());
+    sk.fill(0);
+    return address;
+  }
+
+  /**
+   * Firma los bytes de un mensaje de transacción con la clave de `address` (wallet propia o mint).
+   * Solo lo llama el tx-sender; ninguna ruta de la API firma bytes arbitrarios.
+   */
+  signMessage(address: string, message: Uint8Array): Uint8Array {
+    const dek = this.requireDek();
+    const w = this.db.prepare("SELECT id, encrypted_key FROM wallet WHERE address = ?").get(address) as { id: string; encrypted_key: Buffer } | undefined;
+    const m = w ? undefined : (this.db.prepare("SELECT id, encrypted_key FROM mint_key WHERE address = ?").get(address) as { id: string; encrypted_key: Buffer } | undefined);
+    if (!w && !m) throw new VaultError("LOCKED", `No hay clave para ${address.slice(0, 4)}…${address.slice(-4)} en la bóveda.`);
+    const sk = open(dek, w ? `wallet:${w.id}` : `mint:${m!.id}`, (w ?? m)!.encrypted_key);
+    try {
+      return sodium.crypto_sign_detached(message, sk);
+    } finally {
+      sk.fill(0);
+    }
+  }
+
   sealSecret(name: string, value: string) {
     return seal(this.requireDek(), `setting:${name}`, Buffer.from(value, "utf8"));
   }
