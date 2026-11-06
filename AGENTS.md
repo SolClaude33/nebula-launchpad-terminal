@@ -3,7 +3,8 @@
 Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. La API, la bóveda y las wallets ya son reales; el Live Workspace y el asistente siguen siendo una demo con datos simulados.
 
 ## Estructura
-- `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila.
+- `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
+- `apps/server/src/chain`: el contrato del adaptador (`types.ts`), `pumpfun.ts` (SDK oficial; web3.js v1 en lugar de `@solana/kit` porque el SDK lo exige), `mock.ts`, `sender.ts` (registra cada envío en la tabla `tx` antes de emitirlo) y `rpc.ts` (failover).
 - `apps/web`: Next.js 16 con Tailwind v4.
   - `/api/*` se reescribe hacia la API.
   - `src/proxy.ts` valida el Host.
@@ -15,7 +16,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 ## Comandos (verificados)
 - `pnpm install` en la raíz (`better-sqlite3` usa sus binarios precompilados).
 - `pnpm dev` arranca la API y la web en `http://127.0.0.1:4317`.
-- `pnpm test` (Vitest de la API), `pnpm typecheck`, `pnpm lint`, `pnpm build`.
+- `pnpm test` (hermético, con el mock), `pnpm test:chain` (contrato contra Surfpool), `pnpm typecheck`, `pnpm lint`, `pnpm build`.
 - Perfil `test`: `pnpm surfpool:install` (Surfpool 1.6.1 en `.tools/`, SHA-256 verificado) y luego `pnpm surfpool` (fork perezoso de mainnet en `127.0.0.1:8899`/`8900`, airdrop local).
 
 ## Diseño "Observatorio" (cerrado en F0)
@@ -27,7 +28,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 - **Pantallas:** solo escritorio, usable desde 1024 px.
 
 ## Seguridad y límites
-- **Superficie local:** solo loopback, con Host y Origin exactos y token de sesión.
+- **Superficie local:** solo loopback, con Host y Origin exactos, token de sesión y CSP con nonce (`src/proxy.ts`). En el perfil `test` el RPC tiene que ser local, y el airdrop solo existe ahí.
 - **Secretos:** los de ajustes van cifrados en la bóveda, nunca en `.env`. Los logs pasan por la redacción de pino, y hay un test que lo comprueba.
 - **Acciones sensibles:** exportar, borrar, cambiar la contraseña, restaurar y retirar exigen reconfirmar la contraseña en el servidor. Toda comprobación de contraseña comparte el retardo creciente.
 - **Datos locales:** fuera del repositorio (`.gitignore`).
