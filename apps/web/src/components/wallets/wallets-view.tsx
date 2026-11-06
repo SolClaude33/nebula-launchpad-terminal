@@ -30,6 +30,7 @@ import { toast } from "@/lib/toast";
 import { Address } from "@/components/address";
 import { Modal, RevealDialog, StepUpDialog } from "./dialogs";
 import { fmtLamports, useChain } from "@/lib/chain";
+import { CollectDialog, DepositDialog, DisperseDialog, TransferDialog } from "./funds-dialogs";
 import { useVault } from "@/lib/vault";
 
 type Kind = "wallet" | "funder";
@@ -50,7 +51,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
   const profile = useVault((s) => s.status?.profile);
   const [airdropping, setAirdropping] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "folder">(null);
+  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "folder" | "deposit" | "transfer" | "disperse" | "collect">(null);
   const [revealed, setRevealed] = useState<{ label: string; address: string; secretKey: string }[] | null>(null);
   const [loadError, setLoadError] = useState("");
 
@@ -105,6 +106,9 @@ export function WalletsView({ kind }: { kind: Kind }) {
   };
 
   const title = kind === "funder" ? "Funders" : "Wallets";
+  const chainOff = !chainStatus || chainStatus.mode === "off";
+  const allActive = (wallets ?? []).filter((w) => !w.archived);
+  const withBalance = selected.filter((w) => (balances[w.address] ?? 0n) > 0n);
   const ids = selected.map((w) => w.id);
 
   return (
@@ -198,12 +202,14 @@ export function WalletsView({ kind }: { kind: Kind }) {
         <div className="panel p-4">
           <p className="telemetry">Movimientos</p>
           <div className="mt-3 grid grid-cols-2 gap-1.5">
-            <ActionBtn icon={ArrowDownToLine} label="Depositar" disabled />
-            <ActionBtn icon={Send} label="Transferir" disabled />
-            <ActionBtn icon={Split} label="Dispersar" disabled />
-            <ActionBtn icon={Layers} label="Recolectar" disabled />
+            <ActionBtn icon={ArrowDownToLine} label="Depositar" disabled={selected.length !== 1 || chainOff} onClick={() => setDialog("deposit")} />
+            <ActionBtn icon={Send} label="Transferir" disabled={selected.length !== 1 || chainOff} onClick={() => setDialog("transfer")} />
+            {kind === "wallet" && <ActionBtn icon={Split} label="Dispersar" disabled={selected.length === 0 || chainOff} onClick={() => setDialog("disperse")} />}
+            <ActionBtn icon={Layers} label="Recolectar" disabled={selected.length === 0 || chainOff} onClick={() => setDialog("collect")} />
           </div>
-          <p className="mt-2.5 text-[11.5px] leading-relaxed text-faint">Depósito con QR, transferencias y dispersión llegan en el siguiente bloque.</p>
+          <p className="mt-2.5 text-[11.5px] leading-relaxed text-faint">
+            {kind === "wallet" ? "Depositar y transferir: una wallet. Dispersar desde un funder y recolectar: varias." : "Para dispersar, selecciona las wallets de destino en Wallets."} Todo se ejecuta en el servidor con vista previa de fees.
+          </p>
           {profile === "test" && chainStatus?.mode !== "off" && (
             <button
               disabled={selected.length === 0 || airdropping}
@@ -252,7 +258,26 @@ export function WalletsView({ kind }: { kind: Kind }) {
           }}
         />
       )}
-      {dialog === "delete" && (
+      {dialog === "deposit" && selected[0] && <DepositDialog wallet={selected[0]} onClose={() => setDialog(null)} />}
+      {dialog === "transfer" && selected[0] && <TransferDialog from={selected[0]} own={allActive} onClose={() => setDialog(null)} onDone={load} />}
+      {dialog === "disperse" && <DisperseDialog funders={allActive.filter((w) => w.kind === "funder")} targets={selected} onClose={() => setDialog(null)} onDone={load} />}
+      {dialog === "collect" && <CollectDialog sources={selected} destinations={allActive.filter((w) => !sel.has(w.id) && (w.kind === "funder" || kind === "funder"))} onClose={() => setDialog(null)} onDone={load} />}
+      {dialog === "delete" && withBalance.length > 0 && (
+        <Modal title="Estas wallets tienen saldo" labelId="del-balance-title" onClose={() => setDialog(null)} width={440}>
+          <p className="mt-2 text-[13px] text-muted">
+            {withBalance.length} de {selected.length} tienen saldo ({fmtLamports(withBalance.reduce((a, w) => a + (balances[w.address] ?? 0n), 0n), 4)}). Recolecta o retira antes de borrar para no perder fondos.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setDialog(null)} className="btn h-9">
+              Cancelar
+            </button>
+            <button onClick={() => setDialog("collect")} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
+              Recolectar antes de borrar
+            </button>
+          </div>
+        </Modal>
+      )}
+      {dialog === "delete" && withBalance.length === 0 && (
         <StepUpDialog
           action="delete-wallet"
           danger
