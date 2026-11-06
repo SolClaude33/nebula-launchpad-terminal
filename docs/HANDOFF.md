@@ -1,71 +1,120 @@
 # Traspaso: estado de Nébula (2026-11-06)
 
-Documento para retomar el trabajo en otra sesión. Contexto general en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
+Documento para retomar el trabajo en otra sesión. El contexto general está en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
 
-## Hecho (F0 + bloques 1 a 6 de F1), todo en commits locales, sin push
+## Estado: F1 casi completa (falta cerrar la suite E2E de interfaz, Jito y la prueba de humo en mainnet)
 
-- **Bóveda y API local**
-  - Fastify en `127.0.0.1:4318` con SQLite.
-  - Protección local: Host y Origin exactos, token de sesión y CSP con nonce.
-  - Cifrado: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila.
-  - Desbloqueo: retardo creciente persistente, bloqueo automático y reconfirmación de un solo uso.
-  - Copia y restauración: restaurar exige la contraseña actual y guarda antes una copia de la bóveda anterior.
-- **Wallets y funders:** crear, importar, carpetas, roles, exportar, archivar y borrar, con saldos reales del RPC.
-- **Cadena**
-  - Adaptador de Pump.fun sobre el SDK oficial: solo maneja claves públicas; la firma la hace la bóveda con libsodium.
-  - Mock con fallos inyectables.
-  - Sender idempotente: registra cada envío antes de emitirlo, tiene estado `pending` y concilia al arrancar.
-  - RPC con failover y reintentos ante errores transitorios.
-- **Movimientos de fondos** (`operations.ts`):
-  - Vista previa → plan guardado → ejecución idempotente, con pausa al bloquear y botón Reanudar.
-  - Tipos: transferir, retirar (con reconfirmación y libreta de direcciones), dispersar (monto fijo o por wallet), recolectar con MAX y depositar con QR.
-- **Lanzamiento real** (`launches.ts` + asistente `/launch/new`):
-  - Máquina de estados: PREPARED → CREATING → CREATED → BUYING → DONE, más PAUSED. Un lanzamiento por draftId.
-  - Create + dev buy en una sola transacción, usando la tabla de direcciones propia (`chain/alt.ts`).
-  - Compras Quick de los holders, en orden.
-  - IPFS local en el perfil `test`. **Mainnet está bloqueado hasta verificar Pinata.**
-- **Live Workspace real (bloque 5)**
-  - Adaptador: `tokenInfo` (curva, `migrating` o PumpSwap; market cap, progreso de graduación por reservas, fee del pad), `parseEvents` por discriminador de Anchor (trades de la curva y del AMM solo del pool canónico, graduación y migración), compra y venta en PumpSwap tras graduar y `tradeAccountsRent` (cuenta de token, cuenta de volumen de 137 bytes, WSOL temporal y ampliación del pool tras migrar).
-  - Indexer (`live.ts`): un vigilante por mint con WebSocket de logs y sondeo de firmas cada 2 s; trades en SQLite con cursor; siempre indexa las firmas propias de la tabla `tx`. La web sondea la API cada segundo (nunca el RPC). Trade confirmado → visible en ≤ 2 s (test).
-  - Holders: `getTokenLargestAccounts` en RPCs reales (top 20) y `getProgramAccounts` en Surfpool; las wallets propias se leen siempre; curva y pool etiquetados. Posición con coste base medio de los trades propios.
-  - Órdenes (`trading.ts`): ticket e Instant Trade con id de cliente, `trade:<orden>:<wallet>`, paralelo (6 a la vez) o escalonado (800 ms fijos), resultado por wallet con motivo, `pending` → pausa (nunca FAILED), pausa al bloquear y reanudación desde el aviso. El MAX en PumpSwap se mide simulando una compra mínima (justo tras migrar el SDK envuelve el `maxQuote`).
-  - Comisiones (`rewards.ts` + `/rewards`): escaneo por wallet (la bóveda es por creador), vista previa con el neto simulado (fee de red + cuentas que crea el reclamo), reclamo y verificación en cadena (recibido = reclamable − coste; bóveda en 0).
-  - Asistente: el resultado del lanzamiento enlaza a `/t/<mint>`. `/t` permite abrir cualquier coin de Pump.fun o uno lanzado con Nébula. `lib/sim.ts` eliminado.
-- **Automatizaciones (bloque 6, REQ-AUTO-001…010):**
-  - Motor `apps/server/src/automations.ts` sobre la tabla `task` (migración 6: `mint`, `state` JSON, `task_run` y `trade_order_item.attempts`). Rutas en `routes/automations.ts`; esquemas y `dcaPlan` en `packages/shared/src/automations.ts`.
-  - Cada ejecución es una orden hija de `trading.ts` con id `auto-<tarea>-<generación>-<n>` (keys `trade:auto-…:<wallet>`). Se apunta en `task.state` ANTES de crearla; tras un cierre se reanuda la misma. Las hijas no entran en la lista `paused` ni se reanudan desde `/trade/:id/resume` (409).
-  - DCA: compra (SOL) o venta (tokens, recortada al saldo) fija o en «rango» = rampa fija mín→máx; fin por monto, duración o lo primero. Límite: objetivos de market cap USD (indexer + Pyth), compras descendentes y ventas ascendentes, cada uno una vez y en orden; validez opcional → TIMEOUT.
-  - Comunes: rango de market cap, wallets, retardo de inicio, slippage (5 % por defecto también en ventas), «parar tras N errores», paralelo/escalonado. Dev excluida salvo `includeDev` («incl. dev» en la tarjeta).
-  - Ciclo de vida: iniciar, pausar, reanudar (sin backlog: una ejecución y se reprograma), editar solo en IDLE/PAUSED (los objetivos ya ejecutados no cambian), parar (lo no enviado queda omitido), ejecutar de nuevo (generación nueva = keys nuevas), duplicar y borrar (no en RUNNING ni PAUSED).
-  - Errores: un `pending` pausa la tarea; un error ANTES de enviar (RPC) se reintenta a los 5 s y cuenta como error seguido; una ejecución sin ninguna wallet dentro también cuenta. Esperar (retardo, fuera de rango, sin precio, migración) no cuenta.
-  - Editar en pausa con una ejecución a medias no cambia sus wallets (409); si la tarea acaba (FAILED, etc.) con una orden a medias, lo no enviado queda omitido.
-  - Borrar está permitido en IDLE y en los estados finales (la spec dice «solo si está parada»): **decisión pendiente de confirmar con Nicol**.
-  - Bloqueo y reinicio: `pauseRunningTasks` pasa lo RUNNING a PAUSED con `kind: "automatización"`; el diálogo de pausa lo reanuda con `/automations/:id/resume`.
-  - Web: `/automations` (lista, filtros, formulario con plan y validación compartida, registro por intento con «Cargar anteriores») y la tarjeta de posición del Live con las tareas activas del token.
-- **Tests:** `pnpm test` pasa 86 herméticos (15 nuevos en `test/automations.test.ts`). Con Surfpool, `pnpm test:chain` pasa 96 (9 solo-mock omitidos), incluida la graduación con migración y operaciones en PumpSwap y las automatizaciones (E2E-02, E2E-13, E2E-14 y límites que se disparan al mover el market cap).
-- **Verificado en el navegador contra Surfpool (bloque 6):** DCA de compra con «incl. dev» creado desde el formulario → registro con firmas → pausar, editar el monto en pausa y reanudar → bloquear → diálogo «automatización» → Reanudar → Surfpool se atascó pidiendo cuentas a mainnet y el envío quedó `pending`: la tarea pasó a PAUSED (no FAILED) → Reanudar → la 2.ª ejecución entró con el monto nuevo y «1 reintento», sin duplicar. Reinicio de la API (tsx watch) → la tarea aparece PAUSED y pide confirmación (E2E-14). Límite de venta: objetivos desordenados rechazados en el formulario; 4 K → 5 K USD esperando y, tras subir el market cap, los dos objetivos ejecutados en orden. Tarjeta de posición con la tarea activa y sus controles a 1024 px.
-- **Verificado en el navegador contra Surfpool (bloque 5):** asistente → lanzamiento 3/3 → «Abrir en Live»; ticket 4/4; Instant Trade 4/4; graduación → aviso → migración de prueba → venta del 50 % en PumpSwap (2/4 entraron, 2 fallaron por slippage: resultado real); reclamo con neto 0,41943 SOL y bóveda en 0; 1024 px usable. Los atajos Espacio+tecla no se volvieron a probar con órdenes reales.
+Todo está en commits locales, sin push.
+- **F0:** aprobado.
+- **F1, bloques 1 a 6** (anteriores): bóveda, wallets, fondos, lanzamiento real, Live Workspace con PumpSwap, comisiones y automatizaciones.
+- **F1, bloques de cierre:** de `975767f` a `b7df4c7`, más el commit de trabajo de la suite E2E. Se detallan abajo.
 
-## Siguiente
+### Bloques de cierre de F1
 
-- **REQ-LIVE-005** (enviar tokens y quemar con confirmación por símbolo).
-- **Dashboard y P&L** (REQ-DASH) a partir de `live_trade` y `tx`.
-- REQ-REW-003 («financiar fees de reclamo») y reclamo de la cashback de volumen: fuera de este bloque.
-- Automatizaciones pendientes del Should: ladder y trailing stop (REQ-AUTO-003/004) y presets (REQ-AUTO-009).
-- Surfpool: a ratos falla al traer cuentas de mainnet («Failed to fetch accounts from remote», bloqueos de ~30 s). Un envío queda `pending` y la orden o la tarea se pausan (comportamiento correcto). Puede tumbar un test en cadena suelto; repetir la suite. El presupuesto de JS inicial (§8.6) no se ha medido en este bloque.
-- Conocidos: con muchas tareas activas, cada una mantiene vivo el vigilante de su mint (sondeo de firmas cada 2 s). `snapshot()` espera a `tokenInfo` (TTL de 1 s) en la propia petición; con un RPC remoto conviene refrescarlo en el tick del vigilante para cumplir p95 ≤ 50 ms (§7.3). Los marcadores del gráfico se amontonan con muchas órdenes propias seguidas.
+1. **Lo mínimo para mainnet** (`975767f`)
+   - `/settings` (REQ-SET-001/002):
+     - RPC principal y de respaldo, HTTP y WS.
+     - Clave de Pinata y pasarela.
+     - Slippage y priority fee.
+     - Bloqueo automático, teclado y tema.
+     - Copia de seguridad y cambio de contraseña.
+   - **Claves del RPC:** si se pega la URL completa del proveedor, la clave se separa sola. La URL queda con `{key}` y la clave va cifrada en la bóveda (`settings.ts: splitRpcKey`).
+     - La clave solo se descifra con la bóveda abierta: al bloquear se desconecta el RPC y al desbloquear se reconecta.
+     - `scrub()` redacta por valor todos los secretos conocidos en los logs y en los errores.
+   - **Pinata (API v3, documentación leída el 2026-11-06):** `POST https://uploads.pinata.cloud/v3/files` con Bearer JWT, multipart `file` + `network=public`, y el CID en `data.cid`.
+     - La URI se forma como pasarela + CID; por defecto `https://ipfs.io/ipfs/`, el mismo formato que usan los tokens reales de Pump.fun.
+     - «Probar» llama a `GET https://api.pinata.cloud/data/testAuthentication`.
+     - Ya no existe el bloqueo `MainnetIpfsUnavailable`. Sin clave, el aviso explica dónde ponerla.
+     - Verificado contra un stub que sigue la API documentada. **Falta probarlo con una clave real**: lo hará Nicol en la prueba de humo.
+   - **Live:** `tokenInfo` se refresca en el tick del vigilante, y las lecturas que la web sondea usan stale-while-revalidate. Con 200 ms de latencia simulada en el RPC, el p95 es ≤ 50 ms (test).
+   - **Perfil mainnet arrancado en solo lectura con el RPC público:** setup, RPC sano, el airdrop da 404 y sin clave de Pinata aparece un mensaje claro.
+   - `pnpm mainnet` y la checklist `docs/SMOKE-MAINNET.md`.
+2. **Dashboard y P&L** (`74347c0`, REQ-DASH-001/002/005, E2E-23)
+   - Cada envío propio confirmado se lee de la cadena: fee real y Δ SOL de las wallets propias (migración 7).
+   - El P&L usa coste medio: realizado − fees de red − Jito + comisiones.
+     - Las fees de Pump.fun ya van dentro de cada trade.
+     - El rent se muestra aparte.
+     - La posición abierta se valora al precio actual.
+   - Gráficos en SVG propio cargados en diferido, y estado vacío guiado.
+   - Test en Surfpool:
+     - La suma de los Δ SOL es igual a la variación real de los saldos.
+     - La fee real coincide con la de la vista previa.
+     - P&L = ventas − compras − fees.
+3. **Lanzamientos y borradores** (`ff6747d`, E2E-08)
+   - Los borradores se guardan en SQLite (migración 8) con autoguardado contra la API. El de `localStorage` se migra una vez.
+   - `/launches` permite reanudar, abrir en Live y archivar. `/launches/drafts` lista los borradores.
+4. **Actividad y diagnóstico** (`0954f25`, REQ-LOG-001)
+   - `/activity` con filtros.
+   - `GET /diagnostics` redacta por valor y por patrón: base58 de 64 bytes (salvo las firmas propias), arrays de 64 bytes, JWT, credenciales en URL y cabeceras `Authorization`.
+5. **Enviar y quemar** (`a9bbdab`, REQ-LIVE-005)
+   - `buildTokenTransferTx` y `buildBurnTx` (Token-2022).
+   - Enviar fuera de la bóveda pide reconfirmación y una PDA se rechaza.
+   - Quemar exige escribir el símbolo, comprobado en el servidor.
+   - Probado en mock y en Surfpool.
+6. **Lanzamiento programado** (`a915a2a`, REQ-LAUNCH-015, E2E-09)
+   - Migración 9: `scheduled_at` y `schedule_state`.
+   - Un reinicio no lo pausa. Bloquear sí lo pausa, y también que llegue la hora con la bóveda bloqueada.
+   - A su hora se vuelve a hacer el dry-run y solo se lanza si sale en verde.
+   - Se puede cancelar hasta T−10 s, comprobado en el servidor.
+   - Cerrar el proceso bloquea con el motivo `shutdown`, que no pausa los programados.
+7. **Launch Guard** (`7e8405e`, REQ-LAUNCH-014, E2E-10)
+   - Configura umbral, ventana (≥ 1 s) y lista blanca.
+   - Antes de cada compra Quick lee los trades en ese momento (`Live.tradesNow`). Si se supera el umbral, las compras restantes pasan a SKIPPED. Nunca vende.
+   - Probado en Surfpool con un comprador externo que firma fuera de la bóveda.
+8. **Clonar metadatos** (`6722c53`, REQ-LAUNCH-005)
+   - `ChainReader.tokenMetadata` lee la extensión de Token-2022 o, si no la hay, Metaplex.
+   - `clone.ts` solo descarga por https y comprueba que la IP sea pública en cada redirección. Límites: 64 KB para el JSON y 2 MB para la imagen, cuyo tipo se detecta por su firma. Si una pasarela falla, prueba otras.
+   - La imagen se vuelve a subir al almacén propio.
+9. **Jito:** pendiente de la decisión de Nicol (ver «Decisiones pendientes»).
+10. **Copias diarias** (`b7df4c7`, §7.3)
+    - Usa `db.backup()` al arrancar y después cada hora si la última copia tiene más de 24 h. Conserva 7.
+    - En Ajustes se pueden listar y descargar.
+11. **Suite E2E en el navegador: en curso** (commit de trabajo; ver `docs/E2E.md`)
+    - `pnpm test:e2e` usa Playwright 1.64.1 con el Edge del sistema y `@axe-core/playwright` 4.14.0.
+      - El lanzador `scripts/e2e.mjs` prepara los datos temporales y Surfpool, y es el dueño del proceso de la API.
+      - Expone un control local en `127.0.0.1:4390` para «cerrar y abrir la app». Lanzada desde un worker de Playwright, en Windows la API moría a los pocos segundos.
+    - **Última pasada, interrumpida al cerrar la jornada:**
+      - En verde: E2E-01, 02, 03, 06, 08, 11, 17, 21 y 23.
+      - E2E-09 falló por el test (clic en un radio `sr-only`); ya está corregido pero sin volver a ejecutar.
+      - E2E-24 (axe) no llegó a correr con la API viva.
+    - Para cumplir AA, `--text-faint` pasó a `#8088a0` (oscuro) y `#5c637b` (claro).
+    - El setup ahora deriva bien el WS local (puerto + 1).
+    - `scripts/js-budget.mjs` está escrito y sin ejecutar.
 
-## Pendiente fuera del bloque 5
+## Próximo paso (mañana)
 
-- IPFS de mainnet (Pinata, leyendo su documentación actual) y elección del RPC de mainnet (Q-05).
-- Lanzamiento programado, Launch Guard, Jito y clonar metadatos (ahora marcados «próximamente»).
-- Playwright y axe, y copias diarias automáticas.
+1. Ejecutar `pnpm test:e2e` completo y corregir lo que marque axe en E2E-24.
+2. Ejecutar `pnpm test:chain` completo (la última vez fue en el bloque 1; después solo se ejecutaron contra Surfpool los archivos de cada bloque).
+3. Ejecutar `pnpm build && node scripts/js-budget.mjs` (≤ 300 KB).
+4. Actualizar `docs/E2E.md` y la nota del proyecto.
+5. Jito, según lo que decida Nicol.
+
+## Decisiones pendientes de Nicol
+
+- **Jito (bloque 9):** ¿entra en F1? Se le preguntó a la sesión principal. Hoy, en Ajustes, el endpoint y la propina existen como campos, pero no se usan en los envíos. El P&L ya tiene la línea de propinas Jito (a 0).
+- **Q-05, proveedor de RPC:** la checklist funciona con cualquiera.
+- **Borrar automatizaciones en estados finales:** la spec dice «solo si está parada». Hoy se permite también en IDLE y en los estados finales.
+- **Q-01** (nombre) y **Q-06** (USDC): no bloquean.
+
+## Conocido / límites
+
+- **IPFS público:**
+  - Clonar un token ajeno depende de las pasarelas públicas. El 2026-11-06, ipfs.io y dweb.link devolvían 429 a esta IP; se rellenan nombre y símbolo desde la cadena y se avisa.
+  - Los tokens antiguos que migraron a Raydium (antes de PumpSwap) aparecen como «migrating» en el Live, porque no tienen pool canónico.
+- **Preview del navegador integrado:** `pnpm dev` (con `tsx watch`) se colgaba al arrancar la API y no llegaba a escuchar en el 4318. Desde Bash arranca bien. Para verificar se usaron dos configuraciones temporales (API con `--filter server start` y web con `--filter web dev`).
+- **Surfpool** a veces falla al traer cuentas de mainnet. Un envío queda pendiente y la orden o la tarea se pausa, que es el comportamiento correcto. Puede tumbar algún test de cadena suelto; en ese caso se repite.
+- **Pendientes del Should:** ladder, trailing stop y presets (REQ-AUTO-003/004/009); «financiar fees de reclamo» (REQ-REW-003); tracker; paleta Ctrl+K.
 
 ## Cómo trabajar
 
-- Arrancar: `pnpm dev`. Validador: `pnpm surfpool`. Pruebas en cadena: `pnpm test:chain`.
-- Para verificar en el navegador sin tocar `~/.nebula`, añade temporalmente al `.claude/launch.json` de la carpeta padre una configuración con `NEBULA_DATA_DIR` apuntando a una carpeta temporal, y quítala al terminar.
-- Surfpool es un fork perezoso: las cuentas que no existen se piden a mainnet y pueden tardar (timeouts). El pool reintenta un timeout una vez y el lector recuerda que `getTokenLargestAccounts` no existe ahí.
-- Al terminar, para Surfpool y los servidores (en Windows los procesos hijos sobreviven: comprueba los puertos 4317, 4318 y 8899).
-- Exclusiones de la spec (§2.3 y `AGENTS.md`): nada que haga pasar actividad coordinada por orgánica.
-- No hacer push ni desplegar sin que Nicol lo pida.
+- **Arrancar:** `pnpm dev`. Validador: `pnpm surfpool`.
+- **Pruebas:**
+  - `pnpm test` (hermético).
+  - `pnpm test:chain` (contra Surfpool).
+  - `pnpm test:e2e` (interfaz; deja libres 4317 y 4318 y arranca Surfpool si hace falta).
+  - `node scripts/js-budget.mjs` tras `pnpm build`.
+- **Mainnet:** `pnpm mainnet` (construye y arranca con `NEBULA_PROFILE=mainnet`). La checklist está en `docs/SMOKE-MAINNET.md`.
+- **Verificar en el navegador sin tocar `~/.nebula`:** añade temporalmente al `.claude/launch.json` de la carpeta padre una configuración con `NEBULA_DATA_DIR` apuntando a una carpeta temporal, y quítala al terminar.
+- **Al terminar:** para Surfpool y los servidores. En Windows comprueba que quedan libres los puertos 4317, 4318, 8899 y 8900.
+- **Exclusiones (§2.3):** nada que haga pasar actividad coordinada por orgánica.
+- **Publicación:** sin push ni despliegue hasta que Nicol lo pida.

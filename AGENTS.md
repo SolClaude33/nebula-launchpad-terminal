@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. Ya son reales la API, la bóveda, las wallets, los movimientos de fondos, el lanzamiento desde el asistente, el Live Workspace (curva, trades, holders, órdenes, PumpSwap), las comisiones de creador y las automatizaciones (DCA y límite), verificados en el perfil `test` con Surfpool.
+Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está implementada en el perfil `test` (Surfpool). Faltan cerrar la suite E2E de interfaz (`pnpm test:e2e`), Jito (pendiente de decisión) y la prueba de humo en mainnet (`docs/SMOKE-MAINNET.md`, la ejecuta Nicol). El estado detallado está en `docs/HANDOFF.md` y la trazabilidad E2E en `docs/E2E.md`.
 
 ## Estructura
 - `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
@@ -10,8 +10,13 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
   - `/api/*` se reescribe hacia la API.
   - `src/proxy.ts` valida el Host.
   - El token de sesión va en `<meta>` y se envía en la cabecera `x-nebula-session`.
-  - El Live Workspace lee `lib/live.ts` (sondea la API local; nunca el RPC) y opera con `lib/trade.ts`. El asistente guarda el borrador en `lib/draft.ts`.
-- `apps/server/src/launches.ts` y `operations.ts`: máquinas de estados del servidor, con idempotency keys y pausa al bloquear. La creación con dev buy necesita la tabla de direcciones propia (`chain/alt.ts`). En mainnet, IPFS queda bloqueado hasta verificar Pinata (`ipfs.ts`).
+  - El Live Workspace lee `lib/live.ts` (sondea la API local; nunca el RPC) y opera con `lib/trade.ts`. El asistente guarda el borrador en la API (`lib/draft.ts` → `/drafts`).
+- `apps/server/src/launches.ts` y `operations.ts`: máquinas de estados del servidor, con idempotency keys y pausa al bloquear. La creación con dev buy necesita la tabla de direcciones propia (`chain/alt.ts`). `launches.ts` incluye el lanzamiento programado y el Launch Guard.
+- Otros módulos del servidor:
+  - `ipfs.ts`: almacén local en `test`, Pinata v3 en mainnet.
+  - `settings.ts`: secretos, `{key}` en las URL del RPC y `scrub`.
+  - `pnl.ts`: fee real y Δ SOL de cada envío propio; P&L.
+  - `drafts.ts`, `token-ops.ts` (enviar y quemar), `clone.ts` (descargas acotadas), `diagnostics.ts` y `backups.ts`.
 - `packages/shared`: esquemas zod (`automations.ts`: `AutomationConfig`, validación del orden de objetivos y `dcaPlan`, compartidos con la web). Las rutas de datos están en `./node` (`~/.nebula/<perfil>`, con `NEBULA_PROFILE` y `NEBULA_DATA_DIR`).
 - `apps/web/AGENTS.md`: gestionado por Next.js; no se edita.
 
@@ -19,6 +24,9 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 - `pnpm install` en la raíz (`better-sqlite3` usa sus binarios precompilados).
 - `pnpm dev` arranca la API y la web en `http://127.0.0.1:4317`.
 - `pnpm test` (hermético, con el mock), `pnpm test:chain` (contrato contra Surfpool), `pnpm typecheck`, `pnpm lint`, `pnpm build`.
+- `pnpm test:e2e`: Playwright con el Edge del sistema y axe. Necesita libres 4317, 4318 y 4390, y arranca Surfpool si no está. La API la gestiona `scripts/e2e.mjs` (control en 4390).
+- `node scripts/js-budget.mjs`: presupuesto de JS, tras `pnpm build`.
+- `pnpm mainnet`: perfil mainnet.
 - Perfil `test`: `pnpm surfpool:install` (Surfpool 1.6.1 en `.tools/`, SHA-256 verificado) y luego `pnpm surfpool` (fork perezoso de mainnet en `127.0.0.1:8899`/`8900`, airdrop local).
 
 ## Diseño "Observatorio" (cerrado en F0)
@@ -31,11 +39,17 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 
 ## Seguridad y límites
 - **Superficie local:** solo loopback, con Host y Origin exactos, token de sesión y CSP con nonce (`src/proxy.ts`). En el perfil `test` el RPC tiene que ser local, y el airdrop solo existe ahí.
-- **Secretos:** los de ajustes van cifrados en la bóveda, nunca en `.env`. Los logs pasan por la redacción de pino, y hay un test que lo comprueba.
+- **Secretos:** los de ajustes van cifrados en la bóveda, nunca en `.env`. Una URL de RPC con credencial se guarda con `{key}` y la clave va a la bóveda. Los logs pasan por la redacción de pino y por `scrub` (por valor). El diagnóstico redacta también por patrón. Hay tests que lo comprueban.
 - **Acciones sensibles:** exportar, borrar, cambiar la contraseña, restaurar y retirar exigen reconfirmar la contraseña en el servidor. Toda comprobación de contraseña comparte el retardo creciente.
 - **Datos locales:** fuera del repositorio (`.gitignore`).
 - **Dependencias:** a versión exacta. Las nuevas cerca de las claves se revisan a mano, como `@pump-fun/pump-sdk`.
 - **Órdenes:** el envío `pending` deja la wallet pendiente y la orden en pausa, nunca FAILED. «Escalonado» usa un retardo fijo, sin aleatoriedad. La migración manual a PumpSwap (`/dev/migrate`) solo existe en el perfil `test`.
 - **Automatizaciones:** el «rango» del DCA es una rampa fija del mínimo al máximo, el mismo monto para todas las wallets y un intervalo fijo (nada aleatorio). Pausar o parar nunca vende. Sin backlog al reanudar. La wallet dev solo entra con `includeDev`. Un `pending` pausa la tarea; un error antes de enviar se reintenta y cuenta para «N errores seguidos». Al bloquear o reiniciar, lo RUNNING pasa a PAUSED y solo se reanuda con confirmación.
+- **Lanzamientos:**
+  - Un programado persiste y se lanza tras un reinicio si la bóveda está abierta. Bloquear lo pausa.
+  - A su hora se rehace el dry-run.
+  - Se puede cancelar hasta T−10 s.
+  - El Launch Guard solo omite compras propias: nunca vende.
+- **Descargas de terceros (clonar):** solo https y solo IP pública, con límites de tamaño.
 - **Exclusiones:** no se implementa nada que haga pasar actividad coordinada por orgánica, como volumen o wash trading, MEV de bloque 0, evasión de bubble maps, wallets envejecidas, financiación vía mixer o saltos por CEX, o el «Nuke» del Sniper Guard (§2.3 de la spec).
 - **Publicación:** nada de push, remoto ni despliegue hasta que Nicol lo pida.

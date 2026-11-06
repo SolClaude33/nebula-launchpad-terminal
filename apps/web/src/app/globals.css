@@ -18,7 +18,7 @@
   --border-strong: rgba(255, 255, 255, 0.11);
   --text: #e8eaf2;
   --text-muted: #8a90a6;
-  --text-faint: #6b7189;
+  --text-faint: #8088a0; /* ≥ 4,5:1 sobre bg y superficies 1-3 (axe, §8.5) */
   --accent-a: #7c5cff;
   --accent-b: #22d3ee;
   --accent: #9b85ff;
@@ -48,7 +48,7 @@
   --border-strong: rgba(12, 16, 32, 0.14);
   --text: #0d1020;
   --text-muted: #525a72;
-  --text-faint: #6a7189;
+  --text-faint: #5c637b; /* ≥ 4,5:1 sobre las superficies claras */
   --accent: #5b3df5;
   --accent-ink: #ffffff;
   --buy: #15803d;

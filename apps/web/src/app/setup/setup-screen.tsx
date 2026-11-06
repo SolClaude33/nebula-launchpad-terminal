@@ -10,6 +10,18 @@ import { strength, STRENGTH_LABEL, VaultFrame, Wordmark } from "@/components/vau
 
 const BAR = ["var(--sell)", "var(--sell)", "var(--warn)", "var(--buy)", "var(--buy)"];
 
+/** WebSocket del RPC: en un validador local (Surfpool, solana-test-validator) va en el puerto siguiente; en un proveedor, misma URL con ws(s). */
+function wsFor(http: string) {
+  try {
+    const u = new URL(http);
+    if (/^(127\.0\.0\.1|localhost)$/.test(u.hostname) && u.port) u.port = String(Number(u.port) + 1);
+    u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return http.replace(/^http/, "ws");
+  }
+}
+
 /** REQ-VAULT-001 + REQ-SET-001: primer arranque. Contraseña maestra irrecuperable, RPC y clave de IPFS. */
 export function SetupScreen() {
   const router = useRouter();
@@ -50,7 +62,7 @@ export function SetupScreen() {
     setError("");
     try {
       const s = await api<VaultStatus>("/vault/setup", { method: "POST", body: { password: pw, ack: true } });
-      if (rpc || ipfs) await api("/settings", { method: "PUT", body: { ...(rpc ? { rpcPrimaryHttp: rpc, rpcPrimaryWs: rpc.replace(/^http/, "ws") } : {}), ...(ipfs ? { ipfsKey: ipfs } : {}) } });
+      if (rpc || ipfs) await api("/settings", { method: "PUT", body: { ...(rpc ? { rpcPrimaryHttp: rpc, rpcPrimaryWs: wsFor(rpc) } : {}), ...(ipfs ? { ipfsKey: ipfs } : {}) } });
       setPw("");
       setPw2("");
       setIpfs("");
