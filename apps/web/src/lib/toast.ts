@@ -8,7 +8,7 @@ export type Toast = {
   tone: ToastTone;
   title: string;
   body?: string;
-  lines?: { label: string; status: "ok" | "failed" | "skipped"; detail?: string }[];
+  lines?: { label: string; status: "ok" | "failed" | "skipped" | "pending"; detail?: string }[];
   href?: string;
 };
 

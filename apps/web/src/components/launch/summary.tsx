@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { AlertCircle, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, ExternalLink, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
+import Link from "next/link";
+import { Activity, AlertCircle, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
+import { Address } from "@/components/address";
 import { api } from "@/lib/api";
 import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
@@ -222,18 +224,14 @@ function LaunchResult() {
         <div className="flex justify-between gap-2">
           <dt className="text-muted">Mint</dt>
           <dd>
-            <a href={`https://solscan.io/token/${view.mint}`} target="_blank" rel="noreferrer" className="num inline-flex items-center gap-1 hover:text-accent-b">
-              {view.mint.slice(0, 6)}…{view.mint.slice(-6)} <ExternalLink className="size-3" aria-hidden />
-            </a>
+            <Address value={view.mint} kind="token" head={6} tail={6} />
           </dd>
         </div>
         {view.createSignature && (
           <div className="flex justify-between gap-2">
             <dt className="text-muted">Creación + dev buy</dt>
             <dd>
-              <a href={`https://solscan.io/tx/${view.createSignature}`} target="_blank" rel="noreferrer" className="num inline-flex items-center gap-1 hover:text-accent-b">
-                {view.createSignature.slice(0, 6)}… <ExternalLink className="size-3" aria-hidden />
-              </a>
+              <Address value={view.createSignature} kind="tx" head={6} tail={4} />
             </dd>
           </div>
         )}
@@ -255,7 +253,12 @@ function LaunchResult() {
           </ul>
         </>
       )}
-      {view.status === "DONE" && <p className="mt-3 text-[11.5px] text-faint">El Live Workspace con datos reales llega en el siguiente bloque; por ahora sigue en demo.</p>}
+      {/* El token ya existe en cadena desde CREATED: su Live Workspace lee datos reales */}
+      {["CREATED", "BUYING", "DONE", "PAUSED"].includes(view.status) && view.createSignature && (
+        <Link href={`/t/${view.mint}`} className="cta cta-fill mt-4 flex h-11 w-full items-center justify-center gap-2 text-[13.5px] font-semibold">
+          <Activity className="size-4" aria-hidden /> Abrir en Live
+        </Link>
+      )}
     </div>
   );
 }

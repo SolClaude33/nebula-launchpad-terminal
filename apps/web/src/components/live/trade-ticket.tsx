@@ -1,64 +1,56 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Info, Loader2 } from "lucide-react";
-import { priceSol, useSim, type Wallet } from "@/lib/sim";
-import { estimate, maxBuyPerWallet, PAD_FEE_PCT, runOrder } from "@/lib/trade";
+import { lamToSol, useLive } from "@/lib/live";
+import { runOrder, useTradeQuote, useWalletPicker, type Side } from "@/lib/trade";
 import { fmtSol } from "@/lib/format";
 
-type Side = "buy" | "sell";
-
-export function useWalletPicker() {
-  const wallets = useSim((s) => s.wallets);
-  const folders = useSim((s) => s.folders);
-  const [scope, setScope] = useState<string>("f-holders");
-  const [includeDev, setIncludeDev] = useState(false);
-  const selected = useMemo(() => {
-    const base = scope === "all" ? wallets : wallets.filter((w) => w.folder === scope);
-    return base.filter((w) => includeDev || w.role !== "dev" || scope === "f-dev");
-  }, [wallets, scope, includeDev]);
-  return { wallets, folders, scope, setScope, includeDev, setIncludeDev, selected };
-}
+const toLamports = (v: string) => {
+  const n = Number(v.replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? BigInt(Math.round(n * 1e9)) : 0n;
+};
 
 export function TradeTicket() {
   const [side, setSide] = useState<Side>("buy");
-  const { folders, scope, setScope, includeDev, setIncludeDev, selected } = useWalletPicker();
+  const { folders, scope, setScope, includeDev, setIncludeDev, hasDev, selected } = useWalletPicker("nebula.ticket.scope");
+  const venue = useLive((s) => s.info?.venue ?? "curve");
   const [amount, setAmount] = useState("0,1");
   const [pct, setPct] = useState(25);
   const [slippage, setSlippage] = useState({ buy: "15", sell: "5" });
   const [mode, setMode] = useState<"parallel" | "staggered">("parallel");
   const [busy, setBusy] = useState(false);
 
-  const amt = Number(amount.replace(",", ".")) || 0;
+  const buy = side === "buy";
+  const lamports = toLamports(amount);
   const slip = Number(slippage[side].replace(",", ".")) || 0;
-  const holding = selected.filter((w) => w.tokens > 0);
-  const mc = useSim((s) => s.mc);
-  const sellPreviewSol = holding.reduce((a, w) => a + w.tokens * (pct / 100), 0) * priceSol(mc);
-  const est = estimate(side, side === "buy" ? selected : holding, side === "buy" ? amt : sellPreviewSol);
-  const max = maxBuyPerWallet(selected);
+  const holding = selected.filter((w) => w.tokens > 0n);
+  const targets = buy ? selected : holding;
+  const slipError = slip < 0.1 || slip > 50 ? "Entre 0,1 % y 50 %." : null;
+  const { quote, error: quoteError } = useTradeQuote(targets.length && !slipError && (!buy || lamports > 0n) ? { side, walletIds: targets.map((w) => w.id), ...(buy ? { lamportsEach: lamports.toString() } : { pct }), slippagePct: slip } : null);
+  const max = quote ? BigInt(quote.maxBuyPerWallet) : null;
+  const okCount = quote ? quote.items.filter((i) => i.ok).length : targets.length;
 
-  const amountError = side === "buy" && amt <= 0 ? "Indica un monto mayor que 0." : side === "buy" && amt > max ? `Supera el máximo por wallet (${fmtSol(max)}).` : null;
-  const slipError = slip <= 0 || slip > 50 ? "Entre 0,1 % y 50 %." : null;
-  const emptySel = side === "buy" ? selected.length === 0 : holding.length === 0;
-  const disabledReason = emptySel ? (side === "buy" ? "No hay wallets en la selección." : "Ninguna wallet seleccionada tiene tokens.") : amountError ?? slipError;
+  const amountError = buy && lamports <= 0n ? "Indica un monto mayor que 0." : buy && max !== null && lamports > max ? `Supera el máximo por wallet (${fmtSol(lamToSol(max), 4)}).` : null;
+  const emptySel = targets.length === 0 ? (buy ? "No hay wallets en la selección." : "Ninguna wallet seleccionada tiene tokens.") : null;
+  const migrating = venue === "migrating" ? "La curva está completa y la migración a PumpSwap aún no ha ocurrido." : null;
+  const disabledReason = migrating ?? emptySel ?? amountError ?? slipError ?? (quote && okCount === 0 ? quote.items[0]?.reason ?? "Ninguna wallet puede operar." : null);
 
   async function submit() {
     if (disabledReason) return;
     setBusy(true);
-    await runOrder(
-      { side, walletIds: (side === "buy" ? selected : holding).map((w: Wallet) => w.id), amountSol: amt, pct, slippage: slip },
-      `Ticket · ${mode === "parallel" ? "en paralelo" : "escalonado"}`,
-    );
+    await runOrder({ side, walletIds: targets.map((w) => w.id), ...(buy ? { lamportsEach: lamports.toString() } : { pct }), slippagePct: slip, mode }, "ticket");
     setBusy(false);
   }
 
-  const buy = side === "buy";
+  const c = quote?.costs;
+  const skipped = quote?.items.filter((i) => !i.ok) ?? [];
 
   return (
     <section aria-label="Ticket de compra y venta" className="panel reticle flex flex-col p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="telemetry">02 · Ticket</p>
-        <span className="chip h-5 px-2 text-[10.5px]">bonding curve</span>
+        <span className="chip h-5 px-2 text-[10.5px]">{venue === "pumpswap" ? "PumpSwap" : venue === "migrating" ? "migrando" : "bonding curve"}</span>
       </div>
 
       <div role="radiogroup" aria-label="Lado" className="grid grid-cols-2 gap-1 rounded-[var(--radius-sm)] border border-line bg-surface-2/60 p-1">
@@ -83,16 +75,16 @@ export function TradeTicket() {
       </label>
       <div className="flex gap-2">
         <select id="ticket-scope" value={scope} onChange={(e) => setScope(e.target.value)} className="field h-9 py-0">
+          <option value="all">Todas las wallets</option>
           {folders.map((f) => (
             <option key={f.id} value={f.id}>
               Carpeta · {f.name}
             </option>
           ))}
-          <option value="all">Todas las wallets</option>
         </select>
-        <span className="chip num h-9 shrink-0 rounded-[var(--radius-sm)] px-3">{buy ? selected.length : holding.length} sel.</span>
+        <span className="chip num h-9 shrink-0 rounded-[var(--radius-sm)] px-3">{targets.length} sel.</span>
       </div>
-      {scope !== "f-dev" && (
+      {hasDev && (
         <label className="mt-2 flex cursor-pointer items-center gap-2 text-[12px] text-muted">
           <input type="checkbox" checked={includeDev} onChange={(e) => setIncludeDev(e.target.checked)} className="size-3.5 accent-[var(--accent-a)]" />
           Incluir wallet dev {includeDev && <span className="chip h-5 border-warn/30 px-1.5 text-[10.5px] text-warn">incl. dev</span>}
@@ -102,7 +94,7 @@ export function TradeTicket() {
       {buy ? (
         <>
           <label className="mt-4 mb-1.5 flex justify-between text-[12px] text-muted" htmlFor="ticket-amount">
-            SOL por wallet <span className="num text-faint">máx. {fmtSol(max)}</span>
+            SOL por wallet <span className="num text-faint">máx. {max === null ? "—" : fmtSol(lamToSol(max), 4)}</span>
           </label>
           <div className="relative">
             <input id="ticket-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-invalid={!!amountError} aria-describedby="ticket-amount-err" className="field num h-10 pr-14 text-[15px]" />
@@ -114,11 +106,15 @@ export function TradeTicket() {
                 {v}
               </button>
             ))}
-            <button onClick={() => setAmount(max.toLocaleString("es-ES"))} className="btn h-8 px-0 text-[11.5px]" title="Reserva fees y rent">
+            <button onClick={() => max !== null && setAmount((Math.floor(lamToSol(max) * 1e6) / 1e6).toLocaleString("es-ES", { maximumFractionDigits: 6 }))} disabled={max === null || max <= 0n} className="btn h-8 px-0 text-[11.5px]" title="Reserva fees, rent de las cuentas nuevas y un margen">
               MAX
             </button>
           </div>
-          {amountError && <p id="ticket-amount-err" className="mt-1.5 text-[12px] text-sell">{amountError}</p>}
+          {amountError && (
+            <p id="ticket-amount-err" className="mt-1.5 text-[12px] text-sell">
+              {amountError}
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -147,7 +143,7 @@ export function TradeTicket() {
           <span className="mb-1.5 block text-[12px] text-muted">Ejecución</span>
           <div role="radiogroup" aria-label="Ejecución" className="grid h-9 grid-cols-2 gap-0.5 rounded-[var(--radius-sm)] border border-line bg-surface-2 p-0.5">
             {(["parallel", "staggered"] as const).map((m) => (
-              <button key={m} role="radio" aria-checked={mode === m} onClick={() => setMode(m)} className={`rounded-[6px] text-[11.5px] ${mode === m ? "bg-surface-3 text-fg" : "text-muted hover:text-fg"}`}>
+              <button key={m} role="radio" aria-checked={mode === m} onClick={() => setMode(m)} title={m === "staggered" ? "Una wallet tras otra con un retardo fijo" : "Todas a la vez"} className={`rounded-[6px] text-[11.5px] ${mode === m ? "bg-surface-3 text-fg" : "text-muted hover:text-fg"}`}>
                 {m === "parallel" ? "Paralelo" : "Escalonado"}
               </button>
             ))}
@@ -155,14 +151,16 @@ export function TradeTicket() {
         </div>
       </div>
 
-      <dl className="mt-4 space-y-1.5 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 p-3 text-[12px]">
-        <Row label={buy ? `Compras (${est.n} × ${fmtSol(amt)})` : `Recibes aprox. (${est.n} wallets)`} value={fmtSol(est.volume)} strong />
-        <Row label="Fee de red" value={fmtSol(est.network, 6)} />
-        <Row label="Priority fee" value={fmtSol(est.priority, 5)} />
-        {est.rent > 0 && <Row label="Rent de cuentas nuevas" value={fmtSol(est.rent, 5)} hint="Se recupera al cerrar la cuenta de token vacía." />}
-        <Row label={`Fee Pump.fun (${PAD_FEE_PCT} %)`} value={fmtSol(est.pad, 4)} hint="Valor de demostración. En F1 lo da el adaptador." />
+      <dl className="mt-4 space-y-1.5 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 p-3 text-[12px]" aria-busy={!quote && !quoteError}>
+        <Row label={buy ? `Compras (${okCount} × ${fmtSol(lamToSol(lamports), 3)})` : `Recibes aprox. (${okCount} wallets)`} value={c ? fmtSol(lamToSol(c.volume), 4) : "—"} strong />
+        <Row label="Fee de red" value={c ? fmtSol(lamToSol(c.network), 6) : "—"} />
+        <Row label="Priority fee" value={c ? fmtSol(lamToSol(c.priority), 5) : "—"} />
+        {c && BigInt(c.rent) > 0n && <Row label="Rent de cuentas nuevas" value={fmtSol(lamToSol(c.rent), 5)} hint="Cuenta de token y cuentas del programa que crea la primera compra. La de token se recupera al cerrarla vacía." />}
+        <Row label={`Fee del pad${quote ? ` (${(quote.padFeeBps / 100).toLocaleString("es-ES")} %)` : ""}`} value={c ? fmtSol(lamToSol(c.padFee), 5) : "—"} hint="La informa el adaptador con las fees reales del programa; ya va incluida en el precio." />
         <div className="my-1 border-t border-line" />
-        <Row label={buy ? "Total a gastar" : "Coste de la operación"} value={fmtSol(est.total, 4)} strong />
+        <Row label={buy ? "Total a gastar" : "Coste de la operación"} value={c ? fmtSol(lamToSol(c.total), 4) : "—"} strong />
+        {skipped.length > 0 && <p className="pt-1 text-[11.5px] text-warn">{skipped.length === 1 ? `${skipped[0].label} se omitirá: ${skipped[0].reason}` : `${skipped.length} wallets se omitirán (saldo o tokens insuficientes).`}</p>}
+        {quoteError && <p className="pt-1 text-[11.5px] text-sell">{quoteError}</p>}
       </dl>
 
       <button
@@ -174,7 +172,7 @@ export function TradeTicket() {
         }`}
       >
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : buy ? <ArrowUpRight className="size-4" aria-hidden /> : <ArrowDownRight className="size-4" aria-hidden />}
-        {busy ? "Enviando…" : buy ? `Comprar con ${selected.length} wallets` : `Vender ${pct} % en ${holding.length} wallets`}
+        {busy ? "Enviando…" : buy ? `Comprar con ${okCount} wallets` : `Vender ${pct} % en ${okCount} wallets`}
       </button>
       <p id="ticket-reason" className="mt-2 min-h-4 text-center text-[11.5px] text-faint">
         {disabledReason ?? `Slippage ${slip.toLocaleString("es-ES")} %: se envía exactamente este valor.`}

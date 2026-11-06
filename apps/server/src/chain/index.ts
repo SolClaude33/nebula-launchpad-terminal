@@ -56,6 +56,8 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
   };
   const ataOf = (mint: string, owner: string, program: PublicKey) => getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(owner), true, program);
   let price: { at: number; v: { usd: number; publishedAt: number } | null } | null = null;
+  /** ¿el RPC soporta getTokenLargestAccounts? (Surfpool no: se recuerda para no reintentarlo cada vez) */
+  let largestSupported: boolean | null = null;
   // En mainnet el precio debe ser reciente; el fork de pruebas lo congela al traer la cuenta
   const maxAgeMs = profile === "test" ? 7 * 24 * 3600_000 : 5 * 60_000;
   return {
@@ -73,7 +75,9 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
       const { program } = await programOf(mint);
       const m = new PublicKey(mint);
       // getTokenLargestAccounts (top 20) en RPCs reales; si no está, getProgramAccounts filtrando por mint
-      const largest = await pool.run((c) => c.getTokenLargestAccounts(m, "confirmed")).catch(() => null);
+      // Una sola llamada directa (sin los reintentos de errores transitorios del pool)
+      const largest = largestSupported === false ? null : await pool.current().getTokenLargestAccounts(m, "confirmed").catch(() => null);
+      if (largestSupported === null) largestSupported = !!largest;
       if (largest) {
         const accs = largest.value.filter((a) => a.amount !== "0");
         const infos = await pool.run((c) => c.getMultipleAccountsInfo(accs.map((a) => a.address), "confirmed"));

@@ -90,6 +90,8 @@ describe.each(backends)("Live Workspace real · %s", (backend) => {
     expect(s.token).toMatchObject({ name: "Órbita Live", symbol: "ORBL", own: true });
     expect(s.solUsd?.usd).toBeGreaterThan(0);
     expect(s.trades).toHaveLength(1);
+    // el selector de /t lista los lanzamientos propios
+    expect((await call("GET", "/api/launches")).json.items[0]).toMatchObject({ mint, symbol: "ORBL", status: "DONE" });
     expect(s.trades[0]).toMatchObject({ side: "buy", venue: "curve", user: dev.address, own: { id: dev.id } });
     // lo gastado por el dev buy incluye las fees del pad: ≈ 0,5 SOL
     expect(Number(s.trades[0].lamports) / 1e9).toBeCloseTo(0.5, 2);

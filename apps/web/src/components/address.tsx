@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { shortAddr } from "@/lib/format";
+import { useChain } from "@/lib/chain";
 
 export function Address({ value, kind = "account", head = 4, tail = 4, className = "" }: { value: string; kind?: "account" | "tx" | "token"; head?: number; tail?: number; className?: string }) {
   const [copied, setCopied] = useState(false);
+  const profile = useChain((s) => s.status?.profile);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);
@@ -20,9 +22,9 @@ export function Address({ value, kind = "account", head = 4, tail = 4, className
       <button onClick={copy} aria-label={copied ? "Copiado" : "Copiar dirección"} className="grid size-5 place-items-center rounded text-faint opacity-60 transition-opacity group-hover/addr:opacity-100 hover:text-fg focus-visible:opacity-100">
         {copied ? <Check className="size-3 text-buy" /> : <Copy className="size-3" />}
       </button>
-      <a href={`https://solscan.io/${path}/${value}`} target="_blank" rel="noreferrer" aria-label="Abrir en Solscan" className="grid size-5 place-items-center rounded text-faint opacity-60 transition-opacity group-hover/addr:opacity-100 hover:text-fg focus-visible:opacity-100">
+      {profile === "mainnet" && <a href={`https://solscan.io/${path}/${value}`} target="_blank" rel="noreferrer" aria-label="Abrir en Solscan" className="grid size-5 place-items-center rounded text-faint opacity-60 transition-opacity group-hover/addr:opacity-100 hover:text-fg focus-visible:opacity-100">
         <ExternalLink className="size-3" />
-      </a>
+      </a>}
     </span>
   );
 }

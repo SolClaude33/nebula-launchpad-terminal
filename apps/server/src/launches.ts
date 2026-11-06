@@ -69,6 +69,15 @@ export class Launches {
     return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at };
   }
 
+  /** Lanzamientos ya creados en cadena (para abrir su Live Workspace). */
+  list(limit = 50) {
+    const rows = this.db().prepare("SELECT id, status, mint, config, created_at, updated_at FROM launch WHERE status IN ('DONE','BUYING','CREATED','PAUSED') ORDER BY created_at DESC LIMIT ?").all(limit) as { id: string; status: string; mint: string; config: string; created_at: number }[];
+    return rows.map((r) => {
+      const c = JSON.parse(r.config) as Stored;
+      return { id: r.id, status: r.status, mint: r.mint, name: c.name, symbol: c.symbol, mode: c.mode, createdAt: r.created_at };
+    });
+  }
+
   async uploadMedia(bytes: Buffer, contentType: string) {
     const img = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(contentType);
     const vid = ["video/mp4", "video/webm"].includes(contentType);

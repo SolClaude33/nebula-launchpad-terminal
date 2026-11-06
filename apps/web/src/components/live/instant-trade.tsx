@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GripHorizontal, Minus, SlidersHorizontal, Zap } from "lucide-react";
-import { usePosition, useSim } from "@/lib/sim";
-import { runOrder } from "@/lib/trade";
+import { lamToSol, toTokens, useLive } from "@/lib/live";
+import { runOrder, useWalletPicker } from "@/lib/trade";
 import { fmtSol, fmtTokens } from "@/lib/format";
-import { useWalletPicker } from "./trade-ticket";
 import { LiveNumber } from "@/components/live-number";
 
 type Layout = "qwerty" | "azerty" | "qwertz";
@@ -27,9 +26,15 @@ export function InstantTrade() {
   const [armed, setArmed] = useState(false);
   const [settings, setSettings] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const { folders, scope, setScope, selected } = useWalletPicker();
-  const pos = usePosition(selected.map((w) => w.id));
-  const ready = useSim((s) => s.ready);
+  const { folders, scope, setScope, selected } = useWalletPicker("nebula.instant.scope");
+  const position = useLive((s) => s.position);
+  const info = useLive((s) => s.info);
+  const ready = !!info && !!position;
+  // P&L en vivo de la selección: valor actual menos coste base de los trades propios indexados
+  const ids = new Set(selected.map((w) => w.id));
+  const rows = (position?.items ?? []).filter((p) => ids.has(p.walletId));
+  const pos = { tokens: rows.reduce((a, p) => a + Number(p.tokens), 0), pnl: lamToSol(rows.reduce((a, p) => a + p.valueLamports - p.costLamports, 0)) };
+  const blocked = info?.venue === "migrating";
 
   // Cargar preferencias guardadas en local
   useEffect(() => {
@@ -93,16 +98,17 @@ export function InstantTrade() {
     async (kind: "buy" | "sell", i: number) => {
       const key = `${kind}-${i}`;
       if (pending) return;
-      const ids = (kind === "buy" ? selected : selected.filter((w) => w.tokens > 0)).map((w) => w.id);
+      if (blocked) return;
+      const ids = (kind === "buy" ? selected : selected.filter((w) => w.tokens > 0n)).map((w) => w.id);
       if (ids.length === 0) return;
       setPending(key);
       await runOrder(
-        kind === "buy" ? { side: "buy", walletIds: ids, amountSol: BUY_AMOUNTS[i], slippage: 15 } : { side: "sell", walletIds: ids, pct: SELL_PCTS[i], slippage: 5 },
-        "Instant Trade",
+        kind === "buy" ? { side: "buy", walletIds: ids, lamportsEach: String(Math.round(BUY_AMOUNTS[i] * 1e9)), slippagePct: 15 } : { side: "sell", walletIds: ids, pct: SELL_PCTS[i], slippagePct: 5 },
+        "instant",
       );
       setPending(null);
     },
-    [pending, selected],
+    [pending, selected, blocked],
   );
 
   // Atajos: mantener Espacio arma el teclado (REQ-LIVE-004)
@@ -195,12 +201,12 @@ export function InstantTrade() {
 
           <div className="flex items-center gap-2">
             <select aria-label="Carpeta del Instant Trade" value={scope} onChange={(e) => setScope(e.target.value)} className="field h-8 py-0 text-[12.5px]">
+              <option value="all">Todas</option>
               {folders.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
                 </option>
               ))}
-              <option value="all">Todas</option>
             </select>
             <span className="chip num h-8 shrink-0 rounded-[var(--radius-sm)]">{selected.length} w.</span>
           </div>
@@ -208,7 +214,7 @@ export function InstantTrade() {
           <div className="mt-3 grid grid-cols-2 gap-2 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 px-3 py-2">
             <div>
               <p className="telemetry text-[9.5px]">Posición</p>
-              <p className="num text-[13px]">{fmtTokens(pos.tokens)}</p>
+              <p className="num text-[13px]">{fmtTokens(toTokens(pos.tokens, info?.decimals ?? 6))}</p>
             </div>
             <div className="text-right">
               <p className="telemetry text-[9.5px]">P&L en vivo</p>
@@ -223,7 +229,7 @@ export function InstantTrade() {
           </p>
           <div className="grid grid-cols-4 gap-1.5">
             {BUY_AMOUNTS.map((a, i) => (
-              <button key={a} onClick={() => fire("buy", i)} disabled={!!pending || selected.length === 0} aria-keyshortcuts={`Space+${keys.buy[i]}`} className={`btn btn-buy h-[52px] flex-col gap-1 px-0 ${pending === `buy-${i}` ? "animate-pulse" : ""}`}>
+              <button key={a} onClick={() => fire("buy", i)} disabled={!!pending || blocked || selected.length === 0} aria-keyshortcuts={`Space+${keys.buy[i]}`} className={`btn btn-buy h-[52px] flex-col gap-1 px-0 ${pending === `buy-${i}` ? "animate-pulse" : ""}`}>
                 <span className="num text-[13px] leading-none">{a.toLocaleString("es-ES")}</span>
                 <span className={`kbd h-4 min-w-4 text-[9px] ${armed ? "border-accent-b/60 text-accent-b" : ""}`}>{keys.buy[i]}</span>
               </button>
@@ -234,14 +240,18 @@ export function InstantTrade() {
           </p>
           <div className="grid grid-cols-4 gap-1.5">
             {SELL_PCTS.map((p, i) => (
-              <button key={p} onClick={() => fire("sell", i)} disabled={!!pending || pos.tokens === 0} aria-keyshortcuts={`Space+${keys.sell[i]}`} className={`btn btn-sell h-[52px] flex-col gap-1 px-0 ${pending === `sell-${i}` ? "animate-pulse" : ""}`}>
+              <button key={p} onClick={() => fire("sell", i)} disabled={!!pending || blocked || pos.tokens === 0} aria-keyshortcuts={`Space+${keys.sell[i]}`} className={`btn btn-sell h-[52px] flex-col gap-1 px-0 ${pending === `sell-${i}` ? "animate-pulse" : ""}`}>
                 <span className="num text-[13px] leading-none">{p} %</span>
                 <span className={`kbd h-4 min-w-4 text-[9px] ${armed ? "border-accent-b/60 text-accent-b" : ""}`}>{keys.sell[i]}</span>
               </button>
             ))}
           </div>
           <p className="mt-3 text-center text-[11px] text-faint">
-            Mantén <span className="kbd">Espacio</span> y pulsa la tecla. Sin Espacio, ninguna tecla opera.
+            {blocked ? "Migrando a PumpSwap: se podrá operar cuando exista el pool." : (
+              <>
+                Mantén <span className="kbd">Espacio</span> y pulsa la tecla. Sin Espacio, ninguna tecla opera.
+              </>
+            )}
           </p>
         </div>
       )}

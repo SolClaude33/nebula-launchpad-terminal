@@ -16,13 +16,12 @@ import {
   Settings,
   Wallet,
 } from "lucide-react";
-import { DEMO_ROUTE } from "@/lib/demo";
 import { fmtLamports, useChain } from "@/lib/chain";
 import { api } from "@/lib/api";
 import { useVault } from "@/lib/vault";
 import type { WalletDto } from "@nebula/shared";
 
-type Item = { label: string; href: string; icon: React.ComponentType<{ className?: string }>; ready?: boolean; match?: string; demo?: boolean };
+type Item = { label: string; href: string; icon: React.ComponentType<{ className?: string }>; ready?: boolean; match?: string };
 
 const NAV: { group: string; items: Item[] }[] = [
   {
@@ -31,7 +30,7 @@ const NAV: { group: string; items: Item[] }[] = [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
       { label: "Lanzar token", href: "/launch/new", icon: Rocket, ready: true, match: "/launch" },
       { label: "Lanzamientos", href: "/launches", icon: Layers },
-      { label: "Live", href: DEMO_ROUTE, icon: Activity, ready: true, match: "/t/", demo: true },
+      { label: "Live", href: "/t", icon: Activity, ready: true, match: "/t" },
     ],
   },
   {
@@ -39,7 +38,7 @@ const NAV: { group: string; items: Item[] }[] = [
     items: [
       { label: "Wallets", href: "/wallets", icon: Wallet, ready: true },
       { label: "Funder", href: "/funder", icon: Landmark, ready: true },
-      { label: "Comisiones", href: "/rewards", icon: Coins },
+      { label: "Comisiones", href: "/rewards", icon: Coins, ready: true },
     ],
   },
   {
@@ -107,7 +106,6 @@ export function Sidebar() {
                     <Icon className={`size-4 shrink-0 ${active ? "text-accent-b" : ""}`} />
                     {!collapsed && <span className="flex-1 truncate">{it.label}</span>}
                     {!collapsed && !it.ready && <span className="telemetry text-[9.5px] text-faint/70">pronto</span>}
-                    {!collapsed && it.demo && <span className="telemetry text-[9.5px] text-warn/80" title="Datos simulados hasta conectar el adaptador de Pump.fun">demo</span>}
                   </>
                 );
                 const cls = `relative flex h-9 items-center gap-3 rounded-[var(--radius-sm)] px-2.5 text-[13.5px] transition-colors duration-150 ${

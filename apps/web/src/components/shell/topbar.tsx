@@ -3,16 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Lock, Moon, Search, Sun, TriangleAlert } from "lucide-react";
-import { SOL_USD } from "@/lib/sim";
+import { useLive } from "@/lib/live";
 import { toast } from "@/lib/toast";
 import { forceHeartbeat, useVault } from "@/lib/vault";
 import { useChain, useChainStatusPolling } from "@/lib/chain";
 
 function titleFor(path: string) {
   if (path.startsWith("/t/")) return ["Live", "Workspace"];
+  if (path === "/t") return ["Live", "Abrir token"];
   if (path.startsWith("/launch")) return ["Lanzar", "Nuevo lanzamiento"];
   if (path.startsWith("/wallets")) return ["Fondos", "Wallets"];
   if (path.startsWith("/funder")) return ["Fondos", "Funder"];
+  if (path.startsWith("/rewards")) return ["Fondos", "Comisiones"];
   if (path.startsWith("/settings")) return ["Sistema", "Ajustes"];
   return ["Nébula", ""];
 }
@@ -20,7 +22,6 @@ function titleFor(path: string) {
 export function Topbar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [latency, setLatency] = useState(38);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const status = useVault((s) => s.status);
   const readAt = useVault((s) => s.readAt);
@@ -34,12 +35,6 @@ export function Topbar() {
     } catch {}
     router.push("/unlock");
   }, [router, vaultLock]);
-
-  // Latencia simulada del RPC principal (el RPC real llega con el adaptador)
-  useEffect(() => {
-    const id = setInterval(() => setLatency(Math.round(30 + Math.random() * 22)), 2500);
-    return () => clearInterval(id);
-  }, []);
 
   // Cuenta atrás local entre lecturas del estado; el bloqueo real lo decide el servidor (REQ-VAULT-003)
   useEffect(() => {
@@ -87,7 +82,7 @@ export function Topbar() {
   };
 
   const [section, page] = titleFor(pathname);
-  const demo = pathname.startsWith("/t/");
+  const live = pathname.startsWith("/t/");
   const mm = String(Math.max(0, Math.floor(left / 60))).padStart(2, "0");
   const ss = String(Math.max(0, left % 60)).padStart(2, "0");
   const warn = left <= 60;
@@ -112,19 +107,8 @@ export function Topbar() {
         </button>
 
         <div className="flex items-center gap-2">
-          {demo ? (
-            <>
-              <span className="chip num" title="Latencia simulada (demo)">
-                <span className="size-2 rounded-full bg-buy" aria-hidden />
-                RPC {latency} ms · demo
-              </span>
-              <span className="chip num" title="Precio de SOL simulado (demo)">
-                SOL ${SOL_USD.toLocaleString("es-ES", { minimumFractionDigits: 2 })}
-              </span>
-            </>
-          ) : (
-            <RpcChip />
-          )}
+          <RpcChip />
+          {live && <SolPriceChip />}
           <button
             onClick={toggleTheme}
             className="btn btn-ghost size-9 p-0"
@@ -174,6 +158,17 @@ function RpcChip() {
       </span>
       {st.healthy ? `RPC ${st.latencyMs ?? "—"} ms` : "RPC caído"}
       {st.usingBackup && <span className="text-warn">· respaldo</span>}
+    </span>
+  );
+}
+
+/** Precio SOL/USD del oráculo (Pyth) que usa el Live Workspace; sin precio, todo se muestra en SOL. */
+function SolPriceChip() {
+  const p = useLive((s) => s.solUsd);
+  if (!p) return null;
+  return (
+    <span className="chip num" title={`Pyth SOL/USD · publicado ${new Date(p.publishedAt).toLocaleString("es-ES")}`}>
+      SOL ${p.usd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
     </span>
   );
 }

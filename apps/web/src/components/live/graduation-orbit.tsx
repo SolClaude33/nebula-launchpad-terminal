@@ -1,13 +1,14 @@
 "use client";
 
 import { useId } from "react";
-import { GRAD_MC } from "@/lib/sim";
-import { fmtUsd } from "@/lib/format";
 
-/** Progreso de la bonding curve dibujado como una órbita: el satélite avanza hacia PumpSwap. */
-export function GraduationOrbit({ mc, size = 168 }: { mc: number; size?: number }) {
+/**
+ * Progreso de la bonding curve dibujado como una órbita: el satélite avanza hacia PumpSwap.
+ * `pct` sale de las reservas reales de la curva (tokens vendidos sobre los vendibles), no del market cap.
+ */
+export function GraduationOrbit({ pct, target, size = 168 }: { pct: number; target: string; size?: number }) {
   const id = useId();
-  const p = Math.max(0, Math.min(1, mc / GRAD_MC));
+  const p = Math.max(0, Math.min(1, pct / 100));
   const cx = size / 2;
   const cy = size / 2;
   const r = size / 2 - 12;
@@ -58,7 +59,7 @@ export function GraduationOrbit({ mc, size = 168 }: { mc: number; size?: number 
         </span>
         {size >= 140 && <span className="telemetry mt-1.5 text-[9.5px]">hacia graduar</span>}
         <span className="num mt-1 text-muted" style={{ fontSize: Math.max(9.5, size * 0.085) }}>
-          de {fmtUsd(GRAD_MC)}
+          {target}
         </span>
       </div>
     </div>

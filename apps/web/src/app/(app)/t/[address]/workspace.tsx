@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Zap } from "lucide-react";
-import { useSim } from "@/lib/sim";
+import { ArrowLeft, Loader2, Orbit, TriangleAlert, Zap } from "lucide-react";
+import { api } from "@/lib/api";
+import { useChain } from "@/lib/chain";
+import { refreshLive, useLive, useLiveFeed } from "@/lib/live";
+import { toast } from "@/lib/toast";
 import { TokenHeader } from "@/components/live/token-header";
 import { ActivityTabs } from "@/components/live/activity-tabs";
 import { TradeTicket } from "@/components/live/trade-ticket";
 import { PositionCard } from "@/components/live/position-card";
 import { InstantTrade } from "@/components/live/instant-trade";
-import { DemoNotice } from "@/components/demo-notice";
 
 const PriceChart = dynamic(() => import("@/components/live/price-chart").then((m) => m.PriceChart), {
   ssr: false,
@@ -21,23 +24,13 @@ const SPLIT_KEY = "nebula.live.split";
 
 export function Workspace() {
   const { address } = useParams<{ address: string }>();
-  const init = useSim((s) => s.init);
-  const tick = useSim((s) => s.tick);
-  const ready = useSim((s) => s.ready);
+  useLiveFeed(address);
+  const ready = useLive((s) => !!s.info && s.mint === address);
+  const error = useLive((s) => s.error);
+  const venue = useLive((s) => s.info?.venue);
   const [split, setSplit] = useState(0.56);
   const [showInstant, setShowInstant] = useState(true);
   const col = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    init();
-    let t: ReturnType<typeof setTimeout>;
-    const loop = () => {
-      tick();
-      t = setTimeout(loop, 600 + Math.random() * 1500);
-    };
-    t = setTimeout(loop, 800);
-    return () => clearTimeout(t);
-  }, [init, tick]);
 
   useEffect(() => {
     try {
@@ -82,11 +75,13 @@ export function Workspace() {
     }
   };
 
+  if (!ready && error) return <WorkspaceError status={error.status} message={error.message} />;
   if (!ready) return <WorkspaceSkeleton />;
 
   return (
     <div className="flex h-[calc(100dvh-80px)] min-h-[640px] flex-col gap-3 p-3">
-      <DemoNotice what="El Live Workspace" />
+      {venue === "migrating" && <MigratingNotice mint={address} />}
+      {error && <p role="status" className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-warn/25 bg-[var(--warn-soft)] px-3 py-1.5 text-[12px] text-warn"><TriangleAlert className="size-3.5" aria-hidden /> Sin datos nuevos: {error.message} Se reintenta cada segundo.</p>}
       <TokenHeader mint={address} />
 
       <div className="flex min-h-0 flex-1 gap-3">
@@ -126,6 +121,54 @@ export function Workspace() {
       </div>
 
       {showInstant && <InstantTrade />}
+    </div>
+  );
+}
+
+/** Curva completa sin pool: en mainnet la migración la hace Pump.fun; en pruebas se puede lanzar a mano. */
+function MigratingNotice({ mint }: { mint: string }) {
+  const profile = useChain((s) => s.status?.profile);
+  const wallets = useLive((s) => s.wallets);
+  const [busy, setBusy] = useState(false);
+  const migrate = async () => {
+    const payer = wallets[0];
+    if (!payer) return;
+    setBusy(true);
+    try {
+      await api("/dev/migrate", { method: "POST", body: { mint, payerWalletId: payer.id } });
+      toast({ tone: "info", title: "Migrado a PumpSwap (perfil de pruebas)", body: `Pagado por ${payer.label}.` });
+      await refreshLive();
+    } catch (e) {
+      toast({ tone: "error", title: "No se pudo migrar", body: (e as Error).message });
+    }
+    setBusy(false);
+  };
+  return (
+    <div role="status" className="flex items-center gap-3 rounded-[var(--radius-sm)] border border-accent-b/25 bg-[color-mix(in_oklab,var(--accent-b)_8%,transparent)] px-3 py-2 text-[12.5px]">
+      <Orbit className="size-4 shrink-0 text-accent-b" aria-hidden />
+      <span className="flex-1">
+        <strong className="font-semibold">Curva completa.</strong> El token se está graduando: las órdenes se bloquean hasta que exista el pool de PumpSwap{profile === "mainnet" ? ", que crea Pump.fun." : "."}
+      </span>
+      {profile === "test" && (
+        <button onClick={migrate} disabled={busy || wallets.length === 0} className="btn h-8 px-3 text-[12px]" title="Solo en el perfil de pruebas: en mainnet la migración la hace Pump.fun">
+          {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Migrar ahora (pruebas)
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceError({ status, message }: { status: number; message: string }) {
+  return (
+    <div className="grid h-[calc(100dvh-80px)] place-items-center p-6">
+      <div className="panel reticle max-w-[460px] p-6 text-center">
+        <TriangleAlert className="mx-auto size-6 text-warn" aria-hidden />
+        <h1 className="mt-3 text-[16px] font-semibold">{status === 404 ? "No se puede abrir este token" : "Sin conexión con la cadena"}</h1>
+        <p className="mt-1.5 text-[13px] text-muted">{message}</p>
+        <Link href="/t" className="btn mt-5 inline-flex h-9 px-4 text-[13px]">
+          <ArrowLeft className="size-4" aria-hidden /> Elegir otro token
+        </Link>
+      </div>
     </div>
   );
 }

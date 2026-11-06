@@ -1,44 +1,115 @@
 "use client";
 
-import { ATA_RENT, BASE_FEE, PRIORITY_FEE, useSim, type ExecRequest, type Wallet } from "@/lib/sim";
+// Órdenes reales del ticket y del Instant Trade (REQ-LIVE-002/003) contra la API local.
+// El id de la orden lo genera la interfaz: un reintento o un doble clic con el mismo id no duplica nada.
+import { useEffect, useMemo, useState } from "react";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { fmtSol } from "@/lib/format";
+import { fmtSol, fmtTokens } from "@/lib/format";
+import { lamToSol, refreshLive, toTokens, useLive } from "@/lib/live";
 
-export const PAD_FEE_PCT = 1; // demo; en F1 lo informa el adaptador de Pump.fun
+export type Side = "buy" | "sell";
+export type OrderItem = { ord: number; walletId: string; label: string; address: string; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; amount: string | null; result: string | null; signature: string | null; reason: string | null };
+export type OrderView = { id: string; mint: string; side: Side; status: "RUNNING" | "PAUSED" | "COMPLETED" | "PARTIAL" | "FAILED"; items: OrderItem[] };
+export type TradeQuote = {
+  venue: "curve" | "migrating" | "pumpswap";
+  padFeeBps: number;
+  items: { walletId: string; label: string; ok: boolean; reason?: string; amountIn: string; expectedOut: string; limit: string }[];
+  costs: { volume: string; network: string; priority: string; rent: string; padFee: string; total: string };
+  maxBuyPerWallet: string;
+  rentPerAccount: string;
+  feePerTx: string;
+};
+export type OrderRequest = { side: Side; walletIds: string[]; lamportsEach?: string; pct?: number; slippagePct: number; mode?: "parallel" | "staggered" };
 
-/** Desglose de costes de una orden multi-wallet (REQ-COST-001). */
-export function estimate(side: "buy" | "sell", wallets: Wallet[], amountSol: number) {
-  const n = wallets.length;
-  const newAtas = side === "buy" ? wallets.filter((w) => w.tokens === 0).length : 0;
-  const volume = side === "buy" ? amountSol * n : amountSol;
-  const network = BASE_FEE * n;
-  const priority = PRIORITY_FEE * n;
-  const rent = ATA_RENT * newAtas;
-  const pad = (volume * PAD_FEE_PCT) / 100;
-  return { n, volume, network, priority, rent, pad, total: side === "buy" ? volume + network + priority + rent : network + priority };
-}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** MAX por wallet reservando fees y rent (REQ-COST-002). */
-export function maxBuyPerWallet(wallets: Wallet[]) {
-  if (wallets.length === 0) return 0;
-  const reserve = (w: Wallet) => BASE_FEE + PRIORITY_FEE + (w.tokens === 0 ? ATA_RENT : 0) + 0.001;
-  const min = Math.min(...wallets.map((w) => w.sol - reserve(w)));
-  return Math.max(0, Math.floor(min * 1000) / 1000);
-}
-
-export async function runOrder(req: ExecRequest, source: string) {
-  const results = await useSim.getState().execute(req);
-  const ok = results.filter((r) => r.status === "ok");
-  const failed = results.filter((r) => r.status === "failed").length;
-  const skipped = results.filter((r) => r.status === "skipped").length;
-  const sol = ok.reduce((a, r) => a + (r.sol ?? 0), 0);
+/** Envía la orden, espera el resultado por wallet y lo muestra (entró / falló / omitida / pendiente). */
+export async function runOrder(req: OrderRequest, source: "ticket" | "instant") {
+  const mint = useLive.getState().mint;
+  const decimals = useLive.getState().info?.decimals ?? 6;
+  if (!mint) return null;
+  const id = crypto.randomUUID();
+  let v: OrderView;
+  try {
+    v = await api<OrderView>("/trade", { method: "POST", body: { id, mint, mode: "parallel", ...req, source } });
+    for (let i = 0; i < 600 && v.status === "RUNNING"; i++) {
+      await sleep(400);
+      v = await api<OrderView>(`/trade/${id}`);
+    }
+  } catch (e) {
+    toast({ tone: "error", title: req.side === "buy" ? "No se pudo comprar" : "No se pudo vender", body: (e as ApiError).message });
+    return null;
+  }
   const buy = req.side === "buy";
+  const ok = v.items.filter((i) => i.status === "OK");
+  const failed = v.items.filter((i) => i.status === "FAILED").length;
+  const skipped = v.items.filter((i) => i.status === "SKIPPED").length;
+  const pending = v.items.filter((i) => i.status === "PENDING").length;
+  const got = ok.reduce((a, i) => a + Number(i.result ?? 0), 0);
+  const where = source === "instant" ? "Instant Trade" : `Ticket · ${req.mode === "staggered" ? "escalonado" : "en paralelo"}`;
   toast({
-    tone: ok.length === 0 ? "error" : failed || skipped ? "warn" : buy ? "buy" : "sell",
-    title: `${buy ? "Compra" : "Venta"} · ${ok.length}/${results.length} wallets entraron`,
-    body: `${source} · ${fmtSol(sol)}${failed ? ` · ${failed} fallaron` : ""}${skipped ? ` · ${skipped} omitidas` : ""}`,
-    lines: results.map((r) => ({ label: r.label, status: r.status, detail: r.status === "ok" ? fmtSol(r.sol ?? 0) : r.reason })),
-    href: ok[0]?.sig ? `https://solscan.io/tx/${ok[0].sig}` : undefined,
+    tone: pending ? "warn" : ok.length === 0 ? "error" : failed || skipped ? "warn" : buy ? "buy" : "sell",
+    title: pending ? `${buy ? "Compra" : "Venta"} en pausa · confirmación pendiente` : `${buy ? "Compra" : "Venta"} · ${ok.length}/${v.items.length} wallets entraron`,
+    body: `${where}${ok.length ? ` · ${buy ? `${fmtTokens(toTokens(got, decimals))} tokens` : fmtSol(lamToSol(got), 4)}` : ""}${failed ? ` · ${failed} fallaron` : ""}${skipped ? ` · ${skipped} omitidas` : ""}${pending ? " · reanúdala desde el aviso de pausa" : ""}`,
+    lines: v.items.map((i) => ({
+      label: i.label,
+      status: i.status === "OK" ? "ok" : i.status === "FAILED" ? "failed" : i.status === "SKIPPED" ? "skipped" : "pending",
+      detail: i.status === "OK" ? (i.result ? (buy ? `${fmtTokens(toTokens(i.result, decimals))} tokens` : fmtSol(lamToSol(i.result), 4)) : "confirmada") : (i.reason ?? (i.status === "PENDING" ? "Pendiente de confirmar" : undefined)),
+    })),
   });
-  return results;
+  void refreshLive();
+  return v;
+}
+
+/** Vista previa del servidor (costes, MAX, motivo por wallet), con un pequeño retardo al teclear. */
+export function useTradeQuote(req: { side: Side; walletIds: string[]; lamportsEach?: string; pct?: number; slippagePct: number } | null) {
+  const mint = useLive((s) => s.mint);
+  const [q, setQ] = useState<TradeQuote | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const key = req && mint ? JSON.stringify({ mint, ...req }) : "";
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      api<TradeQuote>("/trade/quote", { method: "POST", body: JSON.parse(key) })
+        .then((r) => alive && (setQ(r), setError(null)))
+        .catch((e) => alive && setError((e as ApiError).message));
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [key]);
+  return { quote: key ? q : null, error: key ? error : null };
+}
+
+/** Selección de wallets por carpeta; la wallet dev queda fuera salvo que se incluya de forma explícita. */
+export function useWalletPicker(storeKey: string) {
+  const wallets = useLive((s) => s.wallets);
+  const folders = useLive((s) => s.folders);
+  const position = useLive((s) => s.position);
+  const [scope, setScopeState] = useState<string>("all");
+  const [includeDev, setIncludeDev] = useState(false);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(storeKey);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- preferencia local leída tras montar
+      if (v) setScopeState(v);
+    } catch {}
+  }, [storeKey]);
+  const setScope = (v: string) => {
+    setScopeState(v);
+    try {
+      localStorage.setItem(storeKey, v);
+    } catch {}
+  };
+  const validScope = scope === "all" || folders.some((f) => f.id === scope) ? scope : "all";
+  const pos = useMemo(() => new Map((position?.items ?? []).map((p) => [p.walletId, p])), [position]);
+  const selected = useMemo(() => {
+    const base = validScope === "all" ? wallets : wallets.filter((w) => w.folderIds.includes(validScope));
+    return base.filter((w) => includeDev || w.role !== "dev").map((w) => ({ ...w, tokens: BigInt(pos.get(w.id)?.tokens ?? "0"), lamports: BigInt(pos.get(w.id)?.lamports ?? "0") }));
+  }, [wallets, validScope, includeDev, pos]);
+  const hasDev = (validScope === "all" ? wallets : wallets.filter((w) => w.folderIds.includes(validScope))).some((w) => w.role === "dev");
+  return { folders: folders.filter((f) => wallets.some((w) => w.folderIds.includes(f.id))), scope: validScope, setScope, includeDev, setIncludeDev, hasDev, selected };
 }

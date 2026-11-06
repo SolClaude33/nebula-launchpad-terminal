@@ -47,6 +47,8 @@ export const launchRoutes =
       return ctx.launches.resume(id);
     });
 
+    app.get("/launches", async () => ({ items: ctx.launches.list() }));
+
     app.get("/launches/:id", async (req) => {
       const { id } = z.object({ id: z.string() }).parse(req.params);
       return ctx.launches.view(id);

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, ExternalLink, Info, TriangleAlert, X, XCircle } from "lucide-react";
+import { CheckCircle2, CircleSlash, ExternalLink, Info, PauseCircle, TriangleAlert, X, XCircle } from "lucide-react";
 import { useToasts, type ToastTone } from "@/lib/toast";
 
 const toneIcon: Record<ToastTone, React.ReactNode> = {
@@ -36,11 +36,13 @@ export function Toaster() {
                     <CheckCircle2 className="size-3.5 text-buy" aria-hidden />
                   ) : l.status === "failed" ? (
                     <XCircle className="size-3.5 text-sell" aria-hidden />
+                  ) : l.status === "pending" ? (
+                    <PauseCircle className="size-3.5 text-warn" aria-hidden />
                   ) : (
                     <CircleSlash className="size-3.5 text-faint" aria-hidden />
                   )}
                   <span className="w-20 shrink-0 text-fg">{l.label}</span>
-                  <span className="sr-only">{l.status === "ok" ? "entró" : l.status === "failed" ? "falló" : "omitida"}</span>
+                  <span className="sr-only">{l.status === "ok" ? "entró" : l.status === "failed" ? "falló" : l.status === "pending" ? "pendiente" : "omitida"}</span>
                   <span className="truncate text-muted">{l.detail}</span>
                 </li>
               ))}
@@ -48,7 +50,7 @@ export function Toaster() {
           )}
           {t.href && (
             <a href={t.href} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent-b hover:underline">
-              Ver transacción en Solscan <ExternalLink className="size-3" aria-hidden />
+              Ver transacción <ExternalLink className="size-3" aria-hidden />
             </a>
           )}
         </div>
