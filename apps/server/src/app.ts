@@ -119,7 +119,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof VaultError) {
-      const status = { NOT_INITIALIZED: 409, ALREADY_INITIALIZED: 409, LOCKED: 423, BAD_PASSWORD: 400, RETRY_LATER: 429, BAD_STEP_UP: 403 }[err.code];
+      const status = { NOT_INITIALIZED: 409, ALREADY_INITIALIZED: 409, LOCKED: 423, BAD_PASSWORD: 400, RETRY_LATER: 429, BAD_STEP_UP: 403, NO_KEY: 409 }[err.code];
       return reply.code(status).send({ code: err.code, message: err.message, retryInSec: err.retryInSec });
     }
     if (err instanceof ZodError) return reply.code(400).send({ code: "VALIDATION", message: err.issues.map((i) => i.message).join(" · ") });

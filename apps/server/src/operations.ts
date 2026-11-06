@@ -246,15 +246,20 @@ export class Operations {
         if (st !== "RUNNING") return; // pausada por un bloqueo
         if (items.every((i) => i.status !== "PENDING")) continue;
         const [tx] = await chain.transfers.build(items[0].from, items.map((i) => ({ to: i.to, lamports: BigInt(i.lamports) })));
-        let res;
+        let res: Awaited<ReturnType<typeof chain.sender.send>>;
         try {
           res = await chain.sender.send(tx as PreparedTx, { idempotencyKey: `op:${id}:${chunk}` });
         } catch (e) {
           if (e instanceof VaultError && e.code === "LOCKED") return this.pause(id, "Bóveda bloqueada");
-          res = { status: "failed" as const, code: "UNKNOWN" as const, message: (e as Error).message };
+          if (e instanceof VaultError && e.code === "NO_KEY") {
+            setItems.run("FAILED", null, e.message, id, chunk);
+            continue;
+          }
+          return this.pause(id, (e as Error).message);
         }
         if (res.status === "confirmed") setItems.run("OK", res.signature, null, id, chunk);
-        else if (res.status === "failed" && res.code === "UNKNOWN" && /pendiente/i.test(res.message)) return this.pause(id, res.message);
+        else if (res.status === "pending") return this.pause(id, res.message); // puede haber aterrizado: nunca FAILED
+        else if (res.status === "failed" && res.code === "UNKNOWN") return this.pause(id, res.message);
         else if (res.status === "failed") setItems.run("FAILED", res.signature ?? null, res.message, id, chunk);
       }
       this.finish(id);

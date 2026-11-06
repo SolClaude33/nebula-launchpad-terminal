@@ -7,8 +7,9 @@ import type { RpcPool } from "../src/chain/rpc";
 import type { PreparedTx } from "../src/chain/types";
 import { b58encode } from "../src/base58";
 import { tmpDir } from "./helpers";
+import { VaultError } from "../src/signer";
 
-function stub(opts: { status: "confirmed" | "unknown"; height: number }) {
+function stub(opts: { status: "confirmed" | "unknown"; height: number; confirmError?: string }) {
   const calls = { sent: 0 };
   const conn = {
     getLatestBlockhash: async () => ({ blockhash: b58encode(randomBytes(32)), lastValidBlockHeight: 1000 }),
@@ -18,7 +19,7 @@ function stub(opts: { status: "confirmed" | "unknown"; height: number }) {
       return "sig";
     },
     confirmTransaction: async () => {
-      throw new Error("Transaction was not confirmed in 30.00 seconds");
+      throw new Error(opts.confirmError ?? "Transaction was not confirmed in 30.00 seconds");
     },
     getSignatureStatuses: async () => ({ value: [opts.status === "confirmed" ? { confirmationStatus: "confirmed", err: null } : null] }),
     getBlockHeight: async () => opts.height,
@@ -47,10 +48,33 @@ describe("tx-sender · timeout de confirmación tras emitir", () => {
     const { pool, calls } = stub({ status: "unknown", height: 500 });
     const s = new SolanaSender(pool, () => db, sign, { computeUnitLimit: 200_000, priorityMicroLamports: () => 1 });
     const a = await s.send(tx, { idempotencyKey: "k2" });
-    expect(a).toMatchObject({ status: "failed", code: "UNKNOWN" });
+    expect(a).toMatchObject({ status: "pending", signature: expect.any(String) });
     expect((db.prepare("SELECT status FROM tx WHERE idempotency_key = 'k2'").get() as { status: string }).status).toBe("SENT");
     const b = await s.send(tx, { idempotencyKey: "k2" });
-    expect(b).toMatchObject({ status: "failed", code: "UNKNOWN" });
+    expect(b).toMatchObject({ status: "pending" });
+    expect(calls.sent).toBe(1);
+    db.close();
+  });
+
+  it("si la bóveda se bloquea al firmar, send() lo propaga (no lo convierte en un fallo)", async () => {
+    const db = openDb(tmpDir());
+    const { pool, calls } = stub({ status: "unknown", height: 500 });
+    const locked = () => {
+      throw new VaultError("LOCKED", "La bóveda está bloqueada.");
+    };
+    const s = new SolanaSender(pool, () => db, locked, { computeUnitLimit: 200_000, priorityMicroLamports: () => 1 });
+    await expect(s.send(tx, { idempotencyKey: "k3" })).rejects.toMatchObject({ code: "LOCKED" });
+    expect(calls.sent).toBe(0);
+    db.close();
+  });
+
+  it("un corte de red durante la confirmación con estado desconocido queda pendiente con firma", async () => {
+    const db = openDb(tmpDir());
+    const { pool, calls } = stub({ status: "unknown", height: 500, confirmError: "fetch failed" });
+    const s = new SolanaSender(pool, () => db, sign, { computeUnitLimit: 200_000, priorityMicroLamports: () => 1 });
+    const r = await s.send(tx, { idempotencyKey: "k4" });
+    expect(r).toMatchObject({ status: "pending", signature: expect.any(String) });
+    expect((db.prepare("SELECT status FROM tx WHERE idempotency_key = 'k4'").get() as { status: string }).status).toBe("SENT");
     expect(calls.sent).toBe(1);
     db.close();
   });

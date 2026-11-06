@@ -137,7 +137,7 @@ describe.each(backends)("Contrato del adaptador · %s", (backend) => {
     const l = chain.ledger!;
     const tx = await chain.adapter.buildBuyTx({ mint, user: addr.whale, lamports: solToLamports(0.01), slippagePct: 15 });
     l.failures.push("RPC_DOWN");
-    expect(await send(tx)).toMatchObject({ status: "failed", code: "RPC_DOWN" });
+    expect(await send(tx)).toMatchObject({ status: "pending" }); // RPC caído antes de enviar: reintentable
     l.failures.push("BUNDLE_REJECTED");
     expect(await send(tx)).toMatchObject({ status: "failed", code: "BUNDLE_REJECTED" });
     l.failures.push("BLOCKHASH_EXPIRED");

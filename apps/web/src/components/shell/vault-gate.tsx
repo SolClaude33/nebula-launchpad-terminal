@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { PauseCircle, ServerCrash } from "lucide-react";
+import { Loader2, PauseCircle, Play, ServerCrash } from "lucide-react";
 import { api } from "@/lib/api";
 import { useVault } from "@/lib/vault";
 import { useBalancesPolling } from "@/lib/chain";
@@ -63,29 +63,50 @@ function ApiDown({ message }: { message: string }) {
   );
 }
 
-/** REQ-VAULT-003 / REQ-AUTO-008: al desbloquear, se lista lo que se pausó y nada se reanuda solo. */
+/** REQ-VAULT-003 / REQ-AUTO-008: al desbloquear, se lista lo que se pausó y cada cosa se reanuda solo si la confirmas. */
 function PausedDialog({ status }: { status: VaultStatus }) {
   const set = useVault((s) => s.set);
-  const ack = async () => set(await api<VaultStatus>("/vault/paused/ack", { method: "POST", body: {} }));
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const ack = async (ids?: string[]) => set(await api<VaultStatus>("/vault/paused/ack", { method: "POST", body: ids ? { ids } : {} }));
+  const resume = async (id: string) => {
+    setBusy(id);
+    setError("");
+    try {
+      await api(`/operations/${id}/resume`, { method: "POST", body: {} });
+      await ack([id]);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(null);
+  };
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="paused-title" className="fixed inset-0 z-[95] grid place-items-center bg-black/55 backdrop-blur-sm">
-      <div className="glass rise w-[440px] rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-float)]">
+      <div className="glass rise w-[480px] rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-float)]">
         <h3 id="paused-title" className="flex items-center gap-2 text-[16px] font-semibold">
           <PauseCircle className="size-5 text-warn" aria-hidden /> Esto quedó en pausa
         </h3>
-        <p className="mt-1 text-[13px] text-muted">Se pausó al bloquear la bóveda o al reiniciar. Nada que mueva fondos se reanuda sin tu confirmación.</p>
+        <p className="mt-1 text-[13px] text-muted">Se pausó al bloquear la bóveda o al reiniciar. Nada que mueva fondos se reanuda sin tu confirmación; al reanudar no se repite lo que ya se envió.</p>
         <ul className="mt-4 space-y-1.5">
           {status.paused.map((p) => (
-            <li key={p.id} className="flex items-center justify-between rounded-[var(--radius-sm)] border border-line bg-surface-2/50 px-3 py-2 text-[13px]">
-              <span>{p.label}</span>
+            <li key={p.id} className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface-2/50 px-3 py-2 text-[13px]">
+              <span className="flex-1">{p.label}</span>
               <span className="chip h-5 px-1.5 text-[10.5px]">{p.kind}</span>
+              {p.kind === "operación" ? (
+                <button onClick={() => resume(p.id)} disabled={!!busy} className="btn h-7 px-2.5 text-[12px]">
+                  {busy === p.id ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+                  Reanudar
+                </button>
+              ) : (
+                <span className="text-[11.5px] text-faint">se reanuda desde su pantalla</span>
+              )}
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-[12px] text-faint">Podrás reanudar cada una desde Automatizaciones.</p>
+        {error && <p className="mt-2 text-[12.5px] text-sell">{error}</p>}
         <div className="mt-5 flex justify-end">
-          <button autoFocus onClick={ack} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
-            Entendido, mantener en pausa
+          <button autoFocus onClick={() => ack()} disabled={!!busy} className="btn h-9 px-4 text-[13px]">
+            Mantener el resto en pausa
           </button>
         </div>
       </div>

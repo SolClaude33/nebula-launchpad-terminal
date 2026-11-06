@@ -165,6 +165,10 @@ export const walletRoutes =
       const db = ctx.db();
       const defaults = db.prepare(`SELECT id FROM wallet WHERE is_default_funder = 1 AND id IN (${ids.map(() => "?").join(",")})`).all(...ids);
       if (defaults.length) throw Object.assign(new Error("No se puede borrar el funder predeterminado. Elige otro predeterminado antes."), { statusCode: 409 });
+      const inOps = db
+        .prepare(`SELECT 1 FROM operation_item i JOIN operation o ON o.id = i.op_id JOIN wallet w ON w.address IN (i.from_addr, i.to_addr) WHERE o.status IN ('RUNNING','PAUSED') AND w.id IN (${ids.map(() => "?").join(",")}) LIMIT 1`)
+        .get(...ids);
+      if (inOps) throw Object.assign(new Error("Hay wallets usadas por un movimiento en curso o en pausa. Termínalo o espera a que acabe."), { statusCode: 409 });
       const busy = db.prepare("SELECT config FROM task WHERE status IN ('RUNNING','PAUSED','IDLE')").all() as { config: string }[];
       if (busy.some((t) => ids.some((id) => t.config.includes(id)))) throw Object.assign(new Error("Hay wallets usadas por una tarea activa."), { statusCode: 409 });
       db.prepare(`DELETE FROM wallet WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);

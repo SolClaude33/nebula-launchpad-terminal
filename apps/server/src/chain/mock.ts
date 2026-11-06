@@ -214,6 +214,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       for (const s of tx.signers) sign(s, msg);
       let f = ledger.failures.shift();
       if (f === "BLOCKHASH_EXPIRED") f = ledger.failures.shift(); // el sender re-firma con un blockhash nuevo y reintenta
+      if (f === "RPC_DOWN") return { status: "pending", message: "Fallo inyectado: RPC caído (no se envió nada)" };
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
       if (simulateOnly) {
         const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves });

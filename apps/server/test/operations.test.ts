@@ -104,6 +104,23 @@ describe.each(backends)("Movimientos de fondos · %s", (backend) => {
     expect((await call("POST", "/api/operations/preview", { kind: "transfer", fromId: funder.id, to: funder.address, lamports: "1" })).status).toBe(400);
   });
 
+  it.runIf(backend === "mock")("Un resultado pendiente (RPC caído) pausa la operación sin marcar nada como fallido; reanudar no duplica", async () => {
+    const many = (await call("POST", "/api/wallets", { count: 45 })).json.created as string[];
+    const pv = (await call("POST", "/api/operations/preview", { kind: "disperse", fromId: funder.id, toIds: many, lamportsEach: "1500000" })).json;
+    expect(pv.chunks.length).toBeGreaterThanOrEqual(2);
+    const ledger = ctx.chain.get().ledger!;
+    ledger.failures.push("RPC_DOWN");
+    await call("POST", `/api/operations/${pv.id}/execute`, {});
+    const paused = await done(pv.id);
+    expect(paused.status).toBe("PAUSED");
+    expect(paused.items.some((i: { status: string }) => i.status === "FAILED")).toBe(false);
+    await call("POST", `/api/operations/${pv.id}/resume`, {});
+    expect((await done(pv.id)).status).toBe("COMPLETED");
+    const addrs = (await call("GET", "/api/wallets")).json.wallets.filter((w: { id: string }) => many.includes(w.id)).map((w: { address: string }) => w.address);
+    const bals = await ctx.chain.get().reader.balances(addrs);
+    for (const a of addrs) expect(bals.get(a)).toBe(1_500_000n);
+  });
+
   it.runIf(backend === "mock")("Bloquear a mitad de una dispersión la deja en PAUSED; reanudar no repite lo ya enviado", async () => {
     const many = (await call("POST", "/api/wallets", { count: 60 })).json.created as string[];
     const pv = (await call("POST", "/api/operations/preview", { kind: "disperse", fromId: funder.id, toIds: many, lamportsEach: "2000000" })).json;

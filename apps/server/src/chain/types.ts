@@ -50,6 +50,8 @@ export type SendErrorCode = "SLIPPAGE" | "INSUFFICIENT_FUNDS" | "RENT" | "BLOCKH
 export type SendResult =
   | { status: "confirmed"; signature: string; unitsConsumed?: number; feeLamports?: bigint; reused?: boolean }
   | { status: "simulated"; unitsConsumed?: number; logs?: string[] }
+  /** no se sabe si aterrizó (o no se pudo ni enviar por un RPC caído): reintentar con la misma key es seguro */
+  | { status: "pending"; signature?: string; message: string }
   | { status: "failed"; signature?: string; code: SendErrorCode; message: string };
 
 export interface LaunchpadAdapter {

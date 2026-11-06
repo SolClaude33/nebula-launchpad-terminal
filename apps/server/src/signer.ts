@@ -15,7 +15,7 @@ const BACKOFF_SEC = [0, 2, 4, 8, 16, 30, 60];
 
 export class VaultError extends Error {
   constructor(
-    public code: "NOT_INITIALIZED" | "ALREADY_INITIALIZED" | "LOCKED" | "BAD_PASSWORD" | "RETRY_LATER" | "BAD_STEP_UP",
+    public code: "NOT_INITIALIZED" | "ALREADY_INITIALIZED" | "LOCKED" | "BAD_PASSWORD" | "RETRY_LATER" | "BAD_STEP_UP" | "NO_KEY",
     message: string,
     public retryInSec = 0,
   ) {
@@ -251,7 +251,7 @@ export class Vault {
     const dek = this.requireDek();
     const w = this.db.prepare("SELECT id, encrypted_key FROM wallet WHERE address = ?").get(address) as { id: string; encrypted_key: Buffer } | undefined;
     const m = w ? undefined : (this.db.prepare("SELECT id, encrypted_key FROM mint_key WHERE address = ?").get(address) as { id: string; encrypted_key: Buffer } | undefined);
-    if (!w && !m) throw new VaultError("LOCKED", `No hay clave para ${address.slice(0, 4)}…${address.slice(-4)} en la bóveda.`);
+    if (!w && !m) throw new VaultError("NO_KEY", `No hay clave para ${address.slice(0, 4)}…${address.slice(-4)} en la bóveda.`);
     const sk = open(dek, w ? `wallet:${w.id}` : `mint:${m!.id}`, (w ?? m)!.encrypted_key);
     try {
       return sodium.crypto_sign_detached(message, sk);

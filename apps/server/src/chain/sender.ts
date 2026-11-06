@@ -5,6 +5,7 @@ import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransacti
 import { firstSignature } from "./sig";
 import { txFee } from "./fees";
 import type { DB } from "../db";
+import { VaultError } from "../signer";
 import type { RpcPool } from "./rpc";
 import { isNetworkError } from "./rpc";
 import type { MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
@@ -71,7 +72,7 @@ export class SolanaSender implements TxSender {
       if (landed === "confirmed") return this.markConfirmed(idempotencyKey, prev.signature);
       if (landed === "failed") return this.markFailed(idempotencyKey, "SIMULATION_FAILED", "La transacción anterior falló en la cadena.", prev.signature);
       const height = await this.pool.run((c) => c.getBlockHeight("confirmed"));
-      if (prev.last_valid_block_height && height <= prev.last_valid_block_height) return { status: "failed", code: "UNKNOWN", message: "Confirmación pendiente del envío anterior.", signature: prev.signature };
+      if (prev.last_valid_block_height && height <= prev.last_valid_block_height) return { status: "pending", message: "Confirmación pendiente del envío anterior.", signature: prev.signature };
       // caducó sin aterrizar: se puede volver a firmar con un blockhash nuevo
     }
 
@@ -80,7 +81,10 @@ export class SolanaSender implements TxSender {
       try {
         built = await this.build(tx);
       } catch (e) {
+        // Bóveda bloqueada o clave ausente: no se ha emitido nada; quien llama decide (pausar)
+        if (e instanceof VaultError) throw e;
         const c = classify(null, e);
+        if (c.code === "RPC_DOWN") return { status: "pending", message: "El RPC no responde; no se ha enviado nada todavía." };
         return { status: "failed", code: c.code, message: c.code === "SIMULATION_FAILED" ? String((e as Error).message) : c.message };
       }
       // REQ-LAUNCH-017 / TEST-ENV-003: simular siempre antes de enviar
@@ -88,6 +92,7 @@ export class SolanaSender implements TxSender {
       if (sim.value.err) {
         const c = classify(sim.value.logs, sim.value.err);
         if (c.code === "BLOCKHASH_EXPIRED" && attempt === 0) continue;
+        if (c.code === "RPC_DOWN") return { status: "pending", message: "El RPC no responde; no se ha enviado nada todavía." };
         return { status: "failed", code: c.code, message: c.message };
       }
       if (simulateOnly) return { status: "simulated", unitsConsumed: sim.value.unitsConsumed ?? undefined, logs: sim.value.logs ?? undefined };
@@ -121,7 +126,8 @@ export class SolanaSender implements TxSender {
           continue;
         }
         // Estado desconocido: queda en SENT y se informa como pendiente (la conciliación lo resolverá)
-        return { status: "failed", code: c.code === "RPC_DOWN" ? "RPC_DOWN" : "UNKNOWN", message: "Confirmación pendiente: no se sabe aún si la transacción aterrizó.", signature: built.signature };
+        void c;
+        return { status: "pending", message: "Confirmación pendiente: no se sabe aún si la transacción aterrizó.", signature: built.signature };
       }
     }
     return { status: "failed", code: "BLOCKHASH_EXPIRED", message: "El blockhash caducó dos veces seguidas." };
