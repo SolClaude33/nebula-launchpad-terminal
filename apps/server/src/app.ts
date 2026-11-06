@@ -27,6 +27,8 @@ import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
 import { Pnl } from "./pnl";
 import { Drafts } from "./drafts";
+import { TokenOps } from "./token-ops";
+import { tokenRoutes } from "./routes/tokens";
 import { dashboardRoutes } from "./routes/dashboard";
 
 export type Ctx = {
@@ -46,6 +48,7 @@ export type Ctx = {
   automations: Automations;
   pnl: Pnl;
   drafts: Drafts;
+  tokenOps: TokenOps;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -95,6 +98,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let rewards: Rewards | null = null;
   let automations: Automations | null = null;
   let pnl: Pnl | null = null;
+  let tokenOps: TokenOps | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -127,6 +131,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
       return pnl!;
     },
     drafts: new Drafts(getDb),
+    get tokenOps() {
+      return tokenOps!;
+    },
     closeDb: () => {
       db?.close();
       db = null;
@@ -176,6 +183,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   automations.start();
   pnl = new Pnl(getDb, chainManager, live, vault, (m) => logger.info(m), opts.clock ?? Date.now);
   pnl.start();
+  tokenOps = new TokenOps(getDb, chainManager, vault, live, (m) => logger.info(m));
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -217,6 +225,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(liveRoutes(ctx), { prefix: "/api" });
   await app.register(automationRoutes(ctx), { prefix: "/api" });
   await app.register(dashboardRoutes(ctx), { prefix: "/api" });
+  await app.register(tokenRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();

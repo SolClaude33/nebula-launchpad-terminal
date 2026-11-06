@@ -49,7 +49,7 @@ export type LaunchQuote = {
 
 /** Transacción preparada por el adaptador. `payload` es opaco: solo lo entiende el sender del mismo backend. */
 export type PreparedTx = {
-  kind: "create" | "buy" | "sell" | "claim" | "transfer" | "migrate";
+  kind: "create" | "buy" | "sell" | "claim" | "transfer" | "migrate" | "token-transfer" | "burn";
   /** límite de CU solicitado; la priority fee se cobra sobre él */
   cuLimit?: number;
   /** tablas de direcciones para compilar el mensaje v0 (solo el backend real) */
@@ -138,6 +138,13 @@ export interface LaunchpadAdapter {
   buildCreateTx(p: { name: string; symbol: string; uri: string; creator: string; mint: string; devBuyLamports: bigint; slippagePct: number; mayhem: boolean; holderReward?: boolean }): Promise<PreparedTx>;
   buildBuyTx(p: { mint: string; user: string; lamports: bigint; slippagePct: number }): Promise<PreparedTx>;
   buildSellTx(p: { mint: string; user: string; tokens: bigint; slippagePct: number }): Promise<PreparedTx>;
+  /**
+   * REQ-LIVE-005: enviar tokens a otra dirección (crea su cuenta de token si no existe, pagada por `from`).
+   * `rentLamports` es el rent de esa cuenta nueva (0 si ya existía), para la vista previa.
+   */
+  buildTokenTransferTx(p: { mint: string; from: string; to: string; tokens: bigint }): Promise<PreparedTx & { rentLamports: bigint }>;
+  /** REQ-LIVE-005: quemar tokens propios (reduce la supply). */
+  buildBurnTx(p: { mint: string; owner: string; tokens: bigint }): Promise<PreparedTx>;
   claimableFees(creators: string[]): Promise<Map<string, bigint>>;
   buildClaimTx(p: { creator: string }): Promise<PreparedTx>;
   /** curva, PumpSwap o en migración; market cap, progreso y reservas reales */

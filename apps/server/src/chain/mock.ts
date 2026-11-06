@@ -26,7 +26,9 @@ type Op =
   | { op: "sell"; mint: string; user: string; tokens: bigint; minSol: bigint }
   | { op: "claim"; creator: string }
   | { op: "migrate"; mint: string; payer: string }
-  | { op: "transfer"; from: string; items: { to: string; lamports: bigint }[] };
+  | { op: "transfer"; from: string; items: { to: string; lamports: bigint }[] }
+  | { op: "token-transfer"; mint: string; from: string; to: string; tokens: bigint }
+  | { op: "burn"; mint: string; owner: string; tokens: bigint };
 
 /** Evento tal y como lo emite el mock (se serializa en los logs de la transacción). */
 type MockEvent = ChainEvent extends infer E ? (E extends ChainEvent ? Omit<E, "index"> : never) : never;
@@ -44,6 +46,8 @@ export class MockLedger {
   tokens = new Map<string, Map<string, bigint>>();
   curves = new Map<string, Curve>();
   pools = new Map<string, Pool>();
+  /** tokens quemados por mint (la supply baja) */
+  burned = new Map<string, bigint>();
   /** fallos a devolver en los próximos envíos, en orden */
   failures: SendErrorCode[] = [];
   /** movimiento de precio (en %) aplicado justo antes de ejecutar el siguiente envío */
@@ -139,6 +143,19 @@ export class MockLedger {
       this.curves.set(o.mint, curve);
       if (o.devBuy > 0n) this.fill(o.mint, curve, o.creator, o.tokens, cost, now);
       this.sol.set(o.creator, this.balance(o.creator) - MINT_RENT - MOCK_ATA_RENT - TX_FEE);
+      return { ok: true, fee: TX_FEE };
+    }
+    if (o.op === "token-transfer" || o.op === "burn") {
+      const owner = o.op === "burn" ? o.owner : o.from;
+      if (!this.curves.has(o.mint)) return fail("SIMULATION_FAILED", "El mint no existe");
+      if (o.tokens <= 0n) return fail("SIMULATION_FAILED", "Cantidad inválida");
+      if (this.tokenOf(o.mint, owner) < o.tokens) return fail("SIMULATION_FAILED", "No hay tokens suficientes");
+      const rent = o.op === "token-transfer" && this.tokenOf(o.mint, o.to) === 0n ? MOCK_ATA_RENT : 0n;
+      if (this.balance(owner) < TX_FEE + rent) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red y la cuenta de destino");
+      this.addTokens(o.mint, owner, -o.tokens);
+      if (o.op === "token-transfer") this.addTokens(o.mint, o.to, o.tokens);
+      else this.burned.set(o.mint, (this.burned.get(o.mint) ?? 0n) + o.tokens);
+      this.sol.set(owner, this.balance(owner) - TX_FEE - rent);
       return { ok: true, fee: TX_FEE };
     }
     if (o.op === "claim") {
@@ -312,6 +329,15 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       for (const cr of creators) out.set(cr, [...ledger.curves.values()].filter((c) => c.creator === cr).reduce((a, c) => a + c.creatorVault, 0n));
       return out;
     },
+    buildTokenTransferTx: async ({ mint, from, to, tokens }) => {
+      curve(mint);
+      const rentLamports = ledger.tokenOf(mint, to) === 0n ? MOCK_ATA_RENT : 0n;
+      return { kind: "token-transfer", payer: from, signers: [from], mint, cuLimit: 60_000, payload: { op: "token-transfer", mint, from, to, tokens } satisfies Op, rentLamports };
+    },
+    buildBurnTx: async ({ mint, owner, tokens }) => {
+      curve(mint);
+      return { kind: "burn", payer: owner, signers: [owner], mint, cuLimit: 30_000, payload: { op: "burn", mint, owner, tokens } satisfies Op };
+    },
     buildClaimTx: async ({ creator }) => ({ kind: "claim", payer: creator, signers: [creator], payload: { op: "claim", creator } satisfies Op }),
     tokenInfo: async (mint): Promise<TokenInfo> => {
       const c = curve(mint);
@@ -323,7 +349,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
         venue,
         tokenProgram: "mock-token-2022",
         decimals: 6,
-        supply: INIT.supply,
+        supply: INIT.supply - (ledger.burned.get(mint) ?? 0n),
         creator: c.creator,
         mayhem: c.mayhem,
         priceLamports: venue === "migrating" ? 0 : (Number(q) / Number(t)) * 1e6,
@@ -366,7 +392,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       if (f === "RPC_DOWN") return { status: "pending", message: "Fallo inyectado: RPC caído (no se envió nada)" };
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
       if (simulateOnly) {
-        const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools });
+        const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools, burned: ledger.burned });
         const r = ledger.apply(tx.payload as Op, feeOf(tx));
         const post = watch ? ledger.balance(watch) : undefined;
         Object.assign(ledger, snapshot);

@@ -3,7 +3,7 @@
 // Tras graduar, compra y venta van contra el pool canónico de PumpSwap (REQ-LIVE-002, E2E-12).
 import BN from "bn.js";
 import { PublicKey, type Connection } from "@solana/web3.js";
-import { ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getTokenMetadata, unpackMint } from "@solana/spl-token";
+import { ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createTransferCheckedInstruction, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getTokenMetadata, unpackMint } from "@solana/spl-token";
 import {
   OnlinePumpSdk,
   PUMP_SDK,
@@ -360,6 +360,31 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
         }
       }
       return rent;
+    },
+
+    // REQ-LIVE-005: transferencia con decimales comprobados; la cuenta de destino se crea idempotente
+    buildTokenTransferTx: async ({ mint, from, to, tokens }) => {
+      const m = new PublicKey(mint);
+      const tp = await tokenProgramOf(m);
+      const f = new PublicKey(from);
+      const t = new PublicKey(to);
+      const src = getAssociatedTokenAddressSync(m, f, true, tp);
+      const dst = getAssociatedTokenAddressSync(m, t, true, tp);
+      const exists = !!(await pool.run((c) => c.getAccountInfo(dst, "confirmed")));
+      const rentLamports = exists ? 0n : await rentFor(await ataLenOf(m));
+      const instructions = [
+        ...(exists ? [] : [createAssociatedTokenAccountIdempotentInstruction(f, dst, t, m, tp)]),
+        createTransferCheckedInstruction(src, m, dst, f, tokens, 6, [], tp),
+      ];
+      return { kind: "token-transfer", payer: from, signers: [from], mint, cuLimit: 60_000, payload: { instructions } satisfies PumpPayload, rentLamports };
+    },
+
+    buildBurnTx: async ({ mint, owner, tokens }) => {
+      const m = new PublicKey(mint);
+      const tp = await tokenProgramOf(m);
+      const o = new PublicKey(owner);
+      const ix = createBurnCheckedInstruction(getAssociatedTokenAddressSync(m, o, true, tp), m, o, tokens, 6, [], tp);
+      return { kind: "burn", payer: owner, signers: [owner], mint, cuLimit: 30_000, payload: { instructions: [ix] } satisfies PumpPayload };
     },
 
     // Sin permisos en el programa. En mainnet la ejecuta Pump.fun; Nébula solo la expone en el perfil de pruebas.

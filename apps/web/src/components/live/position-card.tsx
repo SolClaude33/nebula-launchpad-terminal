@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bot, Plus } from "lucide-react";
 import { LiveNumber } from "@/components/live-number";
+import { TokenActions } from "@/components/live/token-actions";
 import { TaskCard } from "@/components/automations/task-card";
 import { ACTIVE, useAutomations } from "@/lib/automations";
 import { lamToSol, toTokens, useLive } from "@/lib/live";
@@ -91,6 +92,7 @@ export function PositionCard() {
           </dd>
         </div>
       </dl>
+      <TokenActions />
       <TokenAutomations />
     </section>
   );
