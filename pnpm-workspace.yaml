@@ -2,6 +2,8 @@ packages:
   - apps/*
   - packages/*
 
+# better-sqlite3 13 incluye binarios precompilados (prebuilds/); no hace falta node-gyp.
 ignoredBuiltDependencies:
+  - better-sqlite3
   - sharp
   - unrs-resolver
