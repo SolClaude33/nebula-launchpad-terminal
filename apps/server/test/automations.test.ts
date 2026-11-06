@@ -64,8 +64,8 @@ describe.each(backends)("Automatizaciones · %s", (backend) => {
     let v = await ctx.trading.waitIdle(id);
     // el fork perezoso de Surfpool a veces tarda en traer cuentas de mainnet y el envío queda pendiente:
     // como en la app, se reanuda la misma orden (mismas keys, sin duplicar)
-    for (let i = 0; i < 3 && v.status === "PAUSED"; i++) {
-      await sleep(2000);
+    for (let i = 0; i < 8 && v.status === "PAUSED"; i++) {
+      await sleep(5000);
       await call("POST", `/api/trade/${id}/resume`);
       v = await ctx.trading.waitIdle(id);
     }
@@ -342,6 +342,50 @@ describe.each(backends)("Automatizaciones · %s", (backend) => {
     expect(r).toHaveLength(1);
     expect(r[0].items[0]).toMatchObject({ status: "OK", retries: 1 });
     expect((await call("GET", "/api/vault/status")).json.paused.some((p: { id: string }) => p.id === t.id)).toBe(false);
+  });
+
+  it.runIf(backend === "mock")("un error del RPC antes de enviar se reintenta (cuenta como error); con N=1 falla y cierra la orden a medias", async () => {
+    const reader = ctx.chain.get().reader;
+    const orig = reader.balances.bind(reader);
+    const target = holders[2].address;
+    let fails = 1;
+    reader.balances = async (addrs: string[]) => {
+      if (addrs.length === 1 && addrs[0] === target && fails-- > 0) throw new Error("RPC inyectado: sin respuesta");
+      return orig(addrs);
+    };
+    try {
+      const t = await task({ type: "dca", side: "buy", walletIds: [holders[2].id], amount: { kind: "fixed", each: "1000000" }, intervalSec: 60, end: { kind: "amount", totalAmount: "1000000" } });
+      let v = await until(t.id, (x) => !!x.state.waiting?.startsWith("Reintentando"));
+      expect(v).toMatchObject({ status: "RUNNING", state: { consecErrors: 1 } });
+      now += 6_000;
+      v = await until(t.id, (x) => x.status !== "RUNNING");
+      expect(v.status).toBe("COMPLETED");
+      expect((await runs(t.id))[0].items[0]).toMatchObject({ status: "OK", retries: 1 });
+
+      fails = 1;
+      const f = await task({ type: "dca", side: "buy", walletIds: [holders[2].id], amount: { kind: "fixed", each: "1000000" }, intervalSec: 60, end: { kind: "amount", totalAmount: "1000000" }, maxErrors: 1 });
+      v = await until(f.id, (x) => x.status !== "RUNNING" && x.state.inFlight === null);
+      expect(v.status).toBe("FAILED");
+      expect(v.state.endReason).toMatch(/RPC inyectado/);
+      const item = (await runs(f.id))[0].items[0];
+      expect(item.status).toBe("SKIPPED");
+      expect((await call("GET", `/api/trade/auto-${f.id}-1-0`)).json.status).not.toBe("PAUSED");
+    } finally {
+      reader.balances = orig;
+    }
+  });
+
+  it.runIf(backend === "mock")("REQ-AUTO-010 · con una ejecución a medias no se cambian las wallets al editar", async () => {
+    ctx.chain.get().ledger!.failures.push("RPC_DOWN");
+    const t = await task({ type: "dca", side: "buy", walletIds: [holders[2].id], amount: { kind: "fixed", each: "1000000" }, intervalSec: 60, end: { kind: "duration", durationSec: 600 } });
+    const v = await until(t.id, (x) => x.status === "PAUSED");
+    expect(v.state.inFlight).toBeTruthy();
+    const r = await call("PATCH", `/api/automations/${t.id}`, { config: { ...t.config, walletIds: [holders[1].id] } });
+    expect(r.status).toBe(409);
+    expect(r.json.message).toMatch(/ejecución a medias/);
+    // otros cambios sí (afectan a las siguientes ejecuciones)
+    expect((await call("PATCH", `/api/automations/${t.id}`, { config: { ...t.config, intervalSec: 120 } })).status).toBe(200);
+    await call("POST", `/api/automations/${t.id}/stop`);
   });
 
   it("E2E-02 · al bloquear, el DCA en marcha queda PAUSED y solo se reanuda tras confirmarlo", async () => {

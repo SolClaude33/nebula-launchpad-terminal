@@ -1,18 +1,18 @@
 # Repository Guidelines
 
-Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. Ya son reales la API, la bóveda, las wallets, los movimientos de fondos, el lanzamiento desde el asistente, el Live Workspace (curva, trades, holders, órdenes, PumpSwap) y las comisiones de creador, verificados en el perfil `test` con Surfpool.
+Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está en curso. Ya son reales la API, la bóveda, las wallets, los movimientos de fondos, el lanzamiento desde el asistente, el Live Workspace (curva, trades, holders, órdenes, PumpSwap), las comisiones de creador y las automatizaciones (DCA y límite), verificados en el perfil `test` con Surfpool.
 
 ## Estructura
 - `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
 - `apps/server/src/chain`: el contrato del adaptador (`types.ts`), `pumpfun.ts` (SDK oficial, curva y PumpSwap; web3.js v1 en lugar de `@solana/kit` porque el SDK lo exige), `events.ts` (`parseEvents` por discriminador), `mock.ts`, `sender.ts` (registra cada envío en la tabla `tx` antes de emitirlo; `simulateOnly` + `watch` da el saldo posterior) y `rpc.ts` (failover).
-- `apps/server/src/live.ts` (indexer por mint: WS de logs + sondeo de firmas, SQLite con cursor), `trading.ts` (órdenes multi-wallet, `trade:<orden>:<wallet>`) y `rewards.ts` (vista previa simulada, reclamo y verificación en cadena).
+- `apps/server/src/live.ts` (indexer por mint: WS de logs + sondeo de firmas, SQLite con cursor), `trading.ts` (órdenes multi-wallet, `trade:<orden>:<wallet>`), `rewards.ts` (vista previa simulada, reclamo y verificación en cadena) y `automations.ts` (motor de DCA y límites sobre la tabla `task`; cada ejecución es una orden hija `auto-<tarea>-<generación>-<n>` de `trading.ts`; reloj inyectable con `buildApp({ clock })`).
 - `apps/web`: Next.js 16 con Tailwind v4.
   - `/api/*` se reescribe hacia la API.
   - `src/proxy.ts` valida el Host.
   - El token de sesión va en `<meta>` y se envía en la cabecera `x-nebula-session`.
   - El Live Workspace lee `lib/live.ts` (sondea la API local; nunca el RPC) y opera con `lib/trade.ts`. El asistente guarda el borrador en `lib/draft.ts`.
 - `apps/server/src/launches.ts` y `operations.ts`: máquinas de estados del servidor, con idempotency keys y pausa al bloquear. La creación con dev buy necesita la tabla de direcciones propia (`chain/alt.ts`). En mainnet, IPFS queda bloqueado hasta verificar Pinata (`ipfs.ts`).
-- `packages/shared`: esquemas zod. Las rutas de datos están en `./node` (`~/.nebula/<perfil>`, con `NEBULA_PROFILE` y `NEBULA_DATA_DIR`).
+- `packages/shared`: esquemas zod (`automations.ts`: `AutomationConfig`, validación del orden de objetivos y `dcaPlan`, compartidos con la web). Las rutas de datos están en `./node` (`~/.nebula/<perfil>`, con `NEBULA_PROFILE` y `NEBULA_DATA_DIR`).
 - `apps/web/AGENTS.md`: gestionado por Next.js; no se edita.
 
 ## Comandos (verificados)
@@ -36,5 +36,6 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 - **Datos locales:** fuera del repositorio (`.gitignore`).
 - **Dependencias:** a versión exacta. Las nuevas cerca de las claves se revisan a mano, como `@pump-fun/pump-sdk`.
 - **Órdenes:** el envío `pending` deja la wallet pendiente y la orden en pausa, nunca FAILED. «Escalonado» usa un retardo fijo, sin aleatoriedad. La migración manual a PumpSwap (`/dev/migrate`) solo existe en el perfil `test`.
+- **Automatizaciones:** el «rango» del DCA es una rampa fija del mínimo al máximo, el mismo monto para todas las wallets y un intervalo fijo (nada aleatorio). Pausar o parar nunca vende. Sin backlog al reanudar. La wallet dev solo entra con `includeDev`. Un `pending` pausa la tarea; un error antes de enviar se reintenta y cuenta para «N errores seguidos». Al bloquear o reiniciar, lo RUNNING pasa a PAUSED y solo se reanuda con confirmación.
 - **Exclusiones:** no se implementa nada que haga pasar actividad coordinada por orgánica, como volumen o wash trading, MEV de bloque 0, evasión de bubble maps, wallets envejecidas, financiación vía mixer o saltos por CEX, o el «Nuke» del Sniper Guard (§2.3 de la spec).
 - **Publicación:** nada de push, remoto ni despliegue hasta que Nicol lo pida.

@@ -295,6 +295,8 @@ export class Automations {
     if (c.type !== t.config.type || c.side !== t.config.side || c.mint !== t.config.mint) throw bad("El tipo, el lado y el token no se cambian: duplica la tarea para eso.", 409);
     this.validate(c);
     const st = { ...t.state };
+    // una ejecución a medias sigue con sus wallets al reanudar: no se cambian por debajo (REQ-AUTO-010)
+    if (st.order && (JSON.stringify([...c.walletIds].sort()) !== JSON.stringify([...t.config.walletIds].sort()) || c.includeDev !== t.config.includeDev)) throw bad("Hay una ejecución a medias con las wallets actuales: reanúdala o para la tarea antes de cambiar las wallets.", 409);
     if (c.type === "limit" && t.config.type === "limit" && st.fired > 0) {
       const old = t.config.targets.slice(0, st.fired);
       if (c.targets.length < st.fired || old.some((o, i) => JSON.stringify(o) !== JSON.stringify(c.targets[i]))) throw bad(`Los ${st.fired} primeros objetivos ya se ejecutaron y no se pueden cambiar.`, 409);
@@ -371,7 +373,16 @@ export class Automations {
 
   private end(t: Task, status: AutoStatus, reason: string) {
     if (!this.transition(t.id, ["RUNNING"], status)) return;
-    this.save(t.id, { ...this.load(t.id).state, waiting: null, endReason: reason });
+    const st = this.load(t.id).state;
+    this.save(t.id, { ...st, waiting: null, endReason: reason });
+    // una orden a medias (p. ej. tras reintentos fallidos) se cierra: lo no enviado queda omitido
+    if (st.order) {
+      const order = st.order;
+      void this.trading
+        .cancel(order.id, `Automatización terminada: ${reason}`)
+        .then(() => this.settleCounts(t.id, order))
+        .catch((e) => this.log(`Cerrar ${t.id}: ${(e as Error).message}`));
+    }
     logActivity(this.db(), "auto.end", `«${t.label}»: ${reason}`);
   }
 
