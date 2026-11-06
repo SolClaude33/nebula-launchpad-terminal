@@ -6,7 +6,9 @@ import { createMockEnv, MockLedger } from "./mock";
 import { createPumpFunAdapter, TOKEN_2022_PROGRAM_ID } from "./pumpfun";
 import { isLoopback, RpcPool, type Endpoint, type RpcStatus } from "./rpc";
 import { SolanaSender } from "./sender";
-import type { ChainEnv, ChainReader, MessageSigner } from "./types";
+import type { ChainEnv, ChainReader, MessageSigner, TransferBuilder } from "./types";
+import { transferCuLimit } from "./fees";
+import { chunkTransfers, transferInstructions } from "./transfers";
 
 export type Chain = ChainEnv & { status: () => RpcStatus; stop: () => void; reconcile: () => Promise<number>; kind: "rpc" | "mock"; ledger?: MockLedger };
 
@@ -52,14 +54,22 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
 
 export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number }): Chain {
   if (opts.mode === "mock") {
-    const env = createMockEnv(opts.sign);
+    const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports);
     return { ...env, kind: "mock", status: () => ({ healthy: true, host: "mock", latencyMs: 0, usingBackup: false, endpoints: 1 }), stop: () => {}, reconcile: async () => 0 };
   }
   assertProfileRpc(opts.profile, opts.endpoints);
   const pool = new RpcPool(opts.endpoints);
   pool.start();
   const sender = new SolanaSender(pool, opts.db, opts.sign, { computeUnitLimit: 400_000, priorityMicroLamports: opts.priorityMicroLamports });
+  let rentMin: bigint | null = null;
+  const transfers: TransferBuilder = {
+    build: async (from, items) =>
+      chunkTransfers(from, items).map((chunk) => ({ kind: "transfer", payer: from, signers: [from], cuLimit: transferCuLimit(chunk.length), payload: { instructions: transferInstructions(from, chunk) } })),
+    feeOf: (tx) => sender.feeOf(tx),
+    rentExemptMin: async () => (rentMin ??= BigInt(await pool.run((c) => c.getMinimumBalanceForRentExemption(0)))),
+  };
   return {
+    transfers,
     kind: "rpc",
     adapter: createPumpFunAdapter(pool),
     sender,

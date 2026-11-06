@@ -3,6 +3,7 @@
 // NFR-TX-005: `reconcile()` al arrancar compara con la cadena lo que quedó en SENT.
 import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { firstSignature } from "./sig";
+import { txFee } from "./fees";
 import type { DB } from "../db";
 import type { RpcPool } from "./rpc";
 import { isNetworkError } from "./rpc";
@@ -15,7 +16,8 @@ export function classify(logs: string[] | null | undefined, err: unknown): { cod
   const text = `${JSON.stringify(err ?? "")} ${(logs ?? []).join("\n")}`;
   if (/0x1772|0x1773|TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)) return { code: "SLIPPAGE", message: "Slippage excedido: el precio se movió más que la tolerancia configurada." };
   if (/0x1775|BondingCurveComplete/i.test(text)) return { code: "CURVE_COMPLETE", message: "La curva está completa; el token se opera en PumpSwap." };
-  if (/insufficient lamports|insufficient funds|InsufficientFundsForRent|no record of a prior credit|"Custom":1\b/i.test(text)) return { code: "INSUFFICIENT_FUNDS", message: "Saldo insuficiente para el monto, las fees o el rent." };
+  if (/InsufficientFundsForRent|insufficient funds for rent/i.test(text)) return { code: "RENT", message: "Una cuenta quedaría por debajo del mínimo exento de rent (≈ 0,00089 SOL)." };
+  if (/insufficient lamports|insufficient funds|no record of a prior credit|"Custom":1\b/i.test(text)) return { code: "INSUFFICIENT_FUNDS", message: "Saldo insuficiente para el monto, las fees o el rent." };
   if (/BlockhashNotFound|blockhash not found|block height exceeded/i.test(text)) return { code: "BLOCKHASH_EXPIRED", message: "El blockhash caducó antes de confirmar." };
   if (isNetworkError(err)) return { code: "RPC_DOWN", message: "El RPC no responde." };
   return { code: "SIMULATION_FAILED", message: (logs ?? []).filter((l) => /Error|failed/i.test(l)).slice(-2).join(" · ") || "La simulación falló." };
@@ -35,13 +37,21 @@ export class SolanaSender implements TxSender {
     return this.db().prepare("SELECT * FROM tx WHERE idempotency_key = ?").get(key) as Row | undefined;
   }
 
+  private price = 0;
+
+  /** Fee exacta de una tx: la misma que se muestra en la vista previa. */
+  feeOf(tx: PreparedTx) {
+    return txFee(tx.signers.length, tx.cuLimit ?? this.opts.computeUnitLimit, this.opts.priorityMicroLamports());
+  }
+
   private async build(tx: PreparedTx) {
+    this.price = this.opts.priorityMicroLamports();
     const { instructions } = tx.payload as PumpPayload;
     const { blockhash, lastValidBlockHeight } = await this.pool.run((c) => c.getLatestBlockhash("confirmed"));
     const msg = new TransactionMessage({
       payerKey: new PublicKey(tx.payer),
       recentBlockhash: blockhash,
-      instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: this.opts.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.opts.priorityMicroLamports() }), ...instructions],
+      instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: tx.cuLimit ?? this.opts.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.price }), ...instructions],
     }).compileToV0Message();
     const vtx = new VersionedTransaction(msg);
     const bytes = vtx.message.serialize();
@@ -98,7 +108,7 @@ export class SolanaSender implements TxSender {
           const c = classify(null, conf.value.err);
           return this.markFailed(idempotencyKey, c.code, c.message, built.signature);
         }
-        return this.markConfirmed(idempotencyKey, built.signature, BigInt(5000 * tx.signers.length) + BigInt(Math.ceil((this.opts.priorityMicroLamports() * this.opts.computeUnitLimit) / 1e6)), sim.value.unitsConsumed ?? undefined);
+        return this.markConfirmed(idempotencyKey, built.signature, txFee(tx.signers.length, tx.cuLimit ?? this.opts.computeUnitLimit, this.price), sim.value.unitsConsumed ?? undefined);
       } catch (e) {
         // Ya se emitió (o pudo emitirse): un timeout o un corte del WebSocket no dicen si aterrizó.
         // Se pregunta a la cadena antes de decidir, para que un reintento nunca duplique el efecto.

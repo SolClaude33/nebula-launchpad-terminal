@@ -13,6 +13,8 @@ import { walletRoutes } from "./routes/wallets";
 import { settingsRoutes } from "./routes/settings";
 import { chainRoutes } from "./routes/chain";
 import { ChainManager } from "./chain-manager";
+import { Operations } from "./operations";
+import { operationRoutes } from "./routes/operations";
 
 export type Ctx = {
   profile: Profile;
@@ -23,6 +25,7 @@ export type Ctx = {
   reopenDb: () => DB;
   closeDb: () => void;
   chain: ChainManager;
+  ops: Operations;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -63,6 +66,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   };
   const vault = new Vault(getDb);
   let chainManager: ChainManager | null = null;
+  let operations: Operations | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -72,6 +76,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     reopenDb: () => (db = openDb(opts.dataDir)),
     get chain() {
       return chainManager!;
+    },
+    get ops() {
+      return operations!;
     },
     closeDb: () => {
       db?.close();
@@ -86,6 +93,10 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   const logger = createLogger(opts.dataDir, opts.logToStdout ?? true);
   chainManager = new ChainManager({ profile: opts.profile, mode: opts.chainMode ?? "rpc", db: getDb, vault, log: (m) => logger.info(m) });
   chainManager.reload();
+  operations = new Operations(getDb, chainManager, vault, (m) => logger.info(m));
+  // Una operación que estaba en marcha cuando se cerró el proceso queda en pausa (REQ-AUTO-008)
+  operations.pauseAllRunning();
+  vault.onLock(() => operations?.pauseAllRunning());
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -122,6 +133,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(walletRoutes(ctx), { prefix: "/api" });
   await app.register(settingsRoutes(ctx), { prefix: "/api" });
   await app.register(chainRoutes(ctx), { prefix: "/api" });
+  await app.register(operationRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();

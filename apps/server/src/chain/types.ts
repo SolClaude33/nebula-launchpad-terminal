@@ -35,7 +35,9 @@ export type CurveQuote = {
 
 /** Transacción preparada por el adaptador. `payload` es opaco: solo lo entiende el sender del mismo backend. */
 export type PreparedTx = {
-  kind: "create" | "buy" | "sell" | "claim";
+  kind: "create" | "buy" | "sell" | "claim" | "transfer";
+  /** límite de CU solicitado; la priority fee se cobra sobre él */
+  cuLimit?: number;
   payer: string;
   signers: string[];
   payload: unknown;
@@ -43,7 +45,7 @@ export type PreparedTx = {
   mint?: string;
 };
 
-export type SendErrorCode = "SLIPPAGE" | "INSUFFICIENT_FUNDS" | "BLOCKHASH_EXPIRED" | "RPC_DOWN" | "BUNDLE_REJECTED" | "CURVE_COMPLETE" | "SIMULATION_FAILED" | "UNKNOWN";
+export type SendErrorCode = "SLIPPAGE" | "INSUFFICIENT_FUNDS" | "RENT" | "BLOCKHASH_EXPIRED" | "RPC_DOWN" | "BUNDLE_REJECTED" | "CURVE_COMPLETE" | "SIMULATION_FAILED" | "UNKNOWN";
 
 export type SendResult =
   | { status: "confirmed"; signature: string; unitsConsumed?: number; feeLamports?: bigint; reused?: boolean }
@@ -76,7 +78,15 @@ export interface ChainReader {
   airdrop?(address: string, lamports: bigint): Promise<void>;
 }
 
-export type ChainEnv = { adapter: LaunchpadAdapter; sender: TxSender; reader: ChainReader };
+export type TransferBuilder = {
+  /** transferencias de SOL desde `from`, troceadas en tx que caben en 1.232 bytes */
+  build(from: string, items: { to: string; lamports: bigint }[]): Promise<PreparedTx[]>;
+  /** fee exacta de una tx preparada (misma fórmula en vista previa y envío) */
+  feeOf(tx: PreparedTx): bigint;
+  rentExemptMin(): Promise<bigint>;
+};
+
+export type ChainEnv = { adapter: LaunchpadAdapter; sender: TxSender; reader: ChainReader; transfers: TransferBuilder };
 
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 export const solToLamports = (sol: number) => BigInt(Math.round(sol * 1e9));

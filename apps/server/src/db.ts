@@ -60,6 +60,32 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX tx_status ON tx(status);
   `,
+  `
+  -- REQ-WAL-008: movimientos de fondos como operaciones del servidor (siguen aunque se cierre el modal)
+  CREATE TABLE operation (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('transfer','withdraw','disperse','collect')),
+    status TEXT NOT NULL CHECK (status IN ('PREVIEW','RUNNING','PAUSED','COMPLETED','PARTIAL','FAILED')),
+    plan TEXT NOT NULL,
+    fee_total INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE operation_item (
+    op_id TEXT NOT NULL REFERENCES operation(id) ON DELETE CASCADE,
+    idx INTEGER NOT NULL,
+    chunk INTEGER NOT NULL,
+    from_addr TEXT NOT NULL,
+    to_addr TEXT NOT NULL,
+    lamports INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','OK','FAILED','SKIPPED')),
+    signature TEXT,
+    reason TEXT,
+    PRIMARY KEY (op_id, idx)
+  );
+  -- REQ-FUND-003: direcciones externas guardadas
+  CREATE TABLE address_book (address TEXT PRIMARY KEY, label TEXT NOT NULL, created_at INTEGER NOT NULL);
+  `,
 ];
 
 export function openDb(dir: string): DB {

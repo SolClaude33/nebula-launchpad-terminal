@@ -1,6 +1,8 @@
 // TEST-ENV-002: adaptador mock con el mismo contrato que el real y fallos inyectables.
 // Curva de constante producto con los parámetros iniciales de Pump.fun (30 SOL / 1.073 M tokens virtuales).
-import type { ChainEnv, ChainReader, CurveQuote, LaunchpadAdapter, MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
+import type { ChainEnv, ChainReader, CurveQuote, LaunchpadAdapter, MessageSigner, PreparedTx, SendErrorCode, SendResult, TransferBuilder, TxSender } from "./types";
+import { RENT_EXEMPT_MIN_DEFAULT, transferCuLimit, txFee } from "./fees";
+import { chunkTransfers } from "./transfers";
 
 const INIT = { vSol: 30_000_000_000n, vTok: 1_073_000_000_000_000n, realTok: 793_100_000_000_000n, supply: 1_000_000_000_000_000n };
 const FEE_BPS = 100n; // total; de ello CREATOR_BPS va a la bóveda del creador
@@ -14,7 +16,8 @@ type Op =
   | { op: "create"; mint: string; creator: string; devBuy: bigint; tokens: bigint; maxSol: bigint }
   | { op: "buy"; mint: string; user: string; tokens: bigint; maxSol: bigint }
   | { op: "sell"; mint: string; user: string; tokens: bigint; minSol: bigint }
-  | { op: "claim"; creator: string };
+  | { op: "claim"; creator: string }
+  | { op: "transfer"; from: string; items: { to: string; lamports: bigint }[] };
 
 const bpsOf = (v: bigint, bps: bigint) => (v * bps) / 10_000n;
 const withSlip = (v: bigint, pct: number, up: boolean) => (up ? v + (v * BigInt(Math.floor(pct * 10))) / 1000n : v - (v * BigInt(Math.floor(pct * 10))) / 1000n);
@@ -27,6 +30,8 @@ export class MockLedger {
   failures: SendErrorCode[] = [];
   /** movimiento de precio (en %) aplicado justo antes de ejecutar el siguiente envío */
   priceShockPct = 0;
+  /** retardo artificial por envío (para pausar operaciones a mitad en los tests) */
+  sendDelayMs = 0;
   sent = new Map<string, SendResult>();
   seq = 0;
 
@@ -60,12 +65,26 @@ export class MockLedger {
     return gross - bpsOf(gross, FEE_BPS);
   }
 
-  apply(o: Op): { ok: true; fee: bigint } | { ok: false; code: SendErrorCode; message: string } {
+  apply(o: Op, TX_FEE: bigint): { ok: true; fee: bigint } | { ok: false; code: SendErrorCode; message: string } {
     if (this.priceShockPct) {
       for (const c of this.curves.values()) c.vSol = c.vSol + (c.vSol * BigInt(Math.round(this.priceShockPct * 100))) / 10_000n;
       this.priceShockPct = 0;
     }
     const fail = (code: SendErrorCode, message: string) => ({ ok: false as const, code, message });
+    if (o.op === "transfer") {
+      // Misma regla que Solana: cada cuenta acaba en 0 o en ≥ mínimo exento de rent
+      const total = o.items.reduce((a, i) => a + i.lamports, 0n);
+      const left = this.balance(o.from) - total - TX_FEE;
+      if (left < 0n) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para el monto y la fee de red");
+      if (left > 0n && left < RENT_EXEMPT_MIN_DEFAULT) return fail("RENT", "El origen quedaría con menos del mínimo exento de rent");
+      for (const i of o.items) {
+        const after = this.balance(i.to) + i.lamports;
+        if (after > 0n && after < RENT_EXEMPT_MIN_DEFAULT) return fail("RENT", "Un destino quedaría por debajo del mínimo exento de rent");
+      }
+      this.sol.set(o.from, left);
+      for (const i of o.items) this.sol.set(i.to, this.balance(i.to) + i.lamports);
+      return { ok: true, fee: TX_FEE };
+    }
     if (o.op === "create") {
       if (this.curves.has(o.mint)) return fail("SIMULATION_FAILED", "El mint ya existe");
       const curve: Curve = { vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: o.creator, creatorVault: 0n };
@@ -153,7 +172,8 @@ function quoteOf(c: Curve, side: "buy" | "sell", amount: bigint, slippagePct: nu
   };
 }
 
-export function createMockEnv(sign: MessageSigner, ledger = new MockLedger()): ChainEnv & { ledger: MockLedger } {
+export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0): ChainEnv & { ledger: MockLedger } {
+  const feeOf = (tx: PreparedTx) => txFee(tx.signers.length, tx.cuLimit ?? 400_000, priority());
   const fresh = (): Curve => ({ vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: "", creatorVault: 0n });
   const curve = (mint: string) => {
     const c = ledger.curves.get(mint);
@@ -186,6 +206,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger()): C
 
   const sender: TxSender = {
     send: async (tx: PreparedTx, { idempotencyKey, simulateOnly }) => {
+      if (ledger.sendDelayMs) await new Promise((r) => setTimeout(r, ledger.sendDelayMs));
       const prev = ledger.sent.get(idempotencyKey);
       if (prev && prev.status === "confirmed") return { ...prev, reused: true };
       // Firmar con la bóveda igual que el sender real (falla si alguna clave no está)
@@ -196,13 +217,13 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger()): C
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
       if (simulateOnly) {
         const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves });
-        const r = ledger.apply(tx.payload as Op);
+        const r = ledger.apply(tx.payload as Op, feeOf(tx));
         ledger.sol = snapshot.sol;
         ledger.tokens = snapshot.tokens;
         ledger.curves = snapshot.curves;
         return r.ok ? { status: "simulated" } : { status: "failed", code: r.code, message: r.message };
       }
-      const r = ledger.apply(tx.payload as Op);
+      const r = ledger.apply(tx.payload as Op, feeOf(tx));
       const res: SendResult = r.ok ? { status: "confirmed", signature: `mock${++ledger.seq}`, feeLamports: r.fee } : { status: "failed", code: r.code, message: r.message };
       ledger.sent.set(idempotencyKey, res);
       return res;
@@ -214,5 +235,11 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger()): C
     tokenBalance: async (mint, owner) => ledger.tokenOf(mint, owner),
     airdrop: async (a, l) => void ledger.sol.set(a, ledger.balance(a) + l),
   };
-  return { adapter, sender, reader, ledger };
+  const transfers: TransferBuilder = {
+    build: async (from, items) =>
+      chunkTransfers(from, items).map((chunk) => ({ kind: "transfer", payer: from, signers: [from], cuLimit: transferCuLimit(chunk.length), payload: { op: "transfer", from, items: chunk } satisfies Op })),
+    feeOf,
+    rentExemptMin: async () => RENT_EXEMPT_MIN_DEFAULT,
+  };
+  return { adapter, sender, reader, ledger, transfers };
 }
