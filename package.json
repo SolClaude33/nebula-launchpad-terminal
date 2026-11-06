@@ -2,10 +2,12 @@
   "name": "nebula",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter web dev",
+    "dev": "pnpm -r --parallel --filter server --filter web dev",
+    "start": "pnpm -r --parallel --filter server --filter web start",
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
-    "typecheck": "pnpm --filter web typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter server test"
   },
   "packageManager": "pnpm@10.23.0"
 }

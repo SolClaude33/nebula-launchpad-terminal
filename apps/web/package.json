@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nebula/shared": "workspace:*",
     "geist": "1.9.2",
     "lightweight-charts": "5.2.1",
     "lucide-react": "1.70.0",
@@ -17,6 +18,7 @@
     "next": "16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "zod": "4.6.7",
     "zustand": "5.1.0"
   },
   "devDependencies": {

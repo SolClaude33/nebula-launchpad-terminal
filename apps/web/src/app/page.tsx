@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// F0: la app arranca siempre en la bóveda. El dashboard llega en F1.
+// El dashboard llega con los datos on-chain; mientras, la entrada es la bóveda.
 export default function Home() {
   redirect("/unlock");
 }

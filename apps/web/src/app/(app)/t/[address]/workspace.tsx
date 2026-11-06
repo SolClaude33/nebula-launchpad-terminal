@@ -10,6 +10,7 @@ import { ActivityTabs } from "@/components/live/activity-tabs";
 import { TradeTicket } from "@/components/live/trade-ticket";
 import { PositionCard } from "@/components/live/position-card";
 import { InstantTrade } from "@/components/live/instant-trade";
+import { DemoNotice } from "@/components/demo-notice";
 
 const PriceChart = dynamic(() => import("@/components/live/price-chart").then((m) => m.PriceChart), {
   ssr: false,
@@ -85,6 +86,7 @@ export function Workspace() {
 
   return (
     <div className="flex h-[calc(100dvh-80px)] min-h-[640px] flex-col gap-3 p-3">
+      <DemoNotice what="El Live Workspace" />
       <TokenHeader mint={address} />
 
       <div className="flex min-h-0 flex-1 gap-3">

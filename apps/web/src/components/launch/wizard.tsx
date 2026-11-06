@@ -11,6 +11,7 @@ import { StepConfig } from "./step-config";
 import { StepFunding } from "./step-funding";
 import { StepReview } from "./step-review";
 import { LaunchSummary } from "./summary";
+import { DemoNotice } from "@/components/demo-notice";
 
 const STEPS = ["Token", "Configuración", "Financiación", "Revisar y lanzar"];
 
@@ -56,6 +57,9 @@ export function LaunchWizard() {
   return (
     <div className="mx-auto grid max-w-[1320px] grid-cols-[minmax(0,1fr)_300px] gap-5 px-5 pt-5 pb-16 xl:grid-cols-[minmax(0,1fr)_370px]">
       <div className="min-w-0">
+        <div className="mb-4">
+          <DemoNotice what="El asistente de lanzamiento" />
+        </div>
         <div className="mb-7 flex items-center gap-3">
           <nav aria-label="Pasos del lanzamiento" className="flex-1">
             <ol className="flex items-center gap-2">

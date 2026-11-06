@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { readSessionToken } from "@/lib/server/session";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -16,7 +17,11 @@ export const metadata: Metadata = {
   description: "Terminal local para lanzar y operar tokens de Pump.fun.",
 };
 
+// El token cambia en cada arranque de la API: nunca cachear el HTML.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  const token = readSessionToken();
   return (
     <html
       lang="es"
@@ -24,6 +29,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${instrument.variable} h-full antialiased`}
     >
+      <head>
+        <meta name="nebula-session" content={token} />
+      </head>
       <body className="min-h-full">{children}</body>
     </html>
   );

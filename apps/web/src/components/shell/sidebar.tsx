@@ -18,23 +18,23 @@ import {
 } from "lucide-react";
 import { DEMO_ROUTE } from "@/lib/demo";
 
-type Item = { label: string; href: string; icon: React.ComponentType<{ className?: string }>; ready?: boolean; match?: string };
+type Item = { label: string; href: string; icon: React.ComponentType<{ className?: string }>; ready?: boolean; match?: string; demo?: boolean };
 
 const NAV: { group: string; items: Item[] }[] = [
   {
     group: "Operar",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
-      { label: "Lanzar token", href: "/launch/new", icon: Rocket, ready: true, match: "/launch" },
+      { label: "Lanzar token", href: "/launch/new", icon: Rocket, ready: true, match: "/launch", demo: true },
       { label: "Lanzamientos", href: "/launches", icon: Layers },
-      { label: "Live", href: DEMO_ROUTE, icon: Activity, ready: true, match: "/t/" },
+      { label: "Live", href: DEMO_ROUTE, icon: Activity, ready: true, match: "/t/", demo: true },
     ],
   },
   {
     group: "Fondos",
     items: [
-      { label: "Wallets", href: "/wallets", icon: Wallet },
-      { label: "Funder", href: "/funder", icon: Landmark },
+      { label: "Wallets", href: "/wallets", icon: Wallet, ready: true },
+      { label: "Funder", href: "/funder", icon: Landmark, ready: true },
       { label: "Comisiones", href: "/rewards", icon: Coins },
     ],
   },
@@ -102,7 +102,8 @@ export function Sidebar() {
                     {active && <span aria-hidden className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-gradient-to-b from-accent-a to-accent-b" />}
                     <Icon className={`size-4 shrink-0 ${active ? "text-accent-b" : ""}`} />
                     {!collapsed && <span className="flex-1 truncate">{it.label}</span>}
-                    {!collapsed && !it.ready && <span className="telemetry text-[9.5px] text-faint/70">F1</span>}
+                    {!collapsed && !it.ready && <span className="telemetry text-[9.5px] text-faint/70">pronto</span>}
+                    {!collapsed && it.demo && <span className="telemetry text-[9.5px] text-warn/80" title="Datos simulados hasta conectar el adaptador de Pump.fun">demo</span>}
                   </>
                 );
                 const cls = `relative flex h-9 items-center gap-3 rounded-[var(--radius-sm)] px-2.5 text-[13.5px] transition-colors duration-150 ${
@@ -115,7 +116,7 @@ export function Sidebar() {
                         {inner}
                       </Link>
                     ) : (
-                      <span className={`${cls} cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted`} aria-disabled="true" title={`${it.label} · llega en F1`}>
+                      <span className={`${cls} cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted`} aria-disabled="true" title={`${it.label} · llega en un bloque posterior`}>
                         {inner}
                       </span>
                     )}
@@ -129,11 +130,10 @@ export function Sidebar() {
 
       <div className="border-t border-line p-2.5">
         {!collapsed && (
-          <div className="mb-2 rounded-[var(--radius-md)] border border-line bg-surface-2/60 p-3">
+          <Link href="/funder" className="mb-2 block rounded-[var(--radius-md)] border border-line bg-surface-2/60 p-3 transition-colors hover:border-line-strong">
             <p className="telemetry">Funder · predeterminado</p>
-            <p className="num mt-1 text-[17px]">24,812 SOL</p>
-            <p className="num text-[11.5px] text-faint">8Qd1…wF3k</p>
-          </div>
+            <p className="mt-1 text-[12.5px] text-muted">Saldo disponible al conectar el RPC</p>
+          </Link>
         )}
         <button onClick={toggle} className="btn-ghost flex h-9 w-full items-center gap-3 rounded-[var(--radius-sm)] px-2.5 text-[13px]" aria-label={collapsed ? "Expandir barra lateral" : "Plegar barra lateral"}>
           <ChevronsLeft className={`size-4 transition-transform duration-200 ${collapsed ? "rotate-180" : ""} ${collapsed ? "mx-auto" : ""}`} />
