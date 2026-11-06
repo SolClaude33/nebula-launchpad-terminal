@@ -316,6 +316,16 @@ export class Live {
     return { info, solUsd, mcUsd };
   }
 
+  /**
+   * REQ-LAUNCH-014: trades del token leídos de la cadena en este momento (arranca el vigilante si hace
+   * falta y espera a una pasada de sincronización), para que el Launch Guard decida con datos frescos.
+   */
+  async tradesNow(mint: string) {
+    const w = this.watch(mint);
+    await this.sync(mint, w.chain);
+    return this.db().prepare("SELECT user, side, lamports, ts FROM live_trade WHERE mint = ? ORDER BY seq").all(mint) as { user: string; side: string; lamports: string; ts: number }[];
+  }
+
   /** Tras una orden propia: indexa ya sus firmas sin esperar al siguiente sondeo. */
   async refresh(mint: string) {
     const w = this.watchers.get(mint);

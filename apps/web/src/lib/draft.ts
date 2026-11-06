@@ -30,6 +30,11 @@ export type Draft = {
   slippage: string;
   /** wallets holder del plan, en orden de compra */
   plan: string[];
+  /** REQ-LAUNCH-014: Launch Guard (solo modo Quick) */
+  guardEnabled: boolean;
+  guardSol: string;
+  guardSec: string;
+  guardWhitelist: string;
 };
 
 const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -53,6 +58,10 @@ export const emptyDraft = (): Draft => ({
   rangeMax: "0,3",
   slippage: "15",
   plan: [],
+  guardEnabled: false,
+  guardSol: "1",
+  guardSec: "30",
+  guardWhitelist: "",
 });
 
 export const num = (s: string) => {
@@ -97,6 +106,14 @@ export function fieldErrors(d: Draft) {
   if (!urlOk(d.links.web)) e.web = "URL completa, con https://";
   const dev = num(d.devBuy);
   if (Number.isNaN(dev) || dev < 0) e.devBuy = "Indica un número ≥ 0.";
+  if (d.launchMode === "quick" && d.guardEnabled) {
+    const g = num(d.guardSol);
+    if (Number.isNaN(g) || g <= 0) e.guardSol = "Indica un umbral mayor que 0.";
+    const sec = Number(d.guardSec);
+    if (!Number.isInteger(sec) || sec < 1 || sec > 3600) e.guardSec = "Entre 1 y 3.600 segundos.";
+    const bad = guardList(d).find((a) => !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a));
+    if (bad) e.guardWhitelist = `Dirección no válida: ${bad.slice(0, 12)}…`;
+  }
   const slip = num(d.slippage);
   if (Number.isNaN(slip) || slip < 0.1 || slip > 50) e.slippage = "Entre 0,1 % y 50 %.";
   if (d.launchMode === "quick") {
@@ -156,6 +173,8 @@ export function fundingNeeds(d: Draft, ctx: { balances: Record<string, bigint>; 
   return out;
 }
 
+export const guardList = (d: Draft) => d.guardWhitelist.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+
 /** Configuración que se envía al dry-run del servidor. */
 export function toConfig(d: Draft) {
   const amounts = planAmounts(d);
@@ -174,6 +193,7 @@ export function toConfig(d: Draft) {
     mayhem: d.mode === "mayhem",
     feeMode: d.feeMode,
     feeAck: d.feeAck,
+    guard: d.launchMode === "quick" && d.guardEnabled ? { thresholdLamports: toLamports(d.guardSol).toString(), windowSec: Number(d.guardSec), whitelist: guardList(d) } : null,
   };
 }
 

@@ -28,6 +28,19 @@ export const LaunchConfig = z.object({
   mayhem: z.boolean().default(false),
   feeMode: z.enum(["creator", "holders"]),
   feeAck: z.literal(true, { message: "Confirma el destino de las comisiones (irreversible)" }),
+  /**
+   * REQ-LAUNCH-014 · Launch Guard («Complete Early» del Sniper Guard, sin Nuke): si las compras externas
+   * acumuladas desde la creación superan el umbral dentro de la ventana, las compras planificadas que
+   * quedan se omiten. Nunca vende. La lista blanca no cuenta como externa.
+   */
+  guard: z
+    .object({
+      thresholdLamports: z.string().regex(/^\d+$/),
+      windowSec: z.number().int().min(1).max(3600),
+      whitelist: z.array(z.string().max(64)).max(50).default([]),
+    })
+    .nullable()
+    .default(null),
 });
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
 
@@ -59,6 +72,24 @@ export class Launches {
   ) {}
 
   private scheduler: NodeJS.Timeout | null = null;
+  /** Lector de trades del token (el indexer del Live), para el Launch Guard */
+  private trades: ((mint: string) => Promise<{ user: string; side: string; lamports: string; ts: number }[]>) | null = null;
+  /** Solo para tests: se ejecuta antes de cada compra planificada */
+  testHooks: { beforeBuy?: (id: string, ord: number) => Promise<void> } = {};
+
+  attachTrades(fn: (mint: string) => Promise<{ user: string; side: string; lamports: string; ts: number }[]>) {
+    this.trades = fn;
+  }
+
+  /** Compras externas (ni wallets propias ni lista blanca) desde la creación, en lamports. */
+  private async externalBuys(mint: string, whitelist: string[]) {
+    if (!this.trades) return 0n;
+    const own = new Set((this.db().prepare("SELECT address FROM wallet").all() as { address: string }[]).map((r) => r.address));
+    const allow = new Set(whitelist);
+    let sum = 0n;
+    for (const t of await this.trades(mint)) if (t.side === "buy" && !own.has(t.user) && !allow.has(t.user)) sum += BigInt(t.lamports);
+    return sum;
+  }
   private firing = new Set<string>();
 
   private row(id: string) {
@@ -391,8 +422,22 @@ export class Launches {
       if (r.status === "BUYING") {
         const buys = this.db().prepare("SELECT ord, wallet_id, lamports FROM launch_buy WHERE launch_id = ? AND status = 'PENDING' ORDER BY ord").all(id) as { ord: number; wallet_id: string; lamports: number }[];
         const upd = this.db().prepare("UPDATE launch_buy SET status = ?, tokens = ?, signature = ?, reason = ? WHERE launch_id = ? AND ord = ?");
+        const guard = cfg.guard ?? null;
+        // la ventana del guard empieza al pasar a las compras (justo tras la creación confirmada)
+        const guardStart = this.clock();
         for (const b of buys) {
           if (this.row(id)!.status !== "BUYING") return;
+          await this.testHooks.beforeBuy?.(id, b.ord);
+          // REQ-LAUNCH-014: dentro de la ventana, si las compras externas superan el umbral se completa antes
+          if (guard && this.clock() - guardStart <= guard.windowSec * 1000) {
+            const ext = await this.externalBuys(r.mint, guard.whitelist).catch(() => 0n);
+            if (ext > BigInt(guard.thresholdLamports)) {
+              const why = `Launch Guard: compras externas de ${(Number(ext) / 1e9).toFixed(4)} SOL superan el umbral de ${(Number(guard.thresholdLamports) / 1e9).toFixed(4)} SOL`;
+              const n = this.db().prepare("UPDATE launch_buy SET status = 'SKIPPED', reason = ? WHERE launch_id = ? AND status = 'PENDING'").run(why, id).changes;
+              logActivity(this.db(), "launch.guard", `${why}: ${n} compras planificadas omitidas en $${cfg.symbol} (no se vende nada)`);
+              break;
+            }
+          }
           const w = this.wallet(b.wallet_id);
           let tx;
           try {

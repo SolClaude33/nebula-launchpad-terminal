@@ -131,22 +131,55 @@ export function StepConfig() {
         )}
       </fieldset>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex items-start gap-2.5 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 opacity-60" aria-disabled>
-          <CalendarClock className="mt-0.5 size-4 text-faint" aria-hidden />
-          <span className="text-[12.5px] text-muted">
-            <span className="block text-[13.5px] font-medium text-fg">Lanzamiento programado</span>
-            Próximamente: necesita guardar el borrador en el servidor para ejecutarse tras un reinicio.
-          </span>
-        </div>
-        <div className="flex items-start gap-2.5 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 opacity-60" aria-disabled>
-          <ShieldAlert className="mt-0.5 size-4 text-faint" aria-hidden />
-          <span className="text-[12.5px] text-muted">
-            <span className="block text-[13.5px] font-medium text-fg">Launch Guard y bundle Jito</span>
-            Próximamente. Hoy la creación y el dev buy ya van juntos en una sola transacción.
-          </span>
-        </div>
-      </div>
+      {d.launchMode === "quick" && <GuardPanel />}
+
+      <p className="flex items-start gap-2 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 text-[12.5px] text-muted">
+        <CalendarClock className="mt-0.5 size-4 shrink-0 text-accent-b" aria-hidden />
+        <span>
+          <span className="block text-[13.5px] font-medium text-fg">Lanzamiento programado</span>
+          Se elige en el paso 4, junto al botón Lanzar, con el dry-run en verde. Se guarda en este equipo y sobrevive a un reinicio.
+        </span>
+      </p>
     </div>
+  );
+}
+
+/** REQ-LAUNCH-014 · Launch Guard: «Complete Early» sin Nuke. Solo omite compras propias; nunca vende. */
+function GuardPanel() {
+  const d = useDraft((s) => s.draft);
+  const set = useDraft((s) => s.set);
+  const fe = fieldErrors(d);
+  return (
+    <fieldset className="rounded-[var(--radius-md)] border border-line bg-surface-1 p-4">
+      <legend className="sr-only">Launch Guard</legend>
+      <label className="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" checked={d.guardEnabled} onChange={(e) => set({ guardEnabled: e.target.checked })} className="mt-1 accent-[var(--accent-b)]" />
+        <span>
+          <span className="flex items-center gap-2 text-[13.5px] font-medium">
+            <ShieldAlert className="size-4 text-accent-b" aria-hidden /> Launch Guard
+          </span>
+          <span className="mt-0.5 block text-[12.5px] text-muted">Si otros compran más de un umbral mientras compran tus holders, se detienen las compras planificadas que quedan («Complete Early»). No vende nada.</span>
+        </span>
+      </label>
+      {d.guardEnabled && (
+        <div className="mt-3 grid grid-cols-[160px_160px_minmax(0,1fr)] gap-3">
+          <Field id="guardSol" label="Umbral de compras externas" error={fe.guardSol}>
+            <div className="relative">
+              <input id="guardSol" inputMode="decimal" value={d.guardSol} onChange={(e) => set({ guardSol: e.target.value })} aria-invalid={!!fe.guardSol} className="field num h-9 pr-12" />
+              <Suffix>SOL</Suffix>
+            </div>
+          </Field>
+          <Field id="guardSec" label="Ventana tras crear" error={fe.guardSec}>
+            <div className="relative">
+              <input id="guardSec" inputMode="numeric" value={d.guardSec} onChange={(e) => set({ guardSec: e.target.value })} aria-invalid={!!fe.guardSec} className="field num h-9 pr-8" />
+              <Suffix>s</Suffix>
+            </div>
+          </Field>
+          <Field id="guardWhitelist" label="Lista blanca (no cuentan como externas)" error={fe.guardWhitelist}>
+            <textarea id="guardWhitelist" rows={2} placeholder="Direcciones separadas por comas o líneas" value={d.guardWhitelist} onChange={(e) => set({ guardWhitelist: e.target.value })} aria-invalid={!!fe.guardWhitelist} className="field num min-h-9 resize-y text-[12px]" />
+          </Field>
+        </div>
+      )}
+    </fieldset>
   );
 }

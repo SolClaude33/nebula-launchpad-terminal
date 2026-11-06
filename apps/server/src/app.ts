@@ -176,6 +176,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   vault.onLock((reason) => reason !== "shutdown" && launches?.pauseScheduled("lock"));
   if (!opts.clock) launches.startScheduler();
   live = new Live(getDb, chainManager, (m) => logger.info(m));
+  launches.attachTrades((mint) => live!.tradesNow(mint));
   trading = new Trading(getDb, chainManager, vault, live, priority, (m) => logger.info(m));
   trading.pauseAllRunning();
   vault.onLock(() => trading?.pauseAllRunning());
