@@ -116,7 +116,7 @@ export class Launches {
     // create_v2 + dev buy con una URI normal no cabe en 1.232 bytes sin la tabla de direcciones
     const alt = await chain.launchAlt.status();
     if (!alt.ready) {
-      checks.push({ label: "Tabla de direcciones de Nébula (una sola vez)", kind: "setup", ok: false, action: "create-alt", reason: `Falta crearla. Cuesta ~${(Number(alt.rentLamports) / 1e9).toFixed(4)} SOL de rent (recuperable) y la paga la wallet dev.` });
+      checks.push({ label: "Tabla de direcciones de Nébula (una sola vez)", kind: "setup", ok: false, action: "create-alt", reason: `Falta crearla. Cuesta ~${(Number(alt.rentLamports) / 1e9).toFixed(4)} SOL de rent y la paga la wallet dev; solo se recuperaría cerrando la tabla (aún no implementado).` });
     }
     const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: meta.uri, creator: dev.address, mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
     const sim = alt.ready ? await chain.sender.send(tx, { idempotencyKey: `launch:${cfg.draftId}:preflight:${Date.now()}`, simulateOnly: true }) : { status: "failed" as const, code: "SIMULATION_FAILED" as const, message: "Se simulará cuando exista la tabla de direcciones." };

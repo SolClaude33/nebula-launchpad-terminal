@@ -374,7 +374,7 @@ export function TransferDialog({ from, own, onClose, onDone }: { from: WalletDto
 }
 
 // ── Dispersar desde un funder a varias wallets ───────────────────────────────
-export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmount = "0,1" }: { funders: WalletDto[]; targets: WalletDto[]; onClose: () => void; onDone: () => void; defaultAmount?: string }) {
+export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmount = "0,1", exactAmounts }: { funders: WalletDto[]; targets: WalletDto[]; onClose: () => void; onDone: () => void; defaultAmount?: string; exactAmounts?: Record<string, bigint> }) {
   const balances = useChain((s) => s.balances);
   const [fromId, setFromId] = useState(funders.find((f) => f.isDefaultFunder)?.id ?? funders[0]?.id ?? "");
   const [amount, setAmount] = useState(defaultAmount);
@@ -392,7 +392,8 @@ export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmoun
           className="mt-4 space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (lam) setInput({ kind: "disperse", fromId, toIds: targets.map((t) => t.id), lamportsEach: lam });
+            if (exactAmounts) setInput({ kind: "disperse", fromId, amounts: targets.map((t) => ({ walletId: t.id, lamports: (exactAmounts[t.id] ?? 0n).toString() })) });
+            else if (lam) setInput({ kind: "disperse", fromId, toIds: targets.map((t) => t.id), lamportsEach: lam });
           }}
         >
           <label className="block text-[13px]">
@@ -405,6 +406,19 @@ export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmoun
               ))}
             </select>
           </label>
+          {exactAmounts ? (
+            <div className="rounded-[var(--radius-sm)] border border-line bg-surface-2/40 p-3 text-[12.5px]">
+              <p className="mb-1.5 font-medium">Lo que le falta a cada wallet</p>
+              <ul className="space-y-0.5">
+                {targets.map((t) => (
+                  <li key={t.id} className="flex justify-between">
+                    <span className="text-muted">{t.label}</span>
+                    <span className="num">{fmtLamports(exactAmounts[t.id], 4)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
           <label className="block text-[13px]">
             <span className="mb-1.5 block font-medium">SOL por wallet</span>
             <div className="relative">
@@ -415,11 +429,12 @@ export function DisperseDialog({ funders, targets, onClose, onDone, defaultAmoun
               Total {lam ? fmtLamports(BigInt(lam) * BigInt(targets.length), 4) : "—"} + fees · saldo de {from?.label}: {fmtLamports(balances[from?.address ?? ""], 4)}
             </span>
           </label>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <button type="button" onClick={onClose} className="btn h-9">
               Cancelar
             </button>
-            <button type="submit" disabled={!lam} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
+            <button type="submit" disabled={!exactAmounts && !lam} className="cta cta-fill h-9 px-4 text-[13px] font-semibold">
               Ver vista previa
             </button>
           </div>

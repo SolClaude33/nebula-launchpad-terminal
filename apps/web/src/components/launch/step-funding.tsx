@@ -227,6 +227,7 @@ export function StepFunding() {
           funders={funders}
           targets={shortList.map((n) => byId.get(n.walletId)!).filter(Boolean)}
           defaultAmount={(Number(maxShort) / 1e9 + 0.0005).toFixed(4).replace(".", ",")}
+          exactAmounts={Object.fromEntries(shortList.map((n) => [n.walletId, ((n.short + 99_999n) / 100_000n) * 100_000n]))}
           onClose={() => setFunding(false)}
           onDone={() => void refresh()}
         />

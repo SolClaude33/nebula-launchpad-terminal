@@ -21,6 +21,7 @@ export type OperationView = {
 export type OperationInput =
   | { kind: "transfer"; fromId: string; to: string; lamports?: string; max?: boolean }
   | { kind: "disperse"; fromId: string; toIds: string[]; lamportsEach: string }
+  | { kind: "disperse"; fromId: string; amounts: { walletId: string; lamports: string }[] }
   | { kind: "collect"; fromIds: string[]; toId: string };
 
 export const previewOp = (input: OperationInput) => api<OperationView>("/operations/preview", { method: "POST", body: input });

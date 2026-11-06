@@ -94,10 +94,11 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
       const slot = await pool.run((c) => c.getSlot("finalized"));
       const { address, instructions } = altCreateInstructions(payer, slot, want);
       const res = await sender.send({ kind: "transfer", payer, signers: [payer], cuLimit: 50_000, payload: { instructions } }, { idempotencyKey: `alt:${keysFingerprint(want)}:${slot}` });
-      if (res.status !== "confirmed") throw Object.assign(new Error(`No se pudo crear la tabla de direcciones: ${"message" in res ? res.message : res.status}`), { statusCode: 409 });
+      // Un resultado pendiente (confirmación lenta) no es un fallo: se comprueba si la tabla ya existe
+      if (res.status === "failed") throw Object.assign(new Error(`No se pudo crear la tabla de direcciones: ${res.message}`), { statusCode: 409 });
       // La tabla se puede usar a partir del slot siguiente a la extensión
       const created = await pool.run((c) => c.getSlot("confirmed"));
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 75; i++) {
         const acc = await loadAlt(address, want).catch(() => null);
         const now = await pool.run((c) => c.getSlot("confirmed"));
         if (acc && now > created) {

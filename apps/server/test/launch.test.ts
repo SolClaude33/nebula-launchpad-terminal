@@ -118,6 +118,32 @@ describe.each(backends)("Lanzamiento real · %s", (backend) => {
     expect(v).toMatchObject({ status: "DONE", buys: [] });
   });
 
+  it.each([
+    ["Mayhem", { mayhem: true, symbol: "KMAY" }],
+    ["Holder Rewards", { feeMode: "holders", symbol: "KHOL" }],
+  ])("REQ-LAUNCH-007 · %s: dry-run en verde y lanzamiento Manual", async (_n, over) => {
+    const c = cfg({ mode: "manual", holders: [], devBuyLamports: (SOL / 20n).toString(), ...over });
+    const pf = (await call("POST", "/api/launches/preflight", c));
+    expect(pf.status, JSON.stringify(pf.json)).toBe(200);
+    expect(pf.json.preflight.ok, JSON.stringify(pf.json.preflight)).toBe(true);
+    await call("POST", `/api/launches/${c.draftId}/execute`);
+    const v = await until(c.draftId);
+    expect(v.status, JSON.stringify(v)).toBe("DONE");
+  });
+
+  it.runIf(backend === "mock")("REQ-WAL-007 · no se puede borrar una wallet de un lanzamiento en pausa", async () => {
+    const c = cfg({ symbol: "KDEL" });
+    expect((await call("POST", "/api/launches/preflight", c)).json.preflight.ok).toBe(true);
+    ctx.chain.get().ledger!.failures.push("RPC_DOWN");
+    await call("POST", `/api/launches/${c.draftId}/execute`);
+    expect((await until(c.draftId)).status).toBe("PAUSED");
+    const t = (await call("POST", "/api/vault/confirm", { password: PW, action: "delete-wallet" })).json.token;
+    const r = await app.inject({ method: "DELETE", url: "/api/wallets", headers: { host: HOST, origin: ORIGIN, "x-nebula-session": ctx.token, "x-nebula-stepup": t, "content-type": "application/json" }, payload: JSON.stringify({ ids: [holders[0].id] }) });
+    expect(r.statusCode).toBe(409);
+    await call("POST", `/api/launches/${c.draftId}/resume`);
+    expect((await until(c.draftId)).status).toBe("DONE");
+  });
+
   it.runIf(backend === "mock")("RPC caído al crear: el lanzamiento queda en pausa y al reanudar comprueba el mint y termina", async () => {
     const c = cfg({ mode: "manual", holders: [], symbol: "KPAU" });
     expect((await call("POST", "/api/launches/preflight", c)).json.preflight.ok).toBe(true);

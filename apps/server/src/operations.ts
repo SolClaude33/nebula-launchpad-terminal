@@ -13,7 +13,14 @@ import type { PreparedTx } from "./chain/types";
 
 export const OperationInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("transfer"), fromId: z.string(), to: z.string().trim(), lamports: z.string().regex(/^\d+$/).optional(), max: z.boolean().optional() }),
-  z.object({ kind: z.literal("disperse"), fromId: z.string(), toIds: z.array(z.string()).min(1).max(500), lamportsEach: z.string().regex(/^\d+$/) }),
+  z.object({
+    kind: z.literal("disperse"),
+    fromId: z.string(),
+    toIds: z.array(z.string()).max(500).default([]),
+    lamportsEach: z.string().regex(/^\d+$/).optional(),
+    /** alternativa: un monto distinto por wallet */
+    amounts: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/) })).max(500).optional(),
+  }),
   z.object({ kind: z.literal("collect"), fromIds: z.array(z.string()).min(1).max(500), toId: z.string() }),
 ]);
 export type OperationInput = z.infer<typeof OperationInput>;
@@ -84,10 +91,15 @@ export class Operations {
       raw.push({ from, to: input.to, toLabel: own?.label ?? null, lamports: input.max ? "MAX" : BigInt(input.lamports!) });
     } else if (input.kind === "disperse") {
       const from = this.wallet(input.fromId);
-      const each = BigInt(input.lamportsEach);
-      if (each <= 0n) throw Object.assign(new Error("El monto por wallet debe ser mayor que 0."), { statusCode: 400 });
-      for (const id of [...new Set(input.toIds)]) {
-        const t = this.wallet(id);
+      const list = input.amounts ?? (input.lamportsEach ? input.toIds.map((walletId) => ({ walletId, lamports: input.lamportsEach! })) : []);
+      if (list.length === 0) throw Object.assign(new Error("Indica las wallets y el monto (fijo o por wallet)."), { statusCode: 400 });
+      const seen = new Set<string>();
+      for (const { walletId, lamports } of list) {
+        if (seen.has(walletId)) continue;
+        seen.add(walletId);
+        const each = BigInt(lamports);
+        if (each <= 0n) throw Object.assign(new Error("Cada monto debe ser mayor que 0."), { statusCode: 400 });
+        const t = this.wallet(walletId);
         if (t.address === from.address) continue;
         raw.push({ from, to: t.address, toLabel: t.label, lamports: each });
       }

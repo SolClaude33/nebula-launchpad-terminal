@@ -55,6 +55,21 @@ describe.each(backends)("Movimientos de fondos · %s", (backend) => {
     expect(before - (await bal(funder.address))).toBe(SOL + BigInt(pv.feeTotal)); // REQ-COST-001: coste mostrado = real
   });
 
+  it("REQ-WAL-008 · dispersión con monto por wallet: cada una recibe exactamente lo suyo", async () => {
+    const extra = (await call("POST", "/api/wallets", { count: 3 })).json.created as string[];
+    const amounts = [{ walletId: extra[0], lamports: "1100000" }, { walletId: extra[1], lamports: "2200000" }, { walletId: extra[2], lamports: "3300000" }];
+    const before = await bal(funder.address);
+    const pv = (await call("POST", "/api/operations/preview", { kind: "disperse", fromId: funder.id, amounts })).json;
+    expect(pv.errors).toEqual([]);
+    expect(pv.items.map((i: { lamports: string }) => i.lamports)).toEqual(["1100000", "2200000", "3300000"]);
+    await call("POST", `/api/operations/${pv.id}/execute`, {});
+    expect((await done(pv.id)).status).toBe("COMPLETED");
+    const addrs = (await call("GET", "/api/wallets")).json.wallets.filter((w: { id: string }) => extra.includes(w.id));
+    const byId = Object.fromEntries(addrs.map((w: { id: string; address: string }) => [w.id, w.address]));
+    for (const a of amounts) expect(await bal(byId[a.walletId])).toBe(BigInt(a.lamports));
+    expect(before - (await bal(funder.address))).toBe(6_600_000n + BigInt(pv.feeTotal));
+  });
+
   it("NFR-TX-001 · ejecutar dos veces la misma operación no duplica el efecto", async () => {
     const pv = (await call("POST", "/api/operations/preview", { kind: "transfer", fromId: funder.id, to: ws[0].address, lamports: "1000000" })).json;
     const before = await bal(ws[0].address);
