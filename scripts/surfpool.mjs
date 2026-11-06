@@ -37,7 +37,14 @@ async function install() {
 function start() {
   if (!bin || !existsSync(bin)) throw new Error("Surfpool no está instalado. Ejecuta `pnpm surfpool:install`.");
   const args = ["start", "--network", "mainnet", "--host", "127.0.0.1", "--no-tui", "--no-studio", "--no-deploy", "--airdrop-amount", "0", "--db", ":memory:"];
-  spawn(bin, args, { stdio: "inherit", cwd: dir }).on("exit", (c) => process.exit(c ?? 0));
+  const child = spawn(bin, args, { stdio: "inherit", cwd: dir });
+  child.on("exit", (c) => process.exit(c ?? 0));
+  // En Windows el hijo no muere con el padre: ciérralo explícitamente
+  const stop = () => {
+    if (child.exitCode === null) child.kill();
+  };
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) process.on(sig, () => (stop(), process.exit(0)));
+  process.on("exit", stop);
 }
 
 if (process.argv[2] === "install") install().catch((e) => (console.error(e.message), process.exit(1)));
