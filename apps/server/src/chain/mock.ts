@@ -1,6 +1,9 @@
 // TEST-ENV-002: adaptador mock con el mismo contrato que el real y fallos inyectables.
 // Curva de constante producto con los parámetros iniciales de Pump.fun (30 SOL / 1.073 M tokens virtuales).
-import type { ChainEnv, ChainReader, CurveQuote, LaunchQuote, LaunchpadAdapter, MessageSigner, PreparedTx, SendErrorCode, SendResult, TransferBuilder, TxSender } from "./types";
+// Al completarse la curva, la migración crea un pool de constante producto con las reservas reales (PumpSwap).
+// Cada envío confirmado queda como una "transacción" con eventos codificados en sus logs, para que
+// el indexer en vivo funcione igual que contra el RPC (firmas, transacciones y suscripción a logs).
+import type { ChainEnv, ChainEvent, ChainReader, CurveQuote, LaunchQuote, LaunchpadAdapter, MessageSigner, PreparedTx, RawTx, SendErrorCode, SendResult, TokenInfo, TransferBuilder, TxSender } from "./types";
 import { RENT_EXEMPT_MIN_DEFAULT, transferCuLimit, txFee } from "./fees";
 import { chunkTransfers } from "./transfers";
 
@@ -8,24 +11,38 @@ const INIT = { vSol: 30_000_000_000n, vTok: 1_073_000_000_000_000n, realTok: 793
 const FEE_BPS = 100n; // total; de ello CREATOR_BPS va a la bóveda del creador
 const CREATOR_BPS = 30n;
 const TX_FEE = 5_000n;
-const ATA_RENT = 2_039_280n;
+export const MOCK_ATA_RENT = 2_039_280n;
 const MINT_RENT = 21_800_000n;
+const MIGRATION_FEE = 15_000_000n;
+export const MOCK_SOL_USD = 150;
+const LOG_PREFIX = "Program data: mock:";
 
-type Curve = { vSol: bigint; vTok: bigint; realSol: bigint; realTok: bigint; complete: boolean; creator: string; creatorVault: bigint };
+type Curve = { vSol: bigint; vTok: bigint; realSol: bigint; realTok: bigint; complete: boolean; creator: string; creatorVault: bigint; name: string; symbol: string; mayhem: boolean };
+type Pool = { base: bigint; quote: bigint };
 type Op =
-  | { op: "create"; mint: string; creator: string; devBuy: bigint; tokens: bigint; maxSol: bigint }
+  | { op: "create"; mint: string; creator: string; devBuy: bigint; tokens: bigint; maxSol: bigint; name: string; symbol: string; mayhem: boolean }
   | { op: "buy"; mint: string; user: string; tokens: bigint; maxSol: bigint }
   | { op: "sell"; mint: string; user: string; tokens: bigint; minSol: bigint }
   | { op: "claim"; creator: string }
+  | { op: "migrate"; mint: string; payer: string }
   | { op: "transfer"; from: string; items: { to: string; lamports: bigint }[] };
+
+/** Evento tal y como lo emite el mock (se serializa en los logs de la transacción). */
+type MockEvent = ChainEvent extends infer E ? (E extends ChainEvent ? Omit<E, "index"> : never) : never;
 
 const bpsOf = (v: bigint, bps: bigint) => (v * bps) / 10_000n;
 const withSlip = (v: bigint, pct: number, up: boolean) => (up ? v + (v * BigInt(Math.floor(pct * 10))) / 1000n : v - (v * BigInt(Math.floor(pct * 10))) / 1000n);
+const json = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? `${x}n` : x));
+const unjson = (s: string) => JSON.parse(s, (_k, x) => (typeof x === "string" && /^-?\d+n$/.test(x) ? BigInt(x.slice(0, -1)) : x));
+const mcOf = (quote: bigint, token: bigint) => (token > 0n ? (quote * INIT.supply) / token : 0n);
+export const mockCurveAccount = (mint: string) => `curve-${mint}`;
+export const mockPoolAccount = (mint: string) => `pool-${mint}`;
 
 export class MockLedger {
   sol = new Map<string, bigint>();
   tokens = new Map<string, Map<string, bigint>>();
   curves = new Map<string, Curve>();
+  pools = new Map<string, Pool>();
   /** fallos a devolver en los próximos envíos, en orden */
   failures: SendErrorCode[] = [];
   /** movimiento de precio (en %) aplicado justo antes de ejecutar el siguiente envío */
@@ -34,6 +51,10 @@ export class MockLedger {
   sendDelayMs = 0;
   sent = new Map<string, SendResult>();
   seq = 0;
+  /** transacciones confirmadas, de la más antigua a la más nueva */
+  txs: (RawTx & { mentions: Set<string> })[] = [];
+  listeners = new Map<string, Set<(tx: RawTx) => void>>();
+  private events: MockEvent[] = [];
 
   balance(a: string) {
     return this.sol.get(a) ?? 0n;
@@ -65,12 +86,29 @@ export class MockLedger {
     return gross - bpsOf(gross, FEE_BPS);
   }
 
+  discardEvents() {
+    this.events = [];
+  }
+
+  /** Tras un envío confirmado: lo registra como transacción y avisa a los suscriptores de logs. */
+  record(signature: string, payer: string): RawTx {
+    const events = this.events.splice(0);
+    const mentions = new Set<string>([payer, ...events.flatMap((e) => [e.mint, ...(e.kind === "trade" ? [e.user] : [])])]);
+    const tx = { signature, slot: this.txs.length + 1, blockTime: Math.floor(Date.now() / 1000), err: null, logs: events.map((e) => LOG_PREFIX + json(e)), mentions };
+    this.txs.push(tx);
+    for (const m of mentions) for (const cb of this.listeners.get(m) ?? []) cb(tx);
+    return tx;
+  }
+
   apply(o: Op, TX_FEE: bigint): { ok: true; fee: bigint } | { ok: false; code: SendErrorCode; message: string } {
     if (this.priceShockPct) {
       for (const c of this.curves.values()) c.vSol = c.vSol + (c.vSol * BigInt(Math.round(this.priceShockPct * 100))) / 10_000n;
+      for (const p of this.pools.values()) p.quote = p.quote + (p.quote * BigInt(Math.round(this.priceShockPct * 100))) / 10_000n;
       this.priceShockPct = 0;
     }
+    this.events = [];
     const fail = (code: SendErrorCode, message: string) => ({ ok: false as const, code, message });
+    const now = Date.now();
     if (o.op === "transfer") {
       // Misma regla que Solana: cada cuenta acaba en 0 o en ≥ mínimo exento de rent
       const total = o.items.reduce((a, i) => a + i.lamports, 0n);
@@ -87,103 +125,153 @@ export class MockLedger {
     }
     if (o.op === "create") {
       if (this.curves.has(o.mint)) return fail("SIMULATION_FAILED", "El mint ya existe");
-      const curve: Curve = { vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: o.creator, creatorVault: 0n };
+      const curve: Curve = { vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: o.creator, creatorVault: 0n, name: o.name, symbol: o.symbol, mayhem: o.mayhem };
       const cost = o.devBuy > 0n ? MockLedger.costFor(curve, o.tokens) : 0n;
       if (cost > o.maxSol) return fail("SLIPPAGE", "slippage: Too much SOL required to buy the given amount of tokens.");
-      const need = cost + MINT_RENT + ATA_RENT + TX_FEE;
+      const need = cost + MINT_RENT + MOCK_ATA_RENT + TX_FEE;
       if (this.balance(o.creator) < need) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para crear el token");
       this.curves.set(o.mint, curve);
-      if (o.devBuy > 0n) this.fill(o.mint, curve, o.creator, o.tokens, cost);
-      this.sol.set(o.creator, this.balance(o.creator) - MINT_RENT - ATA_RENT - TX_FEE);
+      if (o.devBuy > 0n) this.fill(o.mint, curve, o.creator, o.tokens, cost, now);
+      this.sol.set(o.creator, this.balance(o.creator) - MINT_RENT - MOCK_ATA_RENT - TX_FEE);
       return { ok: true, fee: TX_FEE };
     }
     if (o.op === "claim") {
       let total = 0n;
       for (const c of this.curves.values()) if (c.creator === o.creator) (total += c.creatorVault), (c.creatorVault = 0n);
       if (total === 0n) return fail("SIMULATION_FAILED", "No hay comisiones que reclamar");
+      if (this.balance(o.creator) + total < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
       this.sol.set(o.creator, this.balance(o.creator) + total - TX_FEE);
       return { ok: true, fee: TX_FEE };
     }
     const c = this.curves.get(o.mint);
     if (!c) return fail("SIMULATION_FAILED", "La curva no existe");
-    if (c.complete) return fail("CURVE_COMPLETE", "La curva está completa; se opera en PumpSwap");
+    if (o.op === "migrate") {
+      if (!c.complete) return fail("SIMULATION_FAILED", "La curva aún no está completa");
+      if (this.pools.has(o.mint)) return fail("SIMULATION_FAILED", "El pool ya existe");
+      if (this.balance(o.payer) < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
+      // Al pool van los tokens que quedan en la curva y el SOL real menos la fee de migración
+      const sold = [...(this.tokens.get(o.mint)?.values() ?? [])].reduce((a, b) => a + b, 0n);
+      this.pools.set(o.mint, { base: INIT.supply - sold, quote: c.realSol - MIGRATION_FEE });
+      this.sol.set(o.payer, this.balance(o.payer) - TX_FEE);
+      this.events.push({ kind: "migrate", mint: o.mint, pool: mockPoolAccount(o.mint), ts: now });
+      return { ok: true, fee: TX_FEE };
+    }
+    const pool = this.pools.get(o.mint);
+    if (c.complete && !pool) return fail("MIGRATING", "La curva está completa y la migración a PumpSwap aún no ha ocurrido");
+    // En PumpSwap la "curva" son las reservas reales del pool
+    const venue = pool ? { vSol: pool.quote, vTok: pool.base } : c;
     if (o.op === "buy") {
-      const cost = MockLedger.costFor(c, o.tokens);
+      const cost = MockLedger.costFor(venue, o.tokens);
       if (cost > o.maxSol) return fail("SLIPPAGE", "slippage: Too much SOL required to buy the given amount of tokens.");
-      const rent = this.tokenOf(o.mint, o.user) === 0n ? ATA_RENT : 0n;
+      const rent = this.tokenOf(o.mint, o.user) === 0n ? MOCK_ATA_RENT : 0n;
       if (this.balance(o.user) < cost + rent + TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente: monto + fees + rent");
-      this.fill(o.mint, c, o.user, o.tokens, cost);
+      if (pool) {
+        const net = cost - bpsOf(cost, FEE_BPS);
+        pool.quote += net;
+        pool.base -= o.tokens;
+        c.creatorVault += bpsOf(cost, CREATOR_BPS);
+        this.addTokens(o.mint, o.user, o.tokens);
+        this.sol.set(o.user, this.balance(o.user) - cost);
+        this.events.push({ kind: "trade", venue: "pumpswap", mint: o.mint, side: "buy", lamports: cost, tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mcOf(pool.quote, pool.base) });
+      } else this.fill(o.mint, c, o.user, o.tokens, cost, now);
       this.sol.set(o.user, this.balance(o.user) - rent - TX_FEE);
       return { ok: true, fee: TX_FEE };
     }
     // sell
     if (this.tokenOf(o.mint, o.user) < o.tokens) return fail("SIMULATION_FAILED", "No hay tokens suficientes para vender");
-    const out = MockLedger.sellOut(c, o.tokens);
+    const out = MockLedger.sellOut(venue, o.tokens);
     if (out < o.minSol) return fail("SLIPPAGE", "slippage: Too little SOL received to sell the given amount of tokens.");
     if (this.balance(o.user) < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
     const gross = out + bpsOf(out, FEE_BPS);
-    c.vSol -= gross;
-    c.vTok += o.tokens;
-    c.realSol -= gross;
-    c.realTok += o.tokens;
+    if (pool) {
+      pool.quote -= gross;
+      pool.base += o.tokens;
+    } else {
+      c.vSol -= gross;
+      c.vTok += o.tokens;
+      c.realSol -= gross;
+      c.realTok += o.tokens;
+    }
     c.creatorVault += bpsOf(gross, CREATOR_BPS);
     this.addTokens(o.mint, o.user, -o.tokens);
     this.sol.set(o.user, this.balance(o.user) + out - TX_FEE);
+    const mc = pool ? mcOf(pool.quote, pool.base) : mcOf(c.vSol, c.vTok);
+    this.events.push({ kind: "trade", venue: pool ? "pumpswap" : "curve", mint: o.mint, side: "sell", lamports: out, tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mc });
     return { ok: true, fee: TX_FEE };
   }
 
-  private fill(mint: string, c: Curve, user: string, tokens: bigint, cost: bigint) {
+  private fill(mint: string, c: Curve, user: string, tokens: bigint, cost: bigint, now: number) {
     const net = cost - bpsOf(cost, FEE_BPS);
     c.vSol += net;
     c.vTok -= tokens;
     c.realSol += net;
     c.realTok -= tokens;
     c.creatorVault += bpsOf(cost, CREATOR_BPS);
-    if (c.realTok === 0n) c.complete = true;
     this.addTokens(mint, user, tokens);
     this.sol.set(user, this.balance(user) - cost);
+    this.events.push({ kind: "trade", venue: "curve", mint, side: "buy", lamports: cost, tokens, user, ts: now, marketCapLamports: mcOf(c.vSol, c.vTok) });
+    if (c.realTok === 0n) {
+      c.complete = true;
+      this.events.push({ kind: "complete", mint, ts: now });
+    }
   }
 }
 
-function quoteOf(c: Curve, side: "buy" | "sell", amount: bigint, slippagePct: number): CurveQuote {
-  const before = (c.vSol * INIT.supply) / c.vTok;
-  let out: bigint, limit: bigint, after: Curve;
+function quoteOf(c: Curve, pool: Pool | undefined, side: "buy" | "sell", amount: bigint, slippagePct: number): CurveQuote {
+  const v = pool ? { vSol: pool.quote, vTok: pool.base, realTok: pool.base } : c;
+  const before = mcOf(v.vSol, v.vTok);
+  let out: bigint, limit: bigint, after: { vSol: bigint; vTok: bigint; realTok: bigint };
   if (side === "buy") {
-    out = MockLedger.buyOut(c, amount);
+    out = MockLedger.buyOut(v, amount);
     // Igual que el SDK: máximo de SOL = monto enviado × (1 + slippage %)
     limit = withSlip(amount, slippagePct, true);
-    after = { ...c, vSol: c.vSol + (amount - bpsOf(amount, FEE_BPS)), vTok: c.vTok - out, realTok: c.realTok - out };
+    after = { vSol: v.vSol + (amount - bpsOf(amount, FEE_BPS)), vTok: v.vTok - out, realTok: v.realTok - out };
   } else {
-    out = MockLedger.sellOut(c, amount);
+    out = MockLedger.sellOut(v, amount);
     limit = withSlip(out, slippagePct, false);
-    after = { ...c, vSol: c.vSol - out, vTok: c.vTok + amount, realTok: c.realTok + amount };
+    after = { vSol: v.vSol - out, vTok: v.vTok + amount, realTok: v.realTok + amount };
   }
-  const mc = (after.vSol * INIT.supply) / after.vTok;
+  const mc = mcOf(after.vSol, after.vTok);
   return {
     side,
+    venue: pool ? "pumpswap" : "curve",
     amountIn: amount,
     amountOut: out,
     limit,
     slippagePct,
     priceImpactPct: Number(((mc - before) * 10_000n) / before) / 100,
     marketCapLamports: mc,
-    graduationPct: Number(((INIT.realTok - after.realTok) * 10_000n) / INIT.realTok) / 100,
-    complete: after.realTok === 0n,
+    graduationPct: pool ? 100 : Number(((INIT.realTok - after.realTok) * 10_000n) / INIT.realTok) / 100,
+    complete: pool ? true : after.realTok === 0n,
   };
 }
 
+const migratingError = () => Object.assign(new Error("La curva está completa y la migración a PumpSwap aún no ha ocurrido. Espera a que exista el pool."), { code: "MIGRATING" });
+
 export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0): ChainEnv & { ledger: MockLedger } {
   const feeOf = (tx: PreparedTx) => txFee(tx.signers.length, tx.cuLimit ?? 400_000, priority());
-  const fresh = (): Curve => ({ vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: "", creatorVault: 0n });
+  const fresh = (): Curve => ({ vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: "", creatorVault: 0n, name: "", symbol: "", mayhem: false });
   const curve = (mint: string) => {
     const c = ledger.curves.get(mint);
-    if (!c) throw new Error("La curva no existe");
+    if (!c) throw Object.assign(new Error("Este token no es de Pump.fun: no tiene bonding curve."), { statusCode: 404 });
     return c;
   };
+  const tradable = (mint: string) => {
+    const c = curve(mint);
+    const pool = ledger.pools.get(mint);
+    if (c.complete && !pool) throw migratingError();
+    return { c, pool };
+  };
+  const vTokEnd = INIT.vTok - INIT.realTok;
+  const gradMc = (((INIT.vSol * INIT.vTok) / vTokEnd) * INIT.supply) / vTokEnd;
+
   const adapter: LaunchpadAdapter = {
     capabilities: () => ({ id: "mock", name: "Pump.fun (mock)", chain: "solana", modes: ["classic", "mayhem"], quotes: ["SOL"], bundleInSameTx: true, customMint: true, tokenDecimals: 6, graduatesTo: "PumpSwap" }),
-    quoteCreate: async ({ devBuyLamports, slippagePct }) => quoteOf(fresh(), "buy", devBuyLamports, slippagePct),
-    quote: async ({ mint, side, amount, slippagePct }) => quoteOf(curve(mint), side, amount, slippagePct),
+    quoteCreate: async ({ devBuyLamports, slippagePct }) => quoteOf(fresh(), undefined, "buy", devBuyLamports, slippagePct),
+    quote: async ({ mint, side, amount, slippagePct }) => {
+      const { c, pool } = tradable(mint);
+      return quoteOf(c, pool, side, amount, slippagePct);
+    },
     quoteLaunch: async ({ devBuyLamports, buys }): Promise<LaunchQuote> => {
       const c = fresh();
       const step = (l: bigint) => {
@@ -197,18 +285,20 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       };
       const devTokens = step(devBuyLamports);
       const buyTokens = buys.map(step);
-      return { devTokens, buyTokens, supply: INIT.supply, marketCapLamports: (c.vSol * INIT.supply) / c.vTok, graduationPct: Number(((INIT.realTok - c.realTok) * 10_000n) / INIT.realTok) / 100, padFeeBps: Number(FEE_BPS) };
+      return { devTokens, buyTokens, supply: INIT.supply, marketCapLamports: mcOf(c.vSol, c.vTok), graduationPct: Number(((INIT.realTok - c.realTok) * 10_000n) / INIT.realTok) / 100, padFeeBps: Number(FEE_BPS) };
     },
     buildCreateTx: async (p) => {
-      const q = quoteOf(fresh(), "buy", p.devBuyLamports, p.slippagePct);
-      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { op: "create", mint: p.mint, creator: p.creator, devBuy: p.devBuyLamports, tokens: q.amountOut, maxSol: q.limit } satisfies Op };
+      const q = quoteOf(fresh(), undefined, "buy", p.devBuyLamports, p.slippagePct);
+      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { op: "create", mint: p.mint, creator: p.creator, devBuy: p.devBuyLamports, tokens: q.amountOut, maxSol: q.limit, name: p.name, symbol: p.symbol, mayhem: p.mayhem } satisfies Op };
     },
     buildBuyTx: async (p) => {
-      const q = quoteOf(curve(p.mint), "buy", p.lamports, p.slippagePct);
+      const { c, pool } = tradable(p.mint);
+      const q = quoteOf(c, pool, "buy", p.lamports, p.slippagePct);
       return { kind: "buy", payer: p.user, signers: [p.user], mint: p.mint, quote: q, payload: { op: "buy", mint: p.mint, user: p.user, tokens: q.amountOut, maxSol: q.limit } satisfies Op };
     },
     buildSellTx: async (p) => {
-      const q = quoteOf(curve(p.mint), "sell", p.tokens, p.slippagePct);
+      const { c, pool } = tradable(p.mint);
+      const q = quoteOf(c, pool, "sell", p.tokens, p.slippagePct);
       return { kind: "sell", payer: p.user, signers: [p.user], mint: p.mint, quote: q, payload: { op: "sell", mint: p.mint, user: p.user, tokens: p.tokens, minSol: q.limit } satisfies Op };
     },
     claimableFees: async (creators) => {
@@ -217,40 +307,110 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       return out;
     },
     buildClaimTx: async ({ creator }) => ({ kind: "claim", payer: creator, signers: [creator], payload: { op: "claim", creator } satisfies Op }),
+    tokenInfo: async (mint): Promise<TokenInfo> => {
+      const c = curve(mint);
+      const pool = ledger.pools.get(mint);
+      const venue = pool ? "pumpswap" : c.complete ? "migrating" : "curve";
+      const [q, t] = pool ? [pool.quote, pool.base] : [c.vSol, c.vTok];
+      return {
+        mint,
+        venue,
+        tokenProgram: "mock-token-2022",
+        decimals: 6,
+        supply: INIT.supply,
+        creator: c.creator,
+        mayhem: c.mayhem,
+        priceLamports: venue === "migrating" ? 0 : (Number(q) / Number(t)) * 1e6,
+        marketCapLamports: venue === "migrating" ? gradMc : mcOf(q, t),
+        graduationPct: c.complete ? 100 : Number(((INIT.realTok - c.realTok) * 10_000n) / INIT.realTok) / 100,
+        graduationMcLamports: gradMc,
+        reserves: { quote: q, token: t },
+        systemOwners: [{ owner: mockCurveAccount(mint), label: "Bonding curve" }, ...(pool ? [{ owner: mockPoolAccount(mint), label: "Pool de PumpSwap" }] : [])],
+        curveAccount: mockCurveAccount(mint),
+        pool: pool ? mockPoolAccount(mint) : null,
+        padFeeBps: venue === "migrating" ? 0 : Number(FEE_BPS),
+        metadata: { name: c.name, symbol: c.symbol, uri: "" },
+      };
+    },
+    parseEvents: (tx, ctx) => {
+      if (tx.err) return [];
+      const out: ChainEvent[] = [];
+      tx.logs.forEach((l) => {
+        if (!l.startsWith(LOG_PREFIX)) return;
+        const e = unjson(l.slice(LOG_PREFIX.length)) as MockEvent;
+        if (ctx?.mint && e.mint !== ctx.mint) return;
+        out.push({ ...e, index: out.length } as ChainEvent);
+      });
+      return out;
+    },
+    tradeAccountsRent: async ({ mint, user, side }) => (side === "buy" && ledger.tokenOf(mint, user) === 0n ? MOCK_ATA_RENT : 0n),
+    buildMigrateTx: async ({ mint, payer }) => ({ kind: "migrate", payer, signers: [payer], mint, cuLimit: 600_000, payload: { op: "migrate", mint, payer } satisfies Op }),
   };
 
   const sender: TxSender = {
-    send: async (tx: PreparedTx, { idempotencyKey, simulateOnly }) => {
+    send: async (tx: PreparedTx, { idempotencyKey, simulateOnly, watch }) => {
       if (ledger.sendDelayMs) await new Promise((r) => setTimeout(r, ledger.sendDelayMs));
       const prev = ledger.sent.get(idempotencyKey);
       if (prev && prev.status === "confirmed") return { ...prev, reused: true };
       // Firmar con la bóveda igual que el sender real (falla si alguna clave no está)
-      const msg = new TextEncoder().encode(`${idempotencyKey}:${JSON.stringify(tx.payload, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`);
+      const msg = new TextEncoder().encode(`${idempotencyKey}:${json(tx.payload)}`);
       for (const s of tx.signers) sign(s, msg);
       let f = ledger.failures.shift();
       if (f === "BLOCKHASH_EXPIRED") f = ledger.failures.shift(); // el sender re-firma con un blockhash nuevo y reintenta
       if (f === "RPC_DOWN") return { status: "pending", message: "Fallo inyectado: RPC caído (no se envió nada)" };
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
       if (simulateOnly) {
-        const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves });
+        const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools });
         const r = ledger.apply(tx.payload as Op, feeOf(tx));
-        ledger.sol = snapshot.sol;
-        ledger.tokens = snapshot.tokens;
-        ledger.curves = snapshot.curves;
-        return r.ok ? { status: "simulated" } : { status: "failed", code: r.code, message: r.message };
+        const post = watch ? ledger.balance(watch) : undefined;
+        Object.assign(ledger, snapshot);
+        ledger.discardEvents(); // una simulación no emite nada
+        return r.ok ? { status: "simulated", ...(post !== undefined ? { postLamports: post } : {}) } : { status: "failed", code: r.code, message: r.message };
       }
       const r = ledger.apply(tx.payload as Op, feeOf(tx));
       const res: SendResult = r.ok ? { status: "confirmed", signature: `mock${++ledger.seq}`, feeLamports: r.fee } : { status: "failed", code: r.code, message: r.message };
+      if (res.status === "confirmed") ledger.record(res.signature, tx.payer);
       ledger.sent.set(idempotencyKey, res);
       return res;
     },
   };
 
+  const holdersOf = (mint: string) => {
+    curve(mint);
+    const own = [...(ledger.tokens.get(mint) ?? new Map<string, bigint>())].map(([owner, amount]) => ({ owner, amount })).filter((h) => h.amount > 0n);
+    const held = own.reduce((a, h) => a + h.amount, 0n);
+    const pool = ledger.pools.get(mint);
+    const sys = pool ? [{ owner: mockPoolAccount(mint), amount: pool.base }] : [{ owner: mockCurveAccount(mint), amount: INIT.supply - held }];
+    return [...own, ...sys].filter((h) => h.amount > 0n);
+  };
+
   const reader: ChainReader = {
     balances: async (addrs) => new Map(addrs.map((a) => [a, ledger.balance(a)])),
     tokenBalance: async (mint, owner) => ledger.tokenOf(mint, owner),
+    tokenBalances: async (mint, owners) => new Map(owners.map((o) => [o, ledger.tokenOf(mint, o)])),
+    holders: async (mint) => ({ complete: true, items: holdersOf(mint) }),
     accountExists: async (a) => ledger.curves.has(a) || ledger.balance(a) > 0n,
     airdrop: async (a, l) => void ledger.sol.set(a, ledger.balance(a) + l),
+    signatures: async (address, { until, before, limit }) => {
+      const list = ledger.txs.filter((t) => t.mentions.has(address)).reverse();
+      let start = 0;
+      if (before) start = list.findIndex((t) => t.signature === before) + 1;
+      const out = [];
+      for (const t of list.slice(start)) {
+        if (t.signature === until || out.length >= limit) break;
+        out.push({ signature: t.signature, slot: t.slot, blockTime: t.blockTime, err: null });
+      }
+      return out;
+    },
+    transactions: async (sigs) => sigs.map((s) => ledger.txs.find((t) => t.signature === s)).filter((t): t is NonNullable<typeof t> => !!t),
+    onLogs: (address, cb) => {
+      const set = ledger.listeners.get(address) ?? new Set();
+      set.add(cb);
+      ledger.listeners.set(address, set);
+      return () => void set.delete(cb);
+    },
+    solUsd: async () => ({ usd: MOCK_SOL_USD, publishedAt: Date.now() }),
+    tokenAccountRent: async () => MOCK_ATA_RENT,
   };
   const transfers: TransferBuilder = {
     build: async (from, items) =>

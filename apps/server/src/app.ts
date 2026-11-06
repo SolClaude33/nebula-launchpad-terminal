@@ -18,6 +18,10 @@ import { operationRoutes } from "./routes/operations";
 import { Launches } from "./launches";
 import { launchRoutes } from "./routes/launches";
 import { metadataStoreFor } from "./ipfs";
+import { Live } from "./live";
+import { Trading } from "./trading";
+import { Rewards } from "./rewards";
+import { liveRoutes } from "./routes/live";
 
 export type Ctx = {
   profile: Profile;
@@ -30,6 +34,9 @@ export type Ctx = {
   chain: ChainManager;
   ops: Operations;
   launches: Launches;
+  live: Live;
+  trading: Trading;
+  rewards: Rewards;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -72,6 +79,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let chainManager: ChainManager | null = null;
   let operations: Operations | null = null;
   let launches: Launches | null = null;
+  let live: Live | null = null;
+  let trading: Trading | null = null;
+  let rewards: Rewards | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -87,6 +97,15 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get launches() {
       return launches!;
+    },
+    get live() {
+      return live!;
+    },
+    get trading() {
+      return trading!;
+    },
+    get rewards() {
+      return rewards!;
     },
     closeDb: () => {
       db?.close();
@@ -112,6 +131,13 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb), opts.profile, priority, (m) => logger.info(m));
   launches.pauseAllRunning();
   vault.onLock(() => launches?.pauseAllRunning());
+  live = new Live(getDb, chainManager, (m) => logger.info(m));
+  trading = new Trading(getDb, chainManager, vault, live, priority, (m) => logger.info(m));
+  trading.pauseAllRunning();
+  vault.onLock(() => trading?.pauseAllRunning());
+  rewards = new Rewards(getDb, chainManager, vault, priority, (m) => logger.info(m));
+  rewards.pauseAllRunning();
+  vault.onLock(() => rewards?.pauseAllRunning());
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -150,9 +176,11 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(chainRoutes(ctx), { prefix: "/api" });
   await app.register(operationRoutes(ctx), { prefix: "/api" });
   await app.register(launchRoutes(ctx), { prefix: "/api" });
+  await app.register(liveRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();
+    live?.stopAll();
     chainManager?.stop();
     ctx.closeDb();
   });

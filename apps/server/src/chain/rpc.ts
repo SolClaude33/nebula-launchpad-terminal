@@ -81,6 +81,18 @@ export class RpcPool {
         return await this.withRetry(() => fn(s.conn));
       } catch (e) {
         if (!isNetworkError(e)) throw e;
+        // Con un solo RPC no hay a dónde cambiar: un timeout (p. ej. el fork de Surfpool trayendo cuentas
+        // de mainnet) se reintenta una vez en el mismo endpoint antes de marcarlo como caído
+        if (this.slots.length === 1 && attempt === 0 && /timeout/i.test(String((e as Error)?.message ?? e))) {
+          try {
+            return await this.withRetry(() => fn(s.conn));
+          } catch (e2) {
+            if (!isNetworkError(e2)) throw e2;
+            lastErr = e2;
+            s.healthy = false;
+            continue;
+          }
+        }
         lastErr = e;
         s.healthy = false;
         const next = this.slots.findIndex((x, i) => i !== this.active && x.healthy);

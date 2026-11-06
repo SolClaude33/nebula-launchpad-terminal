@@ -61,7 +61,7 @@ export class SolanaSender implements TxSender {
     return { vtx, blockhash, lastValidBlockHeight, signature };
   }
 
-  async send(tx: PreparedTx, { idempotencyKey, simulateOnly }: { idempotencyKey: string; simulateOnly?: boolean }): Promise<SendResult> {
+  async send(tx: PreparedTx, { idempotencyKey, simulateOnly, watch }: { idempotencyKey: string; simulateOnly?: boolean; watch?: string }): Promise<SendResult> {
     const prev = this.row(idempotencyKey);
     if (prev?.status === "CONFIRMED") return { status: "confirmed", signature: prev.signature!, reused: true, feeLamports: prev.fee_lamports != null ? BigInt(prev.fee_lamports) : undefined };
     if (prev?.status === "FAILED" && prev.signature && (await this.statusOf(prev.signature).catch(() => "unknown" as const)) === "confirmed") {
@@ -88,14 +88,19 @@ export class SolanaSender implements TxSender {
         return { status: "failed", code: c.code, message: c.code === "SIMULATION_FAILED" ? String((e as Error).message) : c.message };
       }
       // REQ-LAUNCH-017 / TEST-ENV-003: simular siempre antes de enviar
-      const sim = await this.pool.run((c) => c.simulateTransaction(built.vtx, { sigVerify: true, commitment: "confirmed" })).catch((e) => ({ value: { err: e, logs: [] as string[], unitsConsumed: undefined } }));
+      const sim = await this.pool
+        .run((c) => c.simulateTransaction(built.vtx, { sigVerify: true, commitment: "confirmed", ...(watch ? { accounts: { encoding: "base64" as const, addresses: [watch] } } : {}) }))
+        .catch((e) => ({ value: { err: e, logs: [] as string[], unitsConsumed: undefined, accounts: undefined } }));
       if (sim.value.err) {
         const c = classify(sim.value.logs, sim.value.err);
         if (c.code === "BLOCKHASH_EXPIRED" && attempt === 0) continue;
         if (c.code === "RPC_DOWN") return { status: "pending", message: "El RPC no responde; no se ha enviado nada todavía." };
         return { status: "failed", code: c.code, message: c.message };
       }
-      if (simulateOnly) return { status: "simulated", unitsConsumed: sim.value.unitsConsumed ?? undefined, logs: sim.value.logs ?? undefined };
+      if (simulateOnly) {
+        const acc = sim.value.accounts?.[0];
+        return { status: "simulated", unitsConsumed: sim.value.unitsConsumed ?? undefined, logs: sim.value.logs ?? undefined, ...(watch ? { postLamports: BigInt(acc?.lamports ?? 0) } : {}) };
+      }
 
       // Registrar antes de emitir: si el proceso muere aquí, la conciliación sabrá qué firma buscar
       const now = Date.now();

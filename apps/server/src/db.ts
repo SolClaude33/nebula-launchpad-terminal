@@ -114,6 +114,73 @@ const MIGRATIONS: string[] = [
   -- Metadatos y medios en el almacén local del perfil de pruebas (direccionados por hash)
   CREATE TABLE ipfs_local (cid TEXT PRIMARY KEY, content_type TEXT NOT NULL, bytes BLOB NOT NULL, created_at INTEGER NOT NULL);
   `,
+  `
+  -- REQ-LIVE-001: trades indexados por mint (WS de logs + sondeo de firmas). Un evento por (firma, índice).
+  CREATE TABLE live_trade (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    mint TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    venue TEXT NOT NULL CHECK (venue IN ('curve','pumpswap')),
+    side TEXT NOT NULL CHECK (side IN ('buy','sell')),
+    lamports TEXT NOT NULL,
+    tokens TEXT NOT NULL,
+    user TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    slot INTEGER NOT NULL,
+    mc TEXT NOT NULL,
+    UNIQUE (mint, signature, idx)
+  );
+  CREATE INDEX live_trade_mint ON live_trade(mint, seq);
+  CREATE INDEX live_trade_user ON live_trade(mint, user);
+  -- firmas ya procesadas (con o sin eventos) para no volver a pedirlas
+  CREATE TABLE live_sig (mint TEXT NOT NULL, signature TEXT NOT NULL, PRIMARY KEY (mint, signature));
+  CREATE TABLE live_mint (mint TEXT PRIMARY KEY, newest TEXT, backfilled INTEGER NOT NULL DEFAULT 0, completed_at INTEGER, migrated_pool TEXT, updated_at INTEGER NOT NULL);
+  -- REQ-LIVE-002/003: órdenes multi-wallet del ticket y del Instant Trade, con resultado por wallet
+  CREATE TABLE trade_order (
+    id TEXT PRIMARY KEY,
+    mint TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('buy','sell')),
+    status TEXT NOT NULL CHECK (status IN ('RUNNING','PAUSED','COMPLETED','PARTIAL','FAILED')),
+    config TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE trade_order_item (
+    order_id TEXT NOT NULL REFERENCES trade_order(id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    wallet_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','OK','FAILED','SKIPPED')),
+    amount TEXT,
+    result TEXT,
+    signature TEXT,
+    reason TEXT,
+    PRIMARY KEY (order_id, ord)
+  );
+  -- REQ-REW-001/002: reclamos de comisiones de creador con confirmación y verificación en cadena
+  CREATE TABLE claim (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('PREVIEW','RUNNING','PAUSED','COMPLETED','PARTIAL','FAILED')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE claim_item (
+    claim_id TEXT NOT NULL REFERENCES claim(id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    wallet_id TEXT NOT NULL,
+    address TEXT NOT NULL,
+    expected TEXT NOT NULL,
+    -- coste total simulado (fee de red + cuentas nuevas que crea el reclamo) y solo la fee de red
+    fee TEXT NOT NULL,
+    network_fee TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','OK','FAILED','SKIPPED')),
+    received TEXT,
+    left_after TEXT,
+    signature TEXT,
+    reason TEXT,
+    PRIMARY KEY (claim_id, ord)
+  );
+  `,
 ];
 
 export function openDb(dir: string): DB {

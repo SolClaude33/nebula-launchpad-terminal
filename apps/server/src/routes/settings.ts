@@ -48,7 +48,10 @@ export const settingsRoutes =
         if (value === "") db.prepare("DELETE FROM setting_secret WHERE name = ?").run(name);
         else db.prepare("INSERT INTO setting_secret(name, ciphertext) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET ciphertext = excluded.ciphertext").run(name, ctx.vault.sealSecret(name, value));
       }
-      if (Object.keys(plain).some((k) => k.startsWith("rpc") || k === "priorityFeeSol") || rpcKey !== undefined) ctx.chain.reload();
+      if (Object.keys(plain).some((k) => k.startsWith("rpc") || k === "priorityFeeSol") || rpcKey !== undefined) {
+        ctx.live.stopAll();
+        ctx.chain.reload();
+      }
       logActivity(db, "settings.update", `Ajustes cambiados: ${Object.keys(body).join(", ")}`);
       return read();
     });
