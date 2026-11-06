@@ -30,6 +30,7 @@ import { Drafts } from "./drafts";
 import { TokenOps } from "./token-ops";
 import { tokenRoutes } from "./routes/tokens";
 import { Cloner } from "./clone";
+import { Backups } from "./backups";
 import { storedSettings } from "./settings";
 import { dashboardRoutes } from "./routes/dashboard";
 
@@ -52,6 +53,7 @@ export type Ctx = {
   drafts: Drafts;
   tokenOps: TokenOps;
   cloner: Cloner;
+  backups: Backups;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -141,6 +143,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     get cloner() {
       return cloner!;
     },
+    backups: new Backups(getDb, opts.dataDir, opts.clock ?? Date.now),
     closeDb: () => {
       db?.close();
       db = null;

@@ -86,6 +86,17 @@ export const settingsRoutes =
       return reply.header("content-type", "application/json; charset=utf-8").header("content-disposition", `attachment; filename="${name}"`).send(diagnostics(ctx));
     });
 
+    // §7.3: copias automáticas diarias (las últimas 7), copia manual y descarga para restaurar desde /unlock
+    app.get("/backups", async () => ({ items: ctx.backups.list(), keep: 7 }));
+    app.post("/backups/run", async () => ({ made: await ctx.backups.run(true), items: ctx.backups.list() }));
+    app.get("/backups/:name", async (req, reply) => {
+      const { name } = z.object({ name: z.string().max(80) }).parse(req.params);
+      const { readFileSync } = await import("node:fs");
+      const bytes = readFileSync(ctx.backups.pathOf(name));
+      logActivity(ctx.db(), "vault.backup", `Copia automática ${name} descargada`);
+      return reply.header("content-type", "application/octet-stream").header("content-disposition", `attachment; filename="nebula-${ctx.profile}-${name}"`).send(bytes);
+    });
+
     // REQ-LOG-001: registro de actividad local, paginado
     app.get("/activity", async (req) => {
       const { before, limit, kind } = z.object({ before: z.coerce.number().optional(), limit: z.coerce.number().int().min(1).max(200).default(50), kind: z.string().max(40).optional() }).parse(req.query);

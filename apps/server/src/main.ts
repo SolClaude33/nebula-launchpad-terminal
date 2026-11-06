@@ -17,6 +17,8 @@ try {
 } catch {}
 
 ctx.vault.startAutoLock();
+// §7.3: copia automática diaria de la base (con la bóveda cifrada dentro); se conservan las últimas 7
+ctx.backups.start();
 
 // NFR-SEC-003: solo 127.0.0.1, nunca 0.0.0.0
 await app.listen({ host: "127.0.0.1", port: Number(process.env.NEBULA_API_PORT ?? API_PORT) });
