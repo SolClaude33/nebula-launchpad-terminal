@@ -32,6 +32,12 @@ export const launchRoutes =
 
     app.post("/launches/preflight", async (req) => ctx.launches.preflight(req.body));
 
+    // REQ-LAUNCH-005: clonar metadatos de un token (solo rellena el formulario)
+    app.post("/launches/clone", async (req) => {
+      const { mint } = z.object({ mint: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Dirección de token no válida") }).parse(req.body);
+      return ctx.cloner.clone(mint);
+    });
+
     app.post("/launches/alt", async (req) => {
       const { payerWalletId } = z.object({ payerWalletId: z.string() }).parse(req.body);
       return ctx.launches.ensureAlt(payerWalletId);

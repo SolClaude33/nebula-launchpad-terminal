@@ -172,6 +172,8 @@ export interface ChainReader {
   balances(addresses: string[]): Promise<Map<string, bigint>>;
   tokenBalance(mint: string, owner: string): Promise<bigint>;
   accountExists(address: string): Promise<boolean>;
+  /** REQ-LAUNCH-005: metadatos en cadena del token (extensión de Token-2022 o cuenta de Metaplex) */
+  tokenMetadata(mint: string): Promise<{ name: string; symbol: string; uri: string } | null>;
   /** saldo del token de varias wallets (ATA del programa de token del mint) */
   tokenBalances(mint: string, owners: string[]): Promise<Map<string, bigint>>;
   /** holders del token: propietario y cantidad; `complete` = la lista incluye a todos */

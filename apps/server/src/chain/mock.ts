@@ -21,7 +21,7 @@ const LOG_PREFIX = "Program data: mock:";
 type Curve = { vSol: bigint; vTok: bigint; realSol: bigint; realTok: bigint; complete: boolean; creator: string; creatorVault: bigint; name: string; symbol: string; mayhem: boolean };
 type Pool = { base: bigint; quote: bigint };
 type Op =
-  | { op: "create"; mint: string; creator: string; devBuy: bigint; tokens: bigint; maxSol: bigint; name: string; symbol: string; mayhem: boolean }
+  | { op: "create"; mint: string; creator: string; devBuy: bigint; tokens: bigint; maxSol: bigint; name: string; symbol: string; uri?: string; mayhem: boolean }
   | { op: "buy"; mint: string; user: string; tokens: bigint; maxSol: bigint }
   | { op: "sell"; mint: string; user: string; tokens: bigint; minSol: bigint }
   | { op: "claim"; creator: string }
@@ -46,6 +46,8 @@ export class MockLedger {
   tokens = new Map<string, Map<string, bigint>>();
   curves = new Map<string, Curve>();
   pools = new Map<string, Pool>();
+  /** URI de metadatos de cada token creado */
+  uris = new Map<string, string>();
   /** tokens quemados por mint (la supply baja) */
   burned = new Map<string, bigint>();
   /** fallos a devolver en los próximos envíos, en orden */
@@ -141,6 +143,7 @@ export class MockLedger {
       const need = cost + MINT_RENT + MOCK_ATA_RENT + TX_FEE;
       if (this.balance(o.creator) < need) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para crear el token");
       this.curves.set(o.mint, curve);
+      if (o.uri) this.uris.set(o.mint, o.uri);
       if (o.devBuy > 0n) this.fill(o.mint, curve, o.creator, o.tokens, cost, now);
       this.sol.set(o.creator, this.balance(o.creator) - MINT_RENT - MOCK_ATA_RENT - TX_FEE);
       return { ok: true, fee: TX_FEE };
@@ -312,7 +315,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     },
     buildCreateTx: async (p) => {
       const q = quoteOf(fresh(), undefined, "buy", p.devBuyLamports, p.slippagePct);
-      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { op: "create", mint: p.mint, creator: p.creator, devBuy: p.devBuyLamports, tokens: q.amountOut, maxSol: q.limit, name: p.name, symbol: p.symbol, mayhem: p.mayhem } satisfies Op };
+      return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { op: "create", mint: p.mint, creator: p.creator, devBuy: p.devBuyLamports, tokens: q.amountOut, maxSol: q.limit, name: p.name, symbol: p.symbol, uri: p.uri, mayhem: p.mayhem } satisfies Op };
     },
     buildBuyTx: async (p) => {
       const { c, pool } = tradable(p.mint);
@@ -433,6 +436,10 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     tokenBalances: async (mint, owners) => new Map(owners.map((o) => [o, ledger.tokenOf(mint, o)])),
     holders: async (mint) => ({ complete: true, items: holdersOf(mint) }),
     accountExists: async (a) => ledger.curves.has(a) || ledger.balance(a) > 0n,
+    tokenMetadata: async (mint) => {
+      const c = ledger.curves.get(mint);
+      return c ? { name: c.name, symbol: c.symbol, uri: ledger.uris.get(mint) ?? "" } : null;
+    },
     airdrop: async (a, l) => void ledger.sol.set(a, ledger.balance(a) + l),
     signatures: async (address, { until, before, limit }) => {
       const list = ledger.txs.filter((t) => t.mentions.has(address)).reverse();

@@ -29,6 +29,8 @@ import { Pnl } from "./pnl";
 import { Drafts } from "./drafts";
 import { TokenOps } from "./token-ops";
 import { tokenRoutes } from "./routes/tokens";
+import { Cloner } from "./clone";
+import { storedSettings } from "./settings";
 import { dashboardRoutes } from "./routes/dashboard";
 
 export type Ctx = {
@@ -49,6 +51,7 @@ export type Ctx = {
   pnl: Pnl;
   drafts: Drafts;
   tokenOps: TokenOps;
+  cloner: Cloner;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -99,6 +102,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let automations: Automations | null = null;
   let pnl: Pnl | null = null;
   let tokenOps: TokenOps | null = null;
+  let cloner: Cloner | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -133,6 +137,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     drafts: new Drafts(getDb),
     get tokenOps() {
       return tokenOps!;
+    },
+    get cloner() {
+      return cloner!;
     },
     closeDb: () => {
       db?.close();
@@ -189,6 +196,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   pnl = new Pnl(getDb, chainManager, live, vault, (m) => logger.info(m), opts.clock ?? Date.now);
   pnl.start();
   tokenOps = new TokenOps(getDb, chainManager, vault, live, (m) => logger.info(m));
+  cloner = new Cloner(getDb, chainManager, launches.store, () => storedSettings(getDb()).ipfsGateway, opts.ipfs?.fetch ?? fetch);
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,

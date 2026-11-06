@@ -1,5 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
-import { ExtensionType, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getMint } from "@solana/spl-token";
+import { ExtensionType, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getMint, getTokenMetadata } from "@solana/spl-token";
+
+const METAPLEX = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 import { b58decode } from "../base58";
 import type { RawTx } from "./types";
 import type { Profile } from "@nebula/shared";
@@ -181,6 +183,34 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
       return r ? BigInt(r.value.amount) : 0n;
     },
     accountExists: async (address) => !!(await pool.run((c) => c.getAccountInfo(new PublicKey(address), "confirmed"))),
+    tokenMetadata: async (mint) => {
+      const m = new PublicKey(mint);
+      const info = await pool.run((c) => c.getAccountInfo(m, "confirmed"));
+      if (!info) return null;
+      // Pump.fun actual: Token-2022 con la extensión de metadatos
+      if (info.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+        const md = await pool.run((c) => getTokenMetadata(c, m, "confirmed", TOKEN_2022_PROGRAM_ID)).catch(() => null);
+        if (md) return { name: md.name, symbol: md.symbol, uri: md.uri };
+      }
+      // Tokens SPL antiguos: cuenta de metadatos de Metaplex (key · update authority · mint · name · symbol · uri)
+      const [pda] = PublicKey.findProgramAddressSync([Buffer.from("metadata"), METAPLEX.toBuffer(), m.toBuffer()], METAPLEX);
+      const acc = await pool.run((c) => c.getAccountInfo(pda, "confirmed"));
+      if (!acc) return null;
+      const d = acc.data;
+      let o = 1 + 32 + 32;
+      const str = () => {
+        const n = d.readUInt32LE(o);
+        o += 4;
+        const s = d.subarray(o, o + n).toString("utf8").replace(/\0/g, "").trim();
+        o += n;
+        return s;
+      };
+      try {
+        return { name: str(), symbol: str(), uri: str() };
+      } catch {
+        return null;
+      }
+    },
     airdrop:
       profile === "test"
         ? async (address, lamports) => {

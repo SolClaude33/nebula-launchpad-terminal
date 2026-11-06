@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CloudUpload, Copy, ImagePlus, RotateCcw, Trash2 } from "lucide-react";
+import { CloudUpload, Copy, ImagePlus, Loader2, RotateCcw, Trash2 } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { SESSION_HEADER } from "@nebula/shared";
 import { fieldErrors, useDraft } from "@/lib/draft";
 import { Field, SectionTitle } from "./ui";
@@ -82,11 +84,7 @@ export function StepToken() {
     <div className="rise">
       <SectionTitle index="Paso 1 de 4 · Token" title="Identidad del token" body="Nombre, símbolo, imagen y enlaces. La imagen y los metadatos se suben antes de poder lanzar." />
 
-      <div className="panel mb-6 flex items-center gap-3 p-3 opacity-60" aria-disabled>
-        <Copy className="ml-1 size-4 shrink-0 text-faint" aria-hidden />
-        <span className="flex-1 text-[13px] text-faint">Clonar metadatos desde una dirección de mint</span>
-        <span className="chip h-6 text-[11px]">próximamente</span>
-      </div>
+      <CloneBar />
 
       <div className="grid grid-cols-[168px_minmax(0,1fr)] gap-5 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-6">
         <div>
@@ -190,6 +188,62 @@ export function StepToken() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type CloneResult = { mint: string; source: "nebula" | "chain"; name: string; symbol: string; description: string; links: { x: string; telegram: string; web: string }; image: { cid: string; contentType: string; size: number; preview: string | null } | null; warnings: string[] };
+
+/** REQ-LAUNCH-005: clonar solo rellena el formulario; todo se puede editar después. */
+function CloneBar() {
+  const d = useDraft((s) => s.draft);
+  const set = useDraft((s) => s.set);
+  const [mint, setMint] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint.trim());
+  const run = async () => {
+    if (!valid || busy) return;
+    if ((d.name || d.symbol || d.image) && !confirm("Clonar sustituye el nombre, el símbolo, la descripción, los enlaces y la imagen del borrador. ¿Continuar?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const c = await api<CloneResult>("/launches/clone", { method: "POST", body: { mint: mint.trim() } });
+      set({
+        name: c.name,
+        symbol: c.symbol,
+        description: c.description,
+        links: c.links,
+        ...(c.image ? { image: { name: `${c.symbol || "token"}.${c.image.contentType.split("/")[1]}`, size: c.image.size, type: c.image.contentType, url: c.image.preview ?? "" }, upload: { status: "done" as const, progress: 100, cid: c.image.cid } } : {}),
+      });
+      toast({ tone: c.warnings.length ? "warn" : "buy", title: `Metadatos de $${c.symbol || "?"} copiados`, body: c.warnings.length ? c.warnings.join(" ") : "Revisa y edita lo que quieras antes de lanzar." });
+      setMint("");
+    } catch (e) {
+      setError((e as ApiError).message);
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="panel mb-6 p-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run();
+        }}
+        className="flex items-center gap-3"
+      >
+        <Copy className="ml-1 size-4 shrink-0 text-accent-b" aria-hidden />
+        <label htmlFor="clone-mint" className="sr-only">
+          Dirección de mint a clonar
+        </label>
+        <input id="clone-mint" value={mint} onChange={(e) => (setMint(e.target.value), setError(null))} spellCheck={false} autoComplete="off" placeholder="Clonar metadatos desde una dirección de mint" className="field num h-9 flex-1 text-[12.5px]" aria-invalid={!!error} />
+        <button type="submit" disabled={!valid || busy} className="btn h-9 px-3 text-[12.5px]">
+          {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Copy className="size-3.5" aria-hidden />} Clonar
+        </button>
+      </form>
+      <p aria-live="polite" className={`mt-1.5 pl-8 text-[11.5px] ${error ? "text-sell" : "text-faint"}`}>
+        {error ?? "Copia nombre, símbolo, descripción, enlaces e imagen. No lanza nada y todo se puede editar."}
+      </p>
     </div>
   );
 }
