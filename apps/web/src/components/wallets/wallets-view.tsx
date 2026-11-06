@@ -29,6 +29,8 @@ import { api, ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Address } from "@/components/address";
 import { Modal, RevealDialog, StepUpDialog } from "./dialogs";
+import { fmtLamports, useChain } from "@/lib/chain";
+import { useVault } from "@/lib/vault";
 
 type Kind = "wallet" | "funder";
 const ROW_H = 46;
@@ -40,6 +42,13 @@ export function WalletsView({ kind }: { kind: Kind }) {
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [hideEmpty, setHideEmpty] = useState(false);
+  const balances = useChain((s) => s.balances);
+  const balancesError = useChain((s) => s.balancesError);
+  const refreshBalances = useChain((s) => s.refreshBalances);
+  const chainStatus = useChain((s) => s.status);
+  const profile = useVault((s) => s.status?.profile);
+  const [airdropping, setAirdropping] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "folder">(null);
   const [revealed, setRevealed] = useState<{ label: string; address: string; secretKey: string }[] | null>(null);
@@ -68,9 +77,11 @@ export function WalletsView({ kind }: { kind: Kind }) {
       (w) =>
         (folder === "all" || (folder === "none" ? w.folderIds.length === 0 : w.folderIds.includes(folder))) &&
         (role === "all" || (role === "none" ? !w.role : w.role === role)) &&
-        (!q || w.label.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)),
+        (!q || w.label.toLowerCase().includes(q) || w.address.toLowerCase().includes(q)) &&
+        (!hideEmpty || (balances[w.address] ?? 0n) > 0n),
     );
-  }, [ofKind, folder, role, query]);
+  }, [ofKind, folder, role, query, hideEmpty, balances]);
+  const totalLamports = ofKind.reduce((a, w) => a + (balances[w.address] ?? 0n), 0n);
   const selected = list.filter((w) => sel.has(w.id));
   const allSel = list.length > 0 && selected.length === list.length;
 
@@ -107,7 +118,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
           <div>
             <h1 className="font-display text-[26px] leading-none italic">{title}</h1>
             <p className="num mt-1 text-[11.5px] text-faint">
-              {ofKind.length} en total · {list.length} visibles · {selected.length} seleccionadas
+              {ofKind.length} en total · {list.length} visibles · {selected.length} seleccionadas · saldo {fmtLamports(totalLamports, 3)}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -138,8 +149,8 @@ export function WalletsView({ kind }: { kind: Kind }) {
           <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="size-3.5 accent-[var(--accent-a)]" /> Archivadas
           </label>
-          <label className="flex cursor-not-allowed items-center gap-1.5 text-[12px] text-faint" title="Necesita leer saldos del RPC (siguiente bloque)">
-            <input type="checkbox" disabled className="size-3.5" /> Ocultar vacías
+          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
+            <input type="checkbox" checked={hideEmpty} onChange={(e) => setHideEmpty(e.target.checked)} className="size-3.5 accent-[var(--accent-a)]" /> Ocultar vacías
           </label>
           <button onClick={copyAddresses} disabled={list.length === 0} className="btn h-8 text-[12px]">
             <ClipboardCopy className="size-3.5" aria-hidden /> Copiar {selected.length ? "selección" : "todas"}
@@ -157,7 +168,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
         ) : ofKind.length === 0 ? (
           <EmptyState kind={kind} onCreate={() => setDialog("create")} onImport={() => setDialog("import")} />
         ) : (
-          <VirtualTable list={list} folders={folders} sel={sel} toggle={toggle} allSel={allSel} toggleAll={() => setSel(allSel ? new Set() : new Set(list.map((w) => w.id)))} />
+          <VirtualTable balances={balances} balancesError={balancesError} list={list} folders={folders} sel={sel} toggle={toggle} allSel={allSel} toggleAll={() => setSel(allSel ? new Set() : new Set(list.map((w) => w.id)))} />
         )}
       </section>
 
@@ -192,7 +203,24 @@ export function WalletsView({ kind }: { kind: Kind }) {
             <ActionBtn icon={Split} label="Dispersar" disabled />
             <ActionBtn icon={Layers} label="Recolectar" disabled />
           </div>
-          <p className="mt-2.5 text-[11.5px] leading-relaxed text-faint">Saldos, depósito con QR y transferencias necesitan el RPC: llegan con el adaptador de Solana.</p>
+          <p className="mt-2.5 text-[11.5px] leading-relaxed text-faint">Depósito con QR, transferencias y dispersión llegan en el siguiente bloque.</p>
+          {profile === "test" && chainStatus?.mode !== "off" && (
+            <button
+              disabled={selected.length === 0 || airdropping}
+              onClick={async () => {
+                setAirdropping(true);
+                await run(() => api("/dev/airdrop", { method: "POST", body: { walletIds: ids, sol: 10 } }), `Airdrop de prueba: 10 SOL a ${ids.length} wallets`);
+                await refreshBalances();
+                setAirdropping(false);
+              }}
+              className="btn mt-3 h-9 w-full border-warn/30 text-[12.5px] text-warn"
+              title="Solo en el perfil de pruebas, contra el validador local"
+            >
+              {airdropping ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <ArrowDownToLine className="size-3.5" aria-hidden />}
+              Airdrop de prueba · 10 SOL {selected.length ? `× ${selected.length}` : ""}
+            </button>
+          )}
+          {chainStatus?.mode === "off" && <p className="mt-2.5 text-[11.5px] text-warn">{chainStatus.error ?? "Sin RPC configurado."}</p>}
         </div>
         {kind === "funder" && (
           <div className="panel p-4 text-[12.5px] text-muted">
@@ -251,7 +279,7 @@ function ActionBtn({ icon: Icon, label, onClick, disabled, tone }: { icon: React
   );
 }
 
-function VirtualTable({ list, folders, sel, toggle, allSel, toggleAll }: { list: WalletDto[]; folders: FolderDto[]; sel: Set<string>; toggle: (id: string) => void; allSel: boolean; toggleAll: () => void }) {
+function VirtualTable({ list, folders, sel, toggle, allSel, toggleAll, balances, balancesError }: { list: WalletDto[]; folders: FolderDto[]; sel: Set<string>; toggle: (id: string) => void; allSel: boolean; toggleAll: () => void; balances: Record<string, bigint>; balancesError: string | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   const [h, setH] = useState(600);
@@ -266,7 +294,7 @@ function VirtualTable({ list, folders, sel, toggle, allSel, toggleAll }: { list:
   const start = Math.max(0, Math.floor(top / ROW_H) - 6);
   const end = Math.min(list.length, Math.ceil((top + h) / ROW_H) + 6);
   const fname = (id: string) => folders.find((f) => f.id === id)?.name ?? "—";
-  const cols = "grid-cols-[36px_minmax(120px,1.2fr)_minmax(150px,1.4fr)_96px_minmax(0,1fr)_92px]";
+  const cols = "grid-cols-[36px_minmax(120px,1.2fr)_minmax(150px,1.4fr)_96px_minmax(0,1fr)_110px]";
   return (
     <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
       <div role="row" className={`grid ${cols} items-center gap-2 border-b border-line bg-surface-1 px-4 py-2`}>
@@ -303,9 +331,13 @@ function VirtualTable({ list, folders, sel, toggle, allSel, toggleAll }: { list:
                   <span className="flex min-w-0 gap-1 overflow-hidden">
                     {w.folderIds.length ? w.folderIds.map((f) => <span key={f} className="chip h-5 shrink-0 px-1.5 text-[10.5px]">{fname(f)}</span>) : <span className="text-faint">—</span>}
                   </span>
-                  <span className="num text-right text-faint" title="Sin RPC configurado todavía">
-                    sin RPC
-                  </span>
+                  {balances[w.address] !== undefined ? (
+                    <span className={`num text-right ${balances[w.address] > 0n ? "text-fg" : "text-faint"}`}>{fmtLamports(balances[w.address], 3)}</span>
+                  ) : (
+                    <span className="num text-right text-faint" title={balancesError ?? "Leyendo saldo…"}>
+                      {balancesError ? "sin RPC" : "conectando…"}
+                    </span>
+                  )}
                 </div>
               );
             })}

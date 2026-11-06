@@ -11,6 +11,8 @@ import { pauseRunningTasks } from "./tasks";
 import { vaultRoutes } from "./routes/vault";
 import { walletRoutes } from "./routes/wallets";
 import { settingsRoutes } from "./routes/settings";
+import { chainRoutes } from "./routes/chain";
+import { ChainManager } from "./chain-manager";
 
 export type Ctx = {
   profile: Profile;
@@ -20,6 +22,7 @@ export type Ctx = {
   db: () => DB;
   reopenDb: () => DB;
   closeDb: () => void;
+  chain: ChainManager;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -51,7 +54,7 @@ export function createLogger(dataDir: string, toStdout = true) {
   return pino({ level: "info", redact: { paths: REDACT_PATHS, censor: "[redactado]" } }, pino.multistream(streams));
 }
 
-export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean }) {
+export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean; chainMode?: "rpc" | "mock" }) {
   await sodiumReady();
   let db: DB | null = openDb(opts.dataDir);
   const getDb = () => {
@@ -59,6 +62,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     return db;
   };
   const vault = new Vault(getDb);
+  let chainManager: ChainManager | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -66,6 +70,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     vault,
     db: getDb,
     reopenDb: () => (db = openDb(opts.dataDir)),
+    get chain() {
+      return chainManager!;
+    },
     closeDb: () => {
       db?.close();
       db = null;
@@ -77,6 +84,8 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   vault.onLock(() => pauseRunningTasks(getDb(), "lock"));
 
   const logger = createLogger(opts.dataDir, opts.logToStdout ?? true);
+  chainManager = new ChainManager({ profile: opts.profile, mode: opts.chainMode ?? "rpc", db: getDb, vault, log: (m) => logger.info(m) });
+  chainManager.reload();
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -112,9 +121,11 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(vaultRoutes(ctx), { prefix: "/api/vault" });
   await app.register(walletRoutes(ctx), { prefix: "/api" });
   await app.register(settingsRoutes(ctx), { prefix: "/api" });
+  await app.register(chainRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();
+    chainManager?.stop();
     ctx.closeDb();
   });
 

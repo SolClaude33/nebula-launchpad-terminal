@@ -6,6 +6,7 @@ import { Lock, Moon, Search, Sun, TriangleAlert } from "lucide-react";
 import { SOL_USD } from "@/lib/sim";
 import { toast } from "@/lib/toast";
 import { forceHeartbeat, useVault } from "@/lib/vault";
+import { useChain, useChainStatusPolling } from "@/lib/chain";
 
 function titleFor(path: string) {
   if (path.startsWith("/t/")) return ["Live", "Workspace"];
@@ -122,10 +123,7 @@ export function Topbar() {
               </span>
             </>
           ) : (
-            <span className="chip" title="El RPC se conecta con el adaptador de Solana">
-              <span className="size-2 rounded-full bg-faint" aria-hidden />
-              RPC sin conectar
-            </span>
+            <RpcChip />
           )}
           <button
             onClick={toggleTheme}
@@ -154,5 +152,28 @@ export function Topbar() {
         </div>
       )}
     </>
+  );
+}
+
+function RpcChip() {
+  useChainStatusPolling();
+  const st = useChain((s) => s.status);
+  if (!st) return <span className="chip"><span className="size-2 rounded-full bg-faint" aria-hidden />RPC…</span>;
+  if (st.mode === "off")
+    return (
+      <span className="chip border-warn/30 text-warn" title={st.error ?? "Sin RPC"}>
+        <span className="size-2 rounded-full bg-warn" aria-hidden />
+        RPC sin configurar
+      </span>
+    );
+  return (
+    <span className={`chip num ${st.healthy ? "" : "border-sell/30 text-sell"}`} title={`${st.host ?? ""}${st.usingBackup ? " · respaldo" : ""}${st.mode === "mock" ? " · simulado" : ""}`}>
+      <span className="relative flex size-2" aria-hidden>
+        {st.healthy && <span className="absolute inset-0 animate-ping rounded-full bg-buy opacity-40" />}
+        <span className={`relative size-2 rounded-full ${st.healthy ? "bg-buy" : "bg-sell"}`} />
+      </span>
+      {st.healthy ? `RPC ${st.latencyMs ?? "—"} ms` : "RPC caído"}
+      {st.usingBackup && <span className="text-warn">· respaldo</span>}
+    </span>
   );
 }

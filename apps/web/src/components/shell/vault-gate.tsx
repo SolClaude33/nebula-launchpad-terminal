@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { PauseCircle, ServerCrash } from "lucide-react";
 import { api } from "@/lib/api";
 import { useVault } from "@/lib/vault";
+import { useBalancesPolling } from "@/lib/chain";
 import type { VaultStatus } from "@nebula/shared";
 
 /** Protege el shell: sin bóveda → /setup; bloqueada → /unlock. Sondea el estado cada 5 s. */
@@ -36,6 +37,11 @@ export function VaultGate({ children }: { children: React.ReactNode }) {
 
   if (error && !status) return <ApiDown message={error.message} />;
   if (!status?.unlocked) return <div className="skeleton m-6 h-[60vh]" aria-busy="true" aria-label="Comprobando la bóveda" />;
+  return <Unlocked status={status}>{children}</Unlocked>;
+}
+
+function Unlocked({ status, children }: { status: VaultStatus; children: React.ReactNode }) {
+  useBalancesPolling();
   return (
     <>
       {children}

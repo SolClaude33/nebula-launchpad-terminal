@@ -12,7 +12,7 @@ export const tmpDir = () => mkdtempSync(join(tmpdir(), "nebula-test-"));
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export async function makeApp(dataDir = tmpDir()) {
-  const { app, ctx } = await buildApp({ profile: "test", dataDir, token: "t".repeat(64), logToStdout: false });
+  const { app, ctx } = await buildApp({ profile: "test", dataDir, token: "t".repeat(64), logToStdout: false, chainMode: "mock" });
   const call = async (method: Method, url: string, body?: unknown, extra: Record<string, string> = {}) => {
     const res = await app.inject({
       method,

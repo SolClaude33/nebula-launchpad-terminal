@@ -17,6 +17,10 @@ import {
   Wallet,
 } from "lucide-react";
 import { DEMO_ROUTE } from "@/lib/demo";
+import { fmtLamports, useChain } from "@/lib/chain";
+import { api } from "@/lib/api";
+import { useVault } from "@/lib/vault";
+import type { WalletDto } from "@nebula/shared";
 
 type Item = { label: string; href: string; icon: React.ComponentType<{ className?: string }>; ready?: boolean; match?: string; demo?: boolean };
 
@@ -130,10 +134,7 @@ export function Sidebar() {
 
       <div className="border-t border-line p-2.5">
         {!collapsed && (
-          <Link href="/funder" className="mb-2 block rounded-[var(--radius-md)] border border-line bg-surface-2/60 p-3 transition-colors hover:border-line-strong">
-            <p className="telemetry">Funder · predeterminado</p>
-            <p className="mt-1 text-[12.5px] text-muted">Saldo disponible al conectar el RPC</p>
-          </Link>
+          <FunderCard />
         )}
         <button onClick={toggle} className="btn-ghost flex h-9 w-full items-center gap-3 rounded-[var(--radius-sm)] px-2.5 text-[13px]" aria-label={collapsed ? "Expandir barra lateral" : "Plegar barra lateral"}>
           <ChevronsLeft className={`size-4 transition-transform duration-200 ${collapsed ? "rotate-180" : ""} ${collapsed ? "mx-auto" : ""}`} />
@@ -141,5 +142,35 @@ export function Sidebar() {
         </button>
       </div>
     </aside>
+  );
+}
+
+function FunderCard() {
+  const unlocked = useVault((s) => s.status?.unlocked);
+  const balances = useChain((s) => s.balances);
+  const [funder, setFunder] = useState<WalletDto | null>(null);
+  useEffect(() => {
+    if (!unlocked) return;
+    let alive = true;
+    const load = () => api<{ wallets: WalletDto[] }>("/wallets").then((r) => alive && setFunder(r.wallets.find((w) => w.isDefaultFunder) ?? null)).catch(() => {});
+    load();
+    const id = setInterval(load, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [unlocked]);
+  return (
+    <Link href="/funder" className="mb-2 block rounded-[var(--radius-md)] border border-line bg-surface-2/60 p-3 transition-colors hover:border-line-strong">
+      <p className="telemetry">Funder · predeterminado</p>
+      {funder ? (
+        <>
+          <p className="num mt-1 text-[17px]">{fmtLamports(balances[funder.address], 3)}</p>
+          <p className="num text-[11.5px] text-faint">{funder.address.slice(0, 4)}…{funder.address.slice(-4)}</p>
+        </>
+      ) : (
+        <p className="mt-1 text-[12.5px] text-muted">Aún no hay funder</p>
+      )}
+    </Link>
   );
 }
