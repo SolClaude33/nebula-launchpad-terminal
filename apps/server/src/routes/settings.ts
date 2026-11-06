@@ -6,6 +6,7 @@ import { kvSet, logActivity } from "../db";
 import { VaultError } from "../signer";
 import { hasSecret, remember, splitRpcKey, storedSettings, type SecretName } from "../settings";
 import { testIpfsKey } from "../ipfs";
+import { diagnostics } from "../diagnostics";
 
 export const settingsRoutes =
   (ctx: Ctx): FastifyPluginAsync =>
@@ -77,6 +78,12 @@ export const settingsRoutes =
     app.post("/settings/ipfs/test", async (req) => {
       const { key } = z.object({ key: z.string().max(2000).optional() }).parse(req.body ?? {});
       return testIpfsKey(ctx, key?.trim() || undefined);
+    });
+
+    // REQ-LOG-001: diagnóstico con los secretos redactados (se descarga como JSON)
+    app.get("/diagnostics", async (_req, reply) => {
+      const name = `nebula-diagnostico-${ctx.profile}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+      return reply.header("content-type", "application/json; charset=utf-8").header("content-disposition", `attachment; filename="${name}"`).send(diagnostics(ctx));
     });
 
     // REQ-LOG-001: registro de actividad local, paginado

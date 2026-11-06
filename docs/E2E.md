@@ -26,7 +26,7 @@ Estado: ✅ verde · ⏳ pendiente · ❌ falla (con el motivo).
 | E2E-14 | Tarea activa y reinicio | API: `automations.test.ts`, `vault.test.ts` | ⏳ |
 | E2E-15 | Slippage respetado | API · mock + Surfpool: `contract.test.ts` | ⏳ |
 | E2E-16 | Comisiones de creador | API · mock + Surfpool: `live.test.ts` | ⏳ |
-| E2E-17 | Exportar clave | API: `security.test.ts` (falta el registro de actividad) | ⏳ |
+| E2E-17 | Exportar clave | API: `security.test.ts` (reconfirmación, evento `wallets.export` en la actividad, log y diagnóstico sin la clave) | ⏳ |
 | E2E-18 | Borrar wallet con saldo | API · mock + Surfpool: `operations.test.ts` | ⏳ |
 | E2E-19 | Retiro a dirección nueva | API · mock + Surfpool: `operations.test.ts` | ⏳ |
 | E2E-20 | Failover de RPC | API: `rpc.test.ts` | ⏳ |

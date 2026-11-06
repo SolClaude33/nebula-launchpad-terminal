@@ -13,6 +13,9 @@ import { useVault } from "@/lib/vault";
 import { toast } from "@/lib/toast";
 import { StepUpDialog } from "@/components/wallets/dialogs";
 import { BackupsPanel } from "./backups-panel";
+import Link from "next/link";
+import { ScrollText } from "lucide-react";
+import { DiagnosticsButton } from "@/components/settings/diagnostics-button";
 
 type Patch = Partial<Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "rpcBackupKeySet">> & { ipfsKey?: string; rpcKey?: string; rpcBackupKey?: string };
 
@@ -66,6 +69,7 @@ export function SettingsView() {
           <SecuritySection s={s} save={save} />
           <BackupsPanel />
           <PasswordSection />
+          <DiagnosticsSection />
         </div>
       )}
     </div>
@@ -396,6 +400,22 @@ function PasswordSection() {
           }}
         />
       )}
+    </Section>
+  );
+}
+
+function DiagnosticsSection() {
+  return (
+    <Section id="diag" kicker="Logs" title="Actividad y diagnóstico">
+      <div className="flex items-center justify-between gap-4">
+        <p className="max-w-[560px] text-[12.5px] text-muted">El registro de actividad guarda exportaciones, retiros, lanzamientos y cambios de ajustes. «Exportar diagnóstico» junta el estado de la app, la actividad y los logs técnicos en un archivo con los secretos redactados.</p>
+        <div className="flex shrink-0 gap-2">
+          <Link href="/activity" className="btn h-9 px-3 text-[12.5px]">
+            <ScrollText className="size-3.5" aria-hidden /> Ver actividad
+          </Link>
+          <DiagnosticsButton />
+        </div>
+      </div>
     </Section>
   );
 }
