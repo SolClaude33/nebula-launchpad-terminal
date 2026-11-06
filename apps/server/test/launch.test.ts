@@ -156,14 +156,3 @@ describe.each(backends)("Lanzamiento real · %s", (backend) => {
     expect((await until(c.draftId)).status).toBe("DONE");
   });
 });
-
-describe("Mainnet sin IPFS verificado", () => {
-  it("la subida de medios se bloquea con un mensaje claro", async () => {
-    const { app, ctx } = await buildApp({ profile: "mainnet", dataDir: tmpDir(), token: "t".repeat(64), logToStdout: false, chainMode: "mock" });
-    await ctx.vault.setup(PW);
-    const r = await app.inject({ method: "POST", url: "/api/launches/media", headers: { host: HOST, origin: ORIGIN, "x-nebula-session": ctx.token, "content-type": "application/json" }, payload: JSON.stringify({ fileB64: PNG, contentType: "image/png" }) });
-    expect(r.statusCode).toBe(409);
-    expect(r.json()).toMatchObject({ code: "IPFS_UNAVAILABLE" });
-    await app.close();
-  });
-});

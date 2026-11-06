@@ -1,6 +1,7 @@
 // Crea (y recrea al cambiar los ajustes) la conexión a la cadena según el perfil y el RPC configurado.
-import type { Profile } from "@nebula/shared";
+import { RPC_KEY_PLACEHOLDER, type Profile } from "@nebula/shared";
 import { kvGet, type DB } from "./db";
+import { readSecret, resolveRpcUrl, scrub, storedSettings } from "./settings";
 import type { Vault } from "./signer";
 import { ChainConfigError, createChain, type Chain } from "./chain";
 import type { Endpoint } from "./chain/rpc";
@@ -15,12 +16,26 @@ export class ChainManager {
     private opts: { profile: Profile; mode: "rpc" | "mock"; db: () => DB; vault: Vault; log: (msg: string) => void },
   ) {}
 
+  /** Endpoints con la clave del RPC ya sustituida; si una URL necesita su clave y la bóveda está cerrada, error claro. */
   private endpoints(): Endpoint[] {
-    const s = JSON.parse(kvGet(this.opts.db(), "settings") ?? "{}") as Record<string, string>;
-    const primary = s.rpcPrimaryHttp ?? "http://127.0.0.1:8899";
-    const eps: Endpoint[] = [{ http: primary, ws: s.rpcPrimaryWs ?? "ws://127.0.0.1:8900" }];
-    if (s.rpcBackupHttp) eps.push({ http: s.rpcBackupHttp, ws: s.rpcBackupWs || undefined });
+    const db = this.opts.db();
+    const s = storedSettings(db);
+    const key = readSecret(db, this.opts.vault, "rpcKey");
+    const backupKey = readSecret(db, this.opts.vault, "rpcBackupKey");
+    const res = (u: string, k: string | null, label: string) => {
+      const r = resolveRpcUrl(u, k);
+      if (r === null) throw new ChainConfigError(this.opts.vault.isUnlocked() ? `Falta la clave del RPC ${label}. Añádela en Ajustes.` : "Desbloquea la bóveda para conectar el RPC (su clave va cifrada).");
+      return r;
+    };
+    const eps: Endpoint[] = [{ http: res(s.rpcPrimaryHttp, key, "principal"), ws: s.rpcPrimaryWs ? res(s.rpcPrimaryWs, key, "principal") : undefined }];
+    if (s.rpcBackupHttp) eps.push({ http: res(s.rpcBackupHttp, backupKey, "de respaldo"), ws: s.rpcBackupWs ? res(s.rpcBackupWs, backupKey, "de respaldo") : undefined });
     return eps;
+  }
+
+  /** ¿Alguna URL usa {key}? Entonces al bloquear se desconecta (la clave no se queda en memoria). */
+  usesKey() {
+    const s = storedSettings(this.opts.db());
+    return [s.rpcPrimaryHttp, s.rpcPrimaryWs, s.rpcBackupHttp, s.rpcBackupWs].some((u) => u.includes(RPC_KEY_PLACEHOLDER));
   }
 
   private priority() {
@@ -50,7 +65,7 @@ export class ChainManager {
         () => {},
       );
     } catch (e) {
-      this.error = e instanceof ChainConfigError ? e.message : `No se pudo conectar al RPC: ${(e as Error).message}`;
+      this.error = scrub(e instanceof ChainConfigError ? e.message : `No se pudo conectar al RPC: ${(e as Error).message}`);
     }
   }
 

@@ -83,6 +83,19 @@ export class Vault {
     this.listeners.push(fn);
   }
 
+  private unlockListeners: (() => void)[] = [];
+  /** Al abrir la bóveda (setup o desbloqueo): p. ej. reconectar el RPC con su clave cifrada. */
+  onUnlock(fn: () => void) {
+    this.unlockListeners.push(fn);
+  }
+  private emitUnlock() {
+    for (const l of this.unlockListeners) {
+      try {
+        l();
+      } catch {}
+    }
+  }
+
   isInitialized() {
     return !!this.db.prepare("SELECT 1 FROM vault_meta WHERE id = 1").get();
   }
@@ -136,6 +149,7 @@ export class Vault {
       .run(VAULT_VERSION, JSON.stringify(KDF), salt, wrapped, now, now);
     this.dek = dek;
     this.lastActivity = now;
+    this.emitUnlock();
   }
 
   private meta(): Meta {
@@ -169,6 +183,7 @@ export class Vault {
     this.dek?.fill(0);
     this.dek = dek;
     this.lastActivity = Date.now();
+    this.emitUnlock();
   }
 
   lock(reason: "manual" | "auto" | "restore" = "manual") {

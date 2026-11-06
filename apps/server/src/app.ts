@@ -17,7 +17,8 @@ import { Operations } from "./operations";
 import { operationRoutes } from "./routes/operations";
 import { Launches } from "./launches";
 import { launchRoutes } from "./routes/launches";
-import { metadataStoreFor } from "./ipfs";
+import { metadataStoreFor, type PinataEndpoints } from "./ipfs";
+import { scrub } from "./settings";
 import { Live } from "./live";
 import { Trading } from "./trading";
 import { Rewards } from "./rewards";
@@ -66,12 +67,14 @@ export const REDACT_PATHS = [
 export function createLogger(dataDir: string, toStdout = true) {
   const dir = join(dataDir, "logs");
   mkdirSync(dir, { recursive: true });
-  const streams: pino.StreamEntry[] = [{ stream: pino.destination({ dest: join(dir, "nebula.log"), sync: true, mkdir: true }) }];
-  if (toStdout) streams.push({ stream: process.stdout });
+  // NFR-SEC-004: además de la redacción por ruta, todo lo escrito pasa por `scrub` (secretos por valor)
+  const file = pino.destination({ dest: join(dir, "nebula.log"), sync: true, mkdir: true });
+  const streams: pino.StreamEntry[] = [{ stream: { write: (m: string) => file.write(scrub(m)) } }];
+  if (toStdout) streams.push({ stream: { write: (m: string) => process.stdout.write(scrub(m)) } });
   return pino({ level: "info", redact: { paths: REDACT_PATHS, censor: "[redactado]" } }, pino.multistream(streams));
 }
 
-export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean; chainMode?: "rpc" | "mock"; clock?: () => number }) {
+export async function buildApp(opts: { profile: Profile; dataDir: string; token?: string; logToStdout?: boolean; chainMode?: "rpc" | "mock"; clock?: () => number; ipfs?: { pinata: PinataEndpoints; fetch?: typeof fetch } }) {
   await sodiumReady();
   let db: DB | null = openDb(opts.dataDir);
   const getDb = () => {
@@ -127,6 +130,19 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   const logger = createLogger(opts.dataDir, opts.logToStdout ?? true);
   chainManager = new ChainManager({ profile: opts.profile, mode: opts.chainMode ?? "rpc", db: getDb, vault, log: (m) => logger.info(m) });
   chainManager.reload();
+  // La clave del RPC solo se descifra con la bóveda abierta: se reconecta al abrirla y, si la usa, se suelta al bloquear
+  vault.onUnlock(() => {
+    if (chainManager!.usesKey() || chainManager!.state().mode === "off") {
+      live?.stopAll();
+      chainManager!.reload();
+    }
+  });
+  vault.onLock(() => {
+    if (chainManager!.usesKey()) {
+      live?.stopAll();
+      chainManager!.reload();
+    }
+  });
   operations = new Operations(getDb, chainManager, vault, (m) => logger.info(m));
   // Una operación que estaba en marcha cuando se cerró el proceso queda en pausa (REQ-AUTO-008)
   operations.pauseAllRunning();
@@ -135,7 +151,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     const s = JSON.parse((getDb().prepare("SELECT value FROM kv WHERE key = 'settings'").get() as { value: string } | undefined)?.value ?? "{}") as { priorityFeeSol?: number };
     return Math.max(1, Math.round(((s.priorityFeeSol ?? 0.0001) * 1e9 * 1e6) / 400_000));
   };
-  launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb), opts.profile, priority, (m) => logger.info(m));
+  launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb, vault, opts.ipfs), opts.profile, priority, (m) => logger.info(m));
   launches.pauseAllRunning();
   vault.onLock(() => launches?.pauseAllRunning());
   live = new Live(getDb, chainManager, (m) => logger.info(m));
@@ -175,8 +191,8 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     }
     if (err instanceof ZodError) return reply.code(400).send({ code: "VALIDATION", message: err.issues.map((i) => i.message).join(" · ") });
     const e = err as { statusCode?: number; message?: string };
-    if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ code: "BAD_REQUEST", message: e.message });
-    req.log.error({ err: { message: e.message } }, "error no controlado");
+    if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ code: "BAD_REQUEST", message: scrub(e.message ?? "") });
+    req.log.error({ err: { message: scrub(e.message ?? "") } }, "error no controlado");
     return reply.code(500).send({ code: "INTERNAL", message: "Error interno. Revisa los logs locales." });
   });
 

@@ -46,7 +46,7 @@ const NAV: { group: string; items: Item[] }[] = [
     items: [
       { label: "Automatizaciones", href: "/automations", icon: Bot, ready: true },
       { label: "Tracker", href: "/tracker", icon: Radar },
-      { label: "Ajustes", href: "/settings", icon: Settings },
+      { label: "Ajustes", href: "/settings", icon: Settings, ready: true },
     ],
   },
 ];

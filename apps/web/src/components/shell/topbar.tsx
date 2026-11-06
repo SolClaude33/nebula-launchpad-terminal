@@ -7,6 +7,7 @@ import { useLive } from "@/lib/live";
 import { toast } from "@/lib/toast";
 import { forceHeartbeat, useVault } from "@/lib/vault";
 import { useChain, useChainStatusPolling } from "@/lib/chain";
+import { storedTheme, useTheme } from "@/lib/theme";
 
 function titleFor(path: string) {
   if (path.startsWith("/t/")) return ["Live", "Workspace"];
@@ -16,13 +17,19 @@ function titleFor(path: string) {
   if (path.startsWith("/funder")) return ["Fondos", "Funder"];
   if (path.startsWith("/rewards")) return ["Fondos", "Comisiones"];
   if (path.startsWith("/settings")) return ["Sistema", "Ajustes"];
+  if (path.startsWith("/activity")) return ["Sistema", "Actividad"];
+  if (path.startsWith("/automations")) return ["Sistema", "Automatizaciones"];
+  if (path.startsWith("/launches/drafts")) return ["Operar", "Borradores"];
+  if (path.startsWith("/launches")) return ["Operar", "Lanzamientos"];
+  if (path === "/") return ["Operar", "Dashboard"];
   return ["Nébula", ""];
 }
 
 export function Topbar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.set);
   const status = useVault((s) => s.status);
   const readAt = useVault((s) => s.readAt);
   const vaultLock = useVault((s) => s.lock);
@@ -59,27 +66,12 @@ export function Topbar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [lock]);
 
-  // Lee el tema guardado al montar y lo aplica. Solo se escribe al cambiarlo con el botón,
-  // para que un montaje (o el doble montaje de Strict Mode) nunca pise la preferencia.
+  // Lee el tema guardado al montar y lo aplica (sin escribir: un montaje nunca pisa la preferencia).
   useEffect(() => {
-    let t: string | null = null;
-    try {
-      t = localStorage.getItem("nebula.theme");
-    } catch {}
-    const next = t === "light" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- preferencia local leída tras montar para no romper la hidratación
-    setTheme(next);
-  }, []);
+    setTheme(storedTheme(), false);
+  }, [setTheme]);
 
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem("nebula.theme", next);
-    } catch {}
-  };
+  const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
 
   const [section, page] = titleFor(pathname);
   const live = pathname.startsWith("/t/");

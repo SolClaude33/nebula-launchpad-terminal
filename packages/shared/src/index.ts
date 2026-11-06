@@ -91,14 +91,41 @@ export const SettingsDto = z.object({
   priorityFeeSol: z.number().min(0).max(0.1),
   autoLockMin: z.number().int().min(1).max(240),
   keyboardLayout: z.enum(["qwerty", "azerty", "qwertz"]),
+  theme: z.enum(["dark", "light"]),
+  /** Pasarela pública con la que se forman las URI de metadatos (Pinata solo sube). */
+  ipfsGateway: z.string().max(200),
   /** Secretos: el GET solo devuelve si están configurados, nunca el valor. */
   ipfsKeySet: z.boolean(),
   rpcKeySet: z.boolean(),
+  rpcBackupKeySet: z.boolean(),
 });
 export type SettingsDto = z.infer<typeof SettingsDto>;
-export const PutSettingsBody = SettingsDto.omit({ ipfsKeySet: true, rpcKeySet: true })
+const rpcUrl = (ws: boolean) =>
+  z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => v === "" || (ws ? /^wss?:\/\/\S+$/ : /^https?:\/\/\S+$/).test(v), ws ? "URL ws:// o wss:// completa" : "URL http:// o https:// completa");
+export const PutSettingsBody = SettingsDto.omit({ ipfsKeySet: true, rpcKeySet: true, rpcBackupKeySet: true })
   .partial()
-  .extend({ ipfsKey: z.string().max(500).optional(), rpcKey: z.string().max(500).optional() });
+  .extend({
+    rpcPrimaryHttp: rpcUrl(false).optional(),
+    rpcPrimaryWs: rpcUrl(true).optional(),
+    rpcBackupHttp: rpcUrl(false).optional(),
+    rpcBackupWs: rpcUrl(true).optional(),
+    ipfsGateway: z
+      .string()
+      .trim()
+      .max(200)
+      .refine((v) => /^https:\/\/[^\s]+\/$/.test(v), "Pasarela: URL https:// que acabe en / (p. ej. https://ipfs.io/ipfs/)")
+      .optional(),
+    ipfsKey: z.string().max(2000).optional(),
+    rpcKey: z.string().max(500).optional(),
+    rpcBackupKey: z.string().max(500).optional(),
+  });
+
+/** Marcador de la clave del RPC dentro de la URL: la clave real vive cifrada en la bóveda. */
+export const RPC_KEY_PLACEHOLDER = "{key}";
 
 export const ActivityDto = z.object({ id: z.number(), at: z.number(), kind: z.string(), detail: z.string() });
 export type ActivityDto = z.infer<typeof ActivityDto>;

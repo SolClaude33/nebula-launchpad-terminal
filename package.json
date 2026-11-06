@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "pnpm -r --parallel --filter server --filter web dev",
     "start": "pnpm -r --parallel --filter server --filter web start",
+    "mainnet": "node scripts/mainnet.mjs",
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm -r typecheck",

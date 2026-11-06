@@ -2,21 +2,10 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { PutSettingsBody, type ActivityDto, type SettingsDto } from "@nebula/shared";
 import type { Ctx } from "../app";
-import { kvGet, kvSet, logActivity } from "../db";
+import { kvSet, logActivity } from "../db";
 import { VaultError } from "../signer";
-
-const DEFAULTS: Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "autoLockMin"> = {
-  rpcPrimaryHttp: "http://127.0.0.1:8899",
-  rpcPrimaryWs: "ws://127.0.0.1:8900",
-  rpcBackupHttp: "",
-  rpcBackupWs: "",
-  jitoEndpoint: "",
-  jitoTipSol: 0.001,
-  slippageBuyPct: 15,
-  slippageSellPct: 5,
-  priorityFeeSol: 0.0001,
-  keyboardLayout: "qwerty",
-};
+import { hasSecret, remember, splitRpcKey, storedSettings, type SecretName } from "../settings";
+import { testIpfsKey } from "../ipfs";
 
 export const settingsRoutes =
   (ctx: Ctx): FastifyPluginAsync =>
@@ -28,38 +17,76 @@ export const settingsRoutes =
 
     const read = (): SettingsDto => {
       const db = ctx.db();
-      const stored = JSON.parse(kvGet(db, "settings") ?? "{}");
-      const has = (n: string) => !!db.prepare("SELECT 1 FROM setting_secret WHERE name = ?").get(n);
-      return { ...DEFAULTS, ...stored, autoLockMin: ctx.vault.autoLockMin(), ipfsKeySet: has("ipfsKey"), rpcKeySet: has("rpcKey") };
+      return { ...storedSettings(db), autoLockMin: ctx.vault.autoLockMin(), ipfsKeySet: hasSecret(db, "ipfsKey"), rpcKeySet: hasSecret(db, "rpcKey"), rpcBackupKeySet: hasSecret(db, "rpcBackupKey") };
     };
 
     app.get("/settings", async () => read());
 
-    // REQ-SET-002: los secretos van cifrados dentro de la bóveda, nunca a .env ni a texto plano
+    // REQ-SET-002: los secretos van cifrados dentro de la bóveda, nunca a .env ni a texto plano.
+    // Una URL de RPC con la credencial dentro se parte: la URL queda con {key} y la credencial va a la bóveda.
     app.put("/settings", async (req) => {
       const body = PutSettingsBody.parse(req.body);
       const db = ctx.db();
-      const { ipfsKey, rpcKey, autoLockMin, ...plain } = body;
-      const stored = JSON.parse(kvGet(db, "settings") ?? "{}");
+      const { ipfsKey, rpcKey, rpcBackupKey, autoLockMin, ...plain } = body;
+      const secrets: [SecretName, string | undefined][] = [
+        ["ipfsKey", ipfsKey?.trim()],
+        ["rpcKey", rpcKey?.trim()],
+        ["rpcBackupKey", rpcBackupKey?.trim()],
+      ];
+      const setSecret = (name: SecretName, v: string | undefined) => secrets.splice(secrets.findIndex((s) => s[0] === name), 1, [name, v]);
+      for (const [field, secret] of [
+        ["rpcPrimaryHttp", "rpcKey"],
+        ["rpcPrimaryWs", "rpcKey"],
+        ["rpcBackupHttp", "rpcBackupKey"],
+        ["rpcBackupWs", "rpcBackupKey"],
+      ] as const) {
+        const v = plain[field];
+        if (v === undefined) continue;
+        const s = splitRpcKey(v);
+        plain[field] = s.url;
+        if (s.key) {
+          const cur = secrets.find((x) => x[0] === secret)![1];
+          if (cur && cur !== s.key) throw Object.assign(new Error("La URL lleva una clave distinta de la indicada en el campo de clave."), { statusCode: 400 });
+          setSecret(secret, s.key);
+        }
+      }
+      const stored = storedSettings(db);
       kvSet(db, "settings", JSON.stringify({ ...stored, ...plain }));
       if (autoLockMin !== undefined) kvSet(db, "autoLockMin", String(autoLockMin));
-      for (const [name, value] of [["ipfsKey", ipfsKey], ["rpcKey", rpcKey]] as const) {
+      const changedSecrets: string[] = [];
+      for (const [name, value] of secrets) {
         if (value === undefined) continue;
+        changedSecrets.push(name);
         if (value === "") db.prepare("DELETE FROM setting_secret WHERE name = ?").run(name);
-        else db.prepare("INSERT INTO setting_secret(name, ciphertext) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET ciphertext = excluded.ciphertext").run(name, ctx.vault.sealSecret(name, value));
+        else {
+          remember(value);
+          db.prepare("INSERT INTO setting_secret(name, ciphertext) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET ciphertext = excluded.ciphertext").run(name, ctx.vault.sealSecret(name, value));
+        }
       }
-      if (Object.keys(plain).some((k) => k.startsWith("rpc") || k === "priorityFeeSol") || rpcKey !== undefined) {
+      if (Object.keys(plain).some((k) => k.startsWith("rpc") || k === "priorityFeeSol") || changedSecrets.some((n) => n.startsWith("rpc"))) {
         ctx.live.stopAll();
         ctx.chain.reload();
       }
-      logActivity(db, "settings.update", `Ajustes cambiados: ${Object.keys(body).join(", ")}`);
+      // REQ-LOG-001: se registran los nombres de lo que cambió, nunca los valores de los secretos
+      const names = [...Object.keys(plain), ...(autoLockMin !== undefined ? ["autoLockMin"] : []), ...changedSecrets.map((n) => `${n} (secreto)`)];
+      logActivity(db, "settings.update", `Ajustes cambiados: ${names.join(", ")}`);
       return read();
+    });
+
+    // Comprueba la clave de Pinata guardada (o una nueva sin guardarla) contra su endpoint de autenticación
+    app.post("/settings/ipfs/test", async (req) => {
+      const { key } = z.object({ key: z.string().max(2000).optional() }).parse(req.body ?? {});
+      return testIpfsKey(ctx, key?.trim() || undefined);
     });
 
     // REQ-LOG-001: registro de actividad local, paginado
     app.get("/activity", async (req) => {
-      const { before, limit } = z.object({ before: z.coerce.number().optional(), limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query);
-      const rows = ctx.db().prepare(`SELECT id, at, kind, detail FROM activity_log ${before ? "WHERE id < ?" : ""} ORDER BY id DESC LIMIT ?`).all(...(before ? [before, limit] : [limit])) as ActivityDto[];
+      const { before, limit, kind } = z.object({ before: z.coerce.number().optional(), limit: z.coerce.number().int().min(1).max(200).default(50), kind: z.string().max(40).optional() }).parse(req.query);
+      const where: string[] = [];
+      const args: (string | number)[] = [];
+      if (before) where.push("id < ?"), args.push(before);
+      if (kind) where.push("(kind = ? OR kind LIKE ?)"), args.push(kind, `${kind}.%`);
+      const rows = ctx.db().prepare(`SELECT id, at, kind, detail FROM activity_log ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT ?`).all(...args, limit) as ActivityDto[];
       return { items: rows };
     });
   };

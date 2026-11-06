@@ -46,7 +46,7 @@ export class Launches {
     private db: () => DB,
     private chain: ChainManager,
     private vault: Vault,
-    private store: MetadataStore,
+    readonly store: MetadataStore,
     private profile: Profile,
     private priority: () => number,
     private log: (m: string) => void,
@@ -116,8 +116,8 @@ export class Launches {
 
     // Mint: se genera una sola vez por borrador y se sella antes de enviar nada (REQ-LAUNCH-006)
     const mint = existing?.mint ?? (await this.vault.createMintKey());
-    const image = this.store.get?.(cfg.imageCid) ? `${this.store.kind === "local" ? "nebula-local://ipfs/" : "ipfs://"}${cfg.imageCid}` : null;
-    if (!image && this.store.kind === "local") throw Object.assign(new Error("La imagen no está subida. Vuelve a subirla en el paso 1."), { statusCode: 400 });
+    // URI pública de la imagen ya subida: local en pruebas, pasarela + CID en mainnet
+    const image = this.store.mediaUri(cfg.imageCid);
     const meta = await this.store.putJson({ name: cfg.name, symbol: cfg.symbol, description: cfg.description, image, showName: true, createdOn: "nebula", twitter: cfg.links.x || undefined, telegram: cfg.links.telegram || undefined, website: cfg.links.web || undefined });
     assertUriForProfile(this.profile, meta.uri);
 
