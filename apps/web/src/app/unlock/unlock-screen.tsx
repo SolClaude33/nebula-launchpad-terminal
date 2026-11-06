@@ -21,6 +21,8 @@ export function UnlockScreen() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // La bóveda siempre se ve en oscuro (campo de estrellas); el shell reaplica el tema guardado al volver.
+    document.documentElement.dataset.theme = "dark";
     router.prefetch(DEMO_ROUTE);
     inputRef.current?.focus();
   }, [router]);

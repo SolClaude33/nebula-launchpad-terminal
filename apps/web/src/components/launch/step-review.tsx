@@ -51,7 +51,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
     <div className="rise">
       <SectionTitle index="Paso 4 de 4 · Revisar y lanzar" title="Última comprobación" body="Simula cada transacción contra el RPC antes de enviar nada. Un fallo bloquea el lanzamiento." />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         {groups.map((g) => (
           <div key={g.title} className="panel p-4">
             <div className="mb-2 flex items-center justify-between">

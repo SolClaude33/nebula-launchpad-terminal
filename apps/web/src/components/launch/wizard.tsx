@@ -54,7 +54,7 @@ export function LaunchWizard() {
   if (!hydrated) return <div className="skeleton m-6 h-[70vh]" aria-busy="true" />;
 
   return (
-    <div className="mx-auto grid max-w-[1320px] grid-cols-[minmax(0,1fr)_340px] gap-6 px-6 pt-5 pb-16 xl:grid-cols-[minmax(0,1fr)_370px]">
+    <div className="mx-auto grid max-w-[1320px] grid-cols-[minmax(0,1fr)_300px] gap-5 px-5 pt-5 pb-16 xl:grid-cols-[minmax(0,1fr)_370px]">
       <div className="min-w-0">
         <div className="mb-7 flex items-center gap-3">
           <nav aria-label="Pasos del lanzamiento" className="flex-1">

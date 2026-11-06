@@ -62,7 +62,7 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
     { k: `Fees de red (${est.txs} tx)`, v: est.network, tip: "5.000 lamports × número de transacciones." },
     { k: "Priority fee", v: est.priority, tip: "priority fee × número de transacciones." },
     { k: "Propina Jito", v: est.jito, tip: "una vez por bundle." },
-    { k: `Fee de Pump.fun (${CURVE.padFeePct} %, demo)`, v: est.pad, tip: "porcentaje del pad sobre el volumen de compra; incluido en las compras." },
+    { k: `Fee Pump.fun (${CURVE.padFeePct} %)`, v: est.pad, tip: "valor de demostración. Porcentaje del pad sobre el volumen de compra; incluido en las compras." },
     { k: "Rent (mint + cuentas)", v: est.rent, tip: "rent del mint más una cuenta de token por wallet compradora. Se recupera al cerrar cuentas vacías." },
     { k: "Colchón (2 %)", v: est.buffer, tip: "margen para variaciones de precio y fees." },
   ];

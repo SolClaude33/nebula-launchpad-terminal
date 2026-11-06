@@ -7,6 +7,8 @@ import { BASE_FEE } from "@/lib/sim";
 import { fmtSol, shortAddr } from "@/lib/format";
 import { SectionTitle } from "./ui";
 
+const COLS = "grid-cols-[24px_minmax(0,1fr)_78px_78px_96px] xl:grid-cols-[28px_minmax(0,1fr)_120px_120px_130px]";
+
 export function StepFunding() {
   const d = useDraft((s) => s.draft);
   const set = useDraft((s) => s.set);
@@ -83,7 +85,7 @@ export function StepFunding() {
             </button>
           )}
         </div>
-        <div aria-hidden className="grid grid-cols-[28px_1fr_120px_120px_130px] gap-3 border-b border-line bg-surface-2/40 px-4 py-2">
+        <div aria-hidden className={`grid ${COLS} gap-3 border-b border-line bg-surface-2/40 px-4 py-2`}>
           <span />
           <span className="telemetry">Wallet</span>
           <span className="telemetry text-right">Compra</span>
@@ -91,7 +93,7 @@ export function StepFunding() {
           <span className="telemetry text-right">Estado</span>
         </div>
         <ol>
-          <li className="grid grid-cols-[28px_1fr_120px_120px_130px] items-center gap-3 border-b border-line/70 bg-surface-2/30 px-4 py-2.5 text-[12.5px]">
+          <li className={`grid ${COLS} items-center gap-3 border-b border-line/70 bg-surface-2/30 px-4 py-2.5 text-[12.5px]`}>
             <span className="num text-faint">0</span>
             <span>
               <span className="font-medium">Dev</span> <span className="chip ml-1 h-5 border-warn/30 px-1.5 text-[10.5px] text-warn">creación + dev buy</span>
@@ -116,7 +118,7 @@ export function StepFunding() {
                   setDragId(null);
                 }}
                 onDragEnd={() => setDragId(null)}
-                className={`group grid grid-cols-[28px_1fr_120px_120px_130px] items-center gap-3 border-b border-line/50 px-4 py-2.5 text-[12.5px] transition-colors last:border-0 ${dragId === w.id ? "opacity-40" : "hover:bg-surface-2/50"}`}
+                className={`group grid ${COLS} items-center gap-3 border-b border-line/50 px-4 py-2.5 text-[12.5px] transition-colors last:border-0 ${dragId === w.id ? "opacity-40" : "hover:bg-surface-2/50"}`}
               >
                 <span className="flex items-center gap-0.5 text-faint">
                   <GripVertical className="size-3.5 cursor-grab" aria-hidden />

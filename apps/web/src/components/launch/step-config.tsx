@@ -59,7 +59,7 @@ export function StepConfig() {
         </fieldset>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
         <Field id="devBuy" label="Dev buy" error={fe.devBuy} hint="Va en la misma transacción que la creación (bundle Jito, todo o nada).">
           <div className="relative">
             <input id="devBuy" inputMode="decimal" value={d.devBuy} onChange={(e) => set({ devBuy: e.target.value })} aria-invalid={!!fe.devBuy} aria-describedby="devBuy-msg" className="field num h-10 pr-12" />

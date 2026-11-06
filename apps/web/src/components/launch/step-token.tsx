@@ -83,7 +83,7 @@ export function StepToken() {
         </button>
       </div>
 
-      <div className="grid grid-cols-[220px_1fr] gap-6">
+      <div className="grid grid-cols-[168px_minmax(0,1fr)] gap-5 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-6">
         {/* Media */}
         <div>
           <p className="mb-1.5 text-[13px] font-medium">Imagen o vídeo</p>
@@ -159,7 +159,7 @@ export function StepToken() {
 
         {/* Texto */}
         <div className="space-y-3">
-          <div className="grid grid-cols-[1fr_160px] gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_130px] gap-3 xl:grid-cols-[minmax(0,1fr)_160px]">
             <Field id="name" label="Nombre" error={fe.name} hint={`${d.name.length}/32`}>
               <input id="name" value={d.name} onChange={(e) => set({ name: e.target.value })} aria-invalid={!!fe.name} aria-describedby="name-msg" placeholder="Kepler" className="field h-10" />
             </Field>
@@ -173,7 +173,7 @@ export function StepToken() {
           <Field id="description" label="Descripción" optional error={fe.description} hint={`${d.description.length}/500`}>
             <textarea id="description" rows={4} value={d.description} onChange={(e) => set({ description: e.target.value })} aria-invalid={!!fe.description} aria-describedby="description-msg" placeholder="Qué es y por qué existe, en dos frases." className="field resize-none leading-relaxed" />
           </Field>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
             <Field id="x" label="X" optional error={fe.x}>
               <input id="x" value={d.links.x} onChange={(e) => set({ links: { ...d.links, x: e.target.value.trim() } })} aria-invalid={!!fe.x} aria-describedby="x-msg" placeholder="https://x.com/…" className="field h-10" />
             </Field>

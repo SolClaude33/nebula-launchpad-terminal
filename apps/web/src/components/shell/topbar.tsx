@@ -66,19 +66,27 @@ export function Topbar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [lock]);
 
+  // Lee el tema guardado al montar y lo aplica. Solo se escribe al cambiarlo con el botón,
+  // para que un montaje (o el doble montaje de Strict Mode) nunca pise la preferencia.
   useEffect(() => {
+    let t: string | null = null;
     try {
-      const t = localStorage.getItem("nebula.theme");
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- preferencia local leída tras montar para no romper la hidratación
-      if (t === "light" || t === "dark") setTheme(t);
+      t = localStorage.getItem("nebula.theme");
     } catch {}
+    const next = t === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- preferencia local leída tras montar para no romper la hidratación
+    setTheme(next);
   }, []);
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
     try {
-      localStorage.setItem("nebula.theme", theme);
+      localStorage.setItem("nebula.theme", next);
     } catch {}
-  }, [theme]);
+  };
 
   const [section, page] = titleFor(pathname);
   const mm = String(Math.max(0, Math.floor(left / 60))).padStart(2, "0");
@@ -116,7 +124,7 @@ export function Topbar() {
             SOL ${SOL_USD.toLocaleString("es-ES", { minimumFractionDigits: 2 })}
           </span>
           <button
-            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            onClick={toggleTheme}
             className="btn btn-ghost size-9 p-0"
             aria-label={theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
           >

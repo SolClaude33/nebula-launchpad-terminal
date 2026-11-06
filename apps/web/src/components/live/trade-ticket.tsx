@@ -160,7 +160,7 @@ export function TradeTicket() {
         <Row label="Fee de red" value={fmtSol(est.network, 6)} />
         <Row label="Priority fee" value={fmtSol(est.priority, 5)} />
         {est.rent > 0 && <Row label="Rent de cuentas nuevas" value={fmtSol(est.rent, 5)} hint="Se recupera al cerrar la cuenta de token vacía." />}
-        <Row label={`Fee de Pump.fun (${PAD_FEE_PCT} %, demo)`} value={fmtSol(est.pad, 4)} hint="En F1 este valor lo da el adaptador." />
+        <Row label={`Fee Pump.fun (${PAD_FEE_PCT} %)`} value={fmtSol(est.pad, 4)} hint="Valor de demostración. En F1 lo da el adaptador." />
         <div className="my-1 border-t border-line" />
         <Row label={buy ? "Total a gastar" : "Coste de la operación"} value={fmtSol(est.total, 4)} strong />
       </dl>
