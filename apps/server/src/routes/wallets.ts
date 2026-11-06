@@ -54,10 +54,11 @@ export const walletRoutes =
   (ctx: Ctx): FastifyPluginAsync =>
   async (app) => {
     const { vault } = ctx;
-    // Todo lo de wallets exige la bóveda abierta y cuenta como actividad.
-    app.addHook("preHandler", async () => {
+    // Todo lo de wallets exige la bóveda abierta. Solo las acciones cuentan como actividad:
+    // las lecturas periódicas (sondeos de la interfaz) no deben retrasar el bloqueo automático.
+    app.addHook("preHandler", async (req) => {
       if (!vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
-      vault.touch();
+      if (req.method !== "GET") vault.touch();
     });
 
     app.get("/wallets", async (req) => {

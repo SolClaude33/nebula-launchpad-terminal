@@ -53,6 +53,9 @@ export class SolanaSender implements TxSender {
   async send(tx: PreparedTx, { idempotencyKey, simulateOnly }: { idempotencyKey: string; simulateOnly?: boolean }): Promise<SendResult> {
     const prev = this.row(idempotencyKey);
     if (prev?.status === "CONFIRMED") return { status: "confirmed", signature: prev.signature!, reused: true, feeLamports: prev.fee_lamports != null ? BigInt(prev.fee_lamports) : undefined };
+    if (prev?.status === "FAILED" && prev.signature && (await this.statusOf(prev.signature).catch(() => "unknown" as const)) === "confirmed") {
+      return this.markConfirmed(idempotencyKey, prev.signature);
+    }
     if (prev?.status === "SENT" && prev.signature) {
       const landed = await this.statusOf(prev.signature);
       if (landed === "confirmed") return this.markConfirmed(idempotencyKey, prev.signature);
@@ -97,13 +100,18 @@ export class SolanaSender implements TxSender {
         }
         return this.markConfirmed(idempotencyKey, built.signature, BigInt(5000 * tx.signers.length) + BigInt(Math.ceil((this.opts.priorityMicroLamports() * this.opts.computeUnitLimit) / 1e6)), sim.value.unitsConsumed ?? undefined);
       } catch (e) {
+        // Ya se emitió (o pudo emitirse): un timeout o un corte del WebSocket no dicen si aterrizó.
+        // Se pregunta a la cadena antes de decidir, para que un reintento nunca duplique el efecto.
         const c = classify(null, e);
-        if (c.code === "BLOCKHASH_EXPIRED" && attempt === 0 && (await this.statusOf(built.signature)) === "unknown") {
+        const landed = await this.statusOf(built.signature).catch(() => "unknown" as const);
+        if (landed === "confirmed") return this.markConfirmed(idempotencyKey, built.signature);
+        if (landed === "failed") return this.markFailed(idempotencyKey, "SIMULATION_FAILED", "La transacción falló en la cadena.", built.signature);
+        if (c.code === "BLOCKHASH_EXPIRED" && attempt === 0) {
           this.db().prepare("UPDATE tx SET status = 'EXPIRED', updated_at = ? WHERE idempotency_key = ?").run(Date.now(), idempotencyKey);
           continue;
         }
-        if (c.code === "RPC_DOWN") return { status: "failed", code: "RPC_DOWN", message: "El RPC no responde; el envío queda pendiente de conciliar.", signature: built.signature };
-        return this.markFailed(idempotencyKey, c.code, c.message, built.signature);
+        // Estado desconocido: queda en SENT y se informa como pendiente (la conciliación lo resolverá)
+        return { status: "failed", code: c.code === "RPC_DOWN" ? "RPC_DOWN" : "UNKNOWN", message: "Confirmación pendiente: no se sabe aún si la transacción aterrizó.", signature: built.signature };
       }
     }
     return { status: "failed", code: "BLOCKHASH_EXPIRED", message: "El blockhash caducó dos veces seguidas." };

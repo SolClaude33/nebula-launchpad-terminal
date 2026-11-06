@@ -21,9 +21,9 @@ const DEFAULTS: Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "autoLockMin"> = 
 export const settingsRoutes =
   (ctx: Ctx): FastifyPluginAsync =>
   async (app) => {
-    app.addHook("preHandler", async () => {
+    app.addHook("preHandler", async (req) => {
       if (!ctx.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
-      ctx.vault.touch();
+      if (req.method !== "GET") ctx.vault.touch(); // las lecturas no cuentan como actividad
     });
 
     const read = (): SettingsDto => {
