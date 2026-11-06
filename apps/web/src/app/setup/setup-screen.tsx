@@ -28,7 +28,7 @@ export function SetupScreen() {
 
   useEffect(() => {
     refresh().then((s) => {
-      if (s?.initialized) router.replace(s.unlocked ? "/wallets" : "/unlock");
+      if (s?.initialized) router.replace(s.unlocked ? "/" : "/unlock");
     });
   }, [refresh, router]);
 
@@ -56,7 +56,7 @@ export function SetupScreen() {
       setIpfs("");
       setStatus(s);
       setDone(true);
-      setTimeout(() => router.push("/wallets"), 650);
+      setTimeout(() => router.push("/"), 650);
     } catch (err) {
       setError((err as ApiError).message);
       setBusy(false);

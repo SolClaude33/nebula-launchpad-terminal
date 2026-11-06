@@ -62,6 +62,7 @@ export function parsePumpEvents(tx: RawTx, ctx: { mint?: string; supply?: bigint
           mint,
           side: e.isBuy ? "buy" : "sell",
           lamports: e.isBuy ? sol + fees : sol - fees,
+          feeLamports: fees,
           tokens: big(e.tokenAmount),
           user: pk(e.user),
           ts: Number(e.timestamp.toString()) * 1000,
@@ -90,6 +91,7 @@ export function parsePumpEvents(tx: RawTx, ctx: { mint?: string; supply?: bigint
         const quote = big(e.poolQuoteTokenReserves);
         const net = buy ? big((e as ReturnType<typeof PUMP_SDK.decodeBuyEventAmm>).quoteAmountIn) : big((e as ReturnType<typeof PUMP_SDK.decodeSellEventAmm>).quoteAmountOut);
         const after = buy ? { b: base - tokens, q: quote + net } : { b: base + tokens, q: quote - net };
+        const padFee = big(e.lpFee) + big(e.protocolFee) + big(e.coinCreatorFee);
         out.push({
           kind: "trade",
           index: i,
@@ -97,6 +99,7 @@ export function parsePumpEvents(tx: RawTx, ctx: { mint?: string; supply?: bigint
           mint: ctx.mint,
           side: buy ? "buy" : "sell",
           lamports,
+          feeLamports: padFee,
           tokens,
           user: pk(e.user),
           ts: Number(e.timestamp.toString()) * 1000,

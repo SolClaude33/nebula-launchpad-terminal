@@ -27,7 +27,7 @@ const NAV: { group: string; items: Item[] }[] = [
   {
     group: "Operar",
     items: [
-      { label: "Dashboard", href: "/", icon: LayoutDashboard },
+      { label: "Dashboard", href: "/", icon: LayoutDashboard, ready: true },
       { label: "Lanzar token", href: "/launch/new", icon: Rocket, ready: true, match: "/launch" },
       { label: "Lanzamientos", href: "/launches", icon: Layers },
       { label: "Live", href: "/t", icon: Activity, ready: true, match: "/t" },

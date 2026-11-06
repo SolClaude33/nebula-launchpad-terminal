@@ -175,14 +175,14 @@ export class Live {
     const info = w?.info.v;
     const db = this.db();
     const mark = db.prepare("INSERT OR IGNORE INTO live_sig(mint, signature) VALUES(?, ?)");
-    const ins = db.prepare("INSERT OR IGNORE INTO live_trade(mint, signature, idx, venue, side, lamports, tokens, user, ts, slot, mc) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const ins = db.prepare("INSERT OR IGNORE INTO live_trade(mint, signature, idx, venue, side, lamports, tokens, user, ts, slot, mc, fee) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     let changed = false;
     db.transaction(() => {
       for (const tx of txs) {
         if (!mark.run(mint, tx.signature).changes) continue;
         const events: ChainEvent[] = chain.adapter.parseEvents(tx, { mint, supply: info?.supply, mayhem: info?.mayhem });
         for (const e of events) {
-          if (e.kind === "trade") ins.run(mint, tx.signature, e.index, e.venue, e.side, e.lamports.toString(), e.tokens.toString(), e.user, e.ts || (tx.blockTime ?? 0) * 1000, tx.slot, e.marketCapLamports.toString());
+          if (e.kind === "trade") ins.run(mint, tx.signature, e.index, e.venue, e.side, e.lamports.toString(), e.tokens.toString(), e.user, e.ts || (tx.blockTime ?? 0) * 1000, tx.slot, e.marketCapLamports.toString(), (e.feeLamports ?? 0n).toString());
           else if (e.kind === "complete") db.prepare("UPDATE live_mint SET completed_at = ? WHERE mint = ?").run(e.ts, mint);
           else if (e.kind === "migrate") db.prepare("UPDATE live_mint SET migrated_pool = ? WHERE mint = ?").run(e.pool, mint);
           changed = true;

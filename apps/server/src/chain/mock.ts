@@ -3,6 +3,7 @@
 // Al completarse la curva, la migración crea un pool de constante producto con las reservas reales (PumpSwap).
 // Cada envío confirmado queda como una "transacción" con eventos codificados en sus logs, para que
 // el indexer en vivo funcione igual que contra el RPC (firmas, transacciones y suscripción a logs).
+import type { DB } from "../db";
 import type { ChainEnv, ChainEvent, ChainReader, CurveQuote, LaunchQuote, LaunchpadAdapter, MessageSigner, PreparedTx, RawTx, SendErrorCode, SendResult, TokenInfo, TransferBuilder, TxSender } from "./types";
 import { RENT_EXEMPT_MIN_DEFAULT, transferCuLimit, txFee } from "./fees";
 import { chunkTransfers } from "./transfers";
@@ -91,10 +92,15 @@ export class MockLedger {
   }
 
   /** Tras un envío confirmado: lo registra como transacción y avisa a los suscriptores de logs. */
-  record(signature: string, payer: string): RawTx {
+  record(signature: string, payer: string, extra: { fee?: bigint; pre?: Map<string, bigint> } = {}): RawTx {
     const events = this.events.splice(0);
     const mentions = new Set<string>([payer, ...events.flatMap((e) => [e.mint, ...(e.kind === "trade" ? [e.user] : [])])]);
-    const tx = { signature, slot: this.txs.length + 1, blockTime: Math.floor(Date.now() / 1000), err: null, logs: events.map((e) => LOG_PREFIX + json(e)), mentions };
+    const deltas: Record<string, bigint> = {};
+    if (extra.pre) for (const a of new Set([...extra.pre.keys(), ...this.sol.keys()])) {
+      const d = this.balance(a) - (extra.pre.get(a) ?? 0n);
+      if (d !== 0n) deltas[a] = d;
+    }
+    const tx = { signature, slot: this.txs.length + 1, blockTime: Math.floor(Date.now() / 1000), err: null, logs: events.map((e) => LOG_PREFIX + json(e)), mentions, fee: extra.fee, deltas: extra.pre ? deltas : undefined };
     this.txs.push(tx);
     for (const m of mentions) for (const cb of this.listeners.get(m) ?? []) cb(tx);
     return tx;
@@ -172,7 +178,7 @@ export class MockLedger {
         c.creatorVault += bpsOf(cost, CREATOR_BPS);
         this.addTokens(o.mint, o.user, o.tokens);
         this.sol.set(o.user, this.balance(o.user) - cost);
-        this.events.push({ kind: "trade", venue: "pumpswap", mint: o.mint, side: "buy", lamports: cost, tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mcOf(pool.quote, pool.base) });
+        this.events.push({ kind: "trade", venue: "pumpswap", mint: o.mint, side: "buy", lamports: cost, feeLamports: bpsOf(cost, FEE_BPS), tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mcOf(pool.quote, pool.base) });
       } else this.fill(o.mint, c, o.user, o.tokens, cost, now);
       this.sol.set(o.user, this.balance(o.user) - rent - TX_FEE);
       return { ok: true, fee: TX_FEE };
@@ -196,7 +202,7 @@ export class MockLedger {
     this.addTokens(o.mint, o.user, -o.tokens);
     this.sol.set(o.user, this.balance(o.user) + out - TX_FEE);
     const mc = pool ? mcOf(pool.quote, pool.base) : mcOf(c.vSol, c.vTok);
-    this.events.push({ kind: "trade", venue: pool ? "pumpswap" : "curve", mint: o.mint, side: "sell", lamports: out, tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mc });
+    this.events.push({ kind: "trade", venue: pool ? "pumpswap" : "curve", mint: o.mint, side: "sell", lamports: out, feeLamports: bpsOf(out, FEE_BPS), tokens: o.tokens, user: o.user, ts: now, marketCapLamports: mc });
     return { ok: true, fee: TX_FEE };
   }
 
@@ -209,7 +215,7 @@ export class MockLedger {
     c.creatorVault += bpsOf(cost, CREATOR_BPS);
     this.addTokens(mint, user, tokens);
     this.sol.set(user, this.balance(user) - cost);
-    this.events.push({ kind: "trade", venue: "curve", mint, side: "buy", lamports: cost, tokens, user, ts: now, marketCapLamports: mcOf(c.vSol, c.vTok) });
+    this.events.push({ kind: "trade", venue: "curve", mint, side: "buy", lamports: cost, feeLamports: bpsOf(cost, FEE_BPS), tokens, user, ts: now, marketCapLamports: mcOf(c.vSol, c.vTok) });
     if (c.realTok === 0n) {
       c.complete = true;
       this.events.push({ kind: "complete", mint, ts: now });
@@ -248,7 +254,7 @@ function quoteOf(c: Curve, pool: Pool | undefined, side: "buy" | "sell", amount:
 
 const migratingError = () => Object.assign(new Error("La curva está completa y la migración a PumpSwap aún no ha ocurrido. Espera a que exista el pool."), { code: "MIGRATING" });
 
-export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0): ChainEnv & { ledger: MockLedger } {
+export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0, db?: () => DB): ChainEnv & { ledger: MockLedger } {
   const feeOf = (tx: PreparedTx) => txFee(tx.signers.length, tx.cuLimit ?? 400_000, priority());
   const fresh = (): Curve => ({ vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: "", creatorVault: 0n, name: "", symbol: "", mayhem: false });
   const curve = (mint: string) => {
@@ -367,9 +373,20 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
         ledger.discardEvents(); // una simulación no emite nada
         return r.ok ? { status: "simulated", ...(post !== undefined ? { postLamports: post } : {}) } : { status: "failed", code: r.code, message: r.message };
       }
+      const pre = new Map(ledger.sol);
       const r = ledger.apply(tx.payload as Op, feeOf(tx));
       const res: SendResult = r.ok ? { status: "confirmed", signature: `mock${++ledger.seq}`, feeLamports: r.fee } : { status: "failed", code: r.code, message: r.message };
-      if (res.status === "confirmed") ledger.record(res.signature, tx.payer);
+      if (res.status === "confirmed") {
+        ledger.record(res.signature, tx.payer, { fee: r.ok ? r.fee : undefined, pre });
+        // Igual que el sender real: cada envío propio confirmado queda en la tabla tx (P&L, conciliación)
+        const now = Date.now();
+        db?.()
+          .prepare(
+            `INSERT INTO tx(idempotency_key, kind, signature, status, fee_lamports, payer, mint, created_at, updated_at) VALUES(?, ?, ?, 'CONFIRMED', ?, ?, ?, ?, ?)
+             ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, status = 'CONFIRMED', fee_lamports = excluded.fee_lamports, updated_at = excluded.updated_at`,
+          )
+          .run(idempotencyKey, tx.kind, res.signature, Number(res.feeLamports ?? 0n), tx.payer, tx.mint ?? null, now, now);
+      }
       ledger.sent.set(idempotencyKey, res);
       return res;
     },

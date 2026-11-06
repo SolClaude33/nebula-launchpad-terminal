@@ -25,6 +25,8 @@ import { Rewards } from "./rewards";
 import { liveRoutes } from "./routes/live";
 import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
+import { Pnl } from "./pnl";
+import { dashboardRoutes } from "./routes/dashboard";
 
 export type Ctx = {
   profile: Profile;
@@ -41,6 +43,7 @@ export type Ctx = {
   trading: Trading;
   rewards: Rewards;
   automations: Automations;
+  pnl: Pnl;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -89,6 +92,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let trading: Trading | null = null;
   let rewards: Rewards | null = null;
   let automations: Automations | null = null;
+  let pnl: Pnl | null = null;
   const ctx: Ctx = {
     profile: opts.profile,
     dataDir: opts.dataDir,
@@ -116,6 +120,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get automations() {
       return automations!;
+    },
+    get pnl() {
+      return pnl!;
     },
     closeDb: () => {
       db?.close();
@@ -164,6 +171,8 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   // REQ-AUTO: el motor solo trabaja con la bóveda abierta; al bloquear, pauseRunningTasks deja lo RUNNING en PAUSED
   automations = new Automations(getDb, vault, trading, live, opts.clock ?? Date.now, (m) => logger.info(m));
   automations.start();
+  pnl = new Pnl(getDb, chainManager, live, vault, (m) => logger.info(m), opts.clock ?? Date.now);
+  pnl.start();
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
@@ -204,10 +213,12 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(launchRoutes(ctx), { prefix: "/api" });
   await app.register(liveRoutes(ctx), { prefix: "/api" });
   await app.register(automationRoutes(ctx), { prefix: "/api" });
+  await app.register(dashboardRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();
     automations?.stop();
+    pnl?.stop();
     live?.stopAll();
     chainManager?.stop();
     ctx.closeDb();

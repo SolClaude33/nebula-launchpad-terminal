@@ -14,7 +14,7 @@ type Phase = "idle" | "deriving" | "error" | "done";
 export function UnlockScreen() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next")?.startsWith("/") && !params.get("next")?.startsWith("//") ? params.get("next")! : "/wallets";
+  const next = params.get("next")?.startsWith("/") && !params.get("next")?.startsWith("//") ? params.get("next")! : "/";
   const refresh = useVault((s) => s.refresh);
   const setStatus = useVault((s) => s.set);
   const apiError = useVault((s) => s.error);

@@ -88,7 +88,17 @@ export type TokenInfo = {
 };
 
 /** Transacción tal y como la devuelve el RPC, para `parseEvents`. */
-export type RawTx = { signature: string; slot: number; blockTime: number | null; err: unknown; logs: string[]; inner?: { program: string; data: Uint8Array }[] };
+export type RawTx = {
+  signature: string;
+  slot: number;
+  blockTime: number | null;
+  err: unknown;
+  logs: string[];
+  inner?: { program: string; data: Uint8Array }[];
+  /** fee real de la transacción (meta.fee) y variación de SOL por cuenta (post − pre), si se leyó completa */
+  fee?: bigint;
+  deltas?: Record<string, bigint>;
+};
 
 export type TradeEvent = {
   kind: "trade";
@@ -103,6 +113,8 @@ export type TradeEvent = {
   ts: number;
   /** market cap después del trade, con las reservas que informa el evento */
   marketCapLamports: bigint;
+  /** fees del pad incluidas en `lamports` (Pump.fun: fee + creador; PumpSwap: LP + protocolo + creador) */
+  feeLamports?: bigint;
 };
 export type ChainEvent = TradeEvent | { kind: "complete"; index: number; mint: string; ts: number } | { kind: "migrate"; index: number; mint: string; pool: string; ts: number };
 

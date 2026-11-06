@@ -200,6 +200,16 @@ const MIGRATIONS: string[] = [
   -- REQ-AUTO-007: reintentos por wallet (pasos tras el primero)
   ALTER TABLE trade_order_item ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- REQ-DASH-001: fees del pad por trade y, por cada envío propio confirmado, la fee real y la
+  -- variación de SOL de las wallets propias leídas de la cadena (así el P&L cuadra con las transacciones)
+  ALTER TABLE live_trade ADD COLUMN fee TEXT NOT NULL DEFAULT '0';
+  ALTER TABLE tx ADD COLUMN chain_fee INTEGER;
+  ALTER TABLE tx ADD COLUMN own_delta INTEGER;
+  ALTER TABLE tx ADD COLUMN indexed_at INTEGER;
+  ALTER TABLE tx ADD COLUMN block_time INTEGER;
+  CREATE INDEX tx_mint ON tx(mint, status);
+  `,
 ];
 
 export function openDb(dir: string): DB {

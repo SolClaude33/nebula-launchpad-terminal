@@ -32,6 +32,6 @@ Estado: ✅ verde · ⏳ pendiente · ❌ falla (con el motivo).
 | E2E-20 | Failover de RPC | API: `rpc.test.ts` | ⏳ |
 | E2E-21 | Protección del backend local | API: `security.test.ts` · UI: pendiente (otra pestaña) | ⏳ |
 | E2E-22 | Copia y restauración | API: `vault.test.ts` | ⏳ |
-| E2E-23 | Dashboard | pendiente (bloque 2) | ⏳ |
+| E2E-23 | Dashboard | API · mock + Surfpool: `dashboard.test.ts` (Δ SOL de las transacciones = variación de saldos; fee real = vista previa; P&L = ventas − compras − fees) | ⏳ |
 | E2E-24 | Accesibilidad (axe a 1024 y 1440) | UI: pendiente (bloque 11) | ⏳ |
 | — | Prueba de humo en mainnet | Manual, la ejecuta Nicol: `docs/SMOKE-MAINNET.md` | ⏳ |

@@ -100,7 +100,14 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
         if (!t?.meta) return;
         const keys = t.transaction.message.getAccountKeys({ accountKeysFromLookups: t.meta.loadedAddresses });
         const inner = (t.meta.innerInstructions ?? []).flatMap((ii) => ii.instructions.map((ix) => ({ program: keys.get(ix.programIdIndex)?.toBase58() ?? "", data: b58decode(ix.data) ?? new Uint8Array() })));
-        out.push({ signature: sigs[i], slot: t.slot, blockTime: t.blockTime ?? null, err: t.meta.err, logs: t.meta.logMessages ?? [], inner });
+        // Variación de SOL por cuenta: lo que de verdad salió o entró de cada wallet (fees y rent incluidos)
+        const deltas: Record<string, bigint> = {};
+        t.meta.preBalances.forEach((pre, j) => {
+          const d = BigInt(t.meta!.postBalances[j] ?? pre) - BigInt(pre);
+          const k = keys.get(j)?.toBase58();
+          if (k && d !== 0n) deltas[k] = (deltas[k] ?? 0n) + d;
+        });
+        out.push({ signature: sigs[i], slot: t.slot, blockTime: t.blockTime ?? null, err: t.meta.err, logs: t.meta.logMessages ?? [], inner, fee: BigInt(t.meta.fee), deltas });
       });
       return out;
     },
@@ -186,7 +193,7 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
 
 export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number }): Chain {
   if (opts.mode === "mock") {
-    const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports);
+    const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports, opts.db);
     return { ...env, kind: "mock", status: () => ({ healthy: true, host: "mock", latencyMs: 0, usingBackup: false, endpoints: 1 }), stop: () => {}, reconcile: async () => 0 };
   }
   assertProfileRpc(opts.profile, opts.endpoints);
