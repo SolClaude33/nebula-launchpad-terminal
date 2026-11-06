@@ -3,7 +3,15 @@ packages:
   - packages/*
 
 # better-sqlite3 13 incluye binarios precompilados (prebuilds/); no hace falta node-gyp.
+overrides:
+  "@solana/web3.js": 1.99.0
+  "@coral-xyz/anchor": 0.31.1
+  "@solana/spl-token": 0.4.15
+
 ignoredBuiltDependencies:
   - better-sqlite3
+  - bigint-buffer
+  - bufferutil
+  - utf-8-validate
   - sharp
   - unrs-resolver
