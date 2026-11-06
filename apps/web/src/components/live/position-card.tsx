@@ -1,6 +1,10 @@
 "use client";
 
+import Link from "next/link";
+import { Bot, Plus } from "lucide-react";
 import { LiveNumber } from "@/components/live-number";
+import { TaskCard } from "@/components/automations/task-card";
+import { ACTIVE, useAutomations } from "@/lib/automations";
 import { lamToSol, toTokens, useLive } from "@/lib/live";
 import { fmtPct, fmtSol, fmtTokens } from "@/lib/format";
 
@@ -87,6 +91,41 @@ export function PositionCard() {
           </dd>
         </div>
       </dl>
+      <TokenAutomations />
     </section>
+  );
+}
+
+/** REQ-AUTO: las automatizaciones activas de este token, con sus controles; «incl. dev» si operan con la dev. */
+function TokenAutomations() {
+  const mint = useLive((s) => s.mint);
+  const { items, reload } = useAutomations(mint);
+  const active = (items ?? []).filter((t) => ACTIVE.includes(t.status));
+  if (!mint) return null;
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <div className="flex items-center justify-between">
+        <p className="flex items-center gap-1.5 text-[12px] text-muted">
+          <Bot className="size-3.5" aria-hidden /> Automatizaciones activas <span className="num text-faint">{active.length}</span>
+        </p>
+        <Link href={`/automations?new=${mint}`} className="btn btn-ghost h-7 px-2 text-[12px]">
+          <Plus className="size-3.5" aria-hidden /> Nueva
+        </Link>
+      </div>
+      {items === null ? (
+        <div className="skeleton mt-2 h-12" aria-busy="true" />
+      ) : active.length === 0 ? (
+        <p className="mt-1.5 text-[11.5px] text-faint">Ninguna tarea de DCA ni orden límite sobre este token.</p>
+      ) : (
+        <div className="mt-2 space-y-2">
+          {active.map((t) => (
+            <TaskCard key={t.id} t={t} compact onChanged={reload} />
+          ))}
+          <Link href={`/automations?mint=${mint}`} className="block text-right text-[11.5px] text-accent-b hover:underline">
+            Ver registro y todas →
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }

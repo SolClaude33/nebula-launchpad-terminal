@@ -74,7 +74,7 @@ function PausedDialog({ status }: { status: VaultStatus }) {
     setError("");
     try {
       const kind = status.paused.find((p) => p.id === id)?.kind;
-      const path = kind === "lanzamiento" ? `/launches/${id}/resume` : kind === "orden" ? `/trade/${id}/resume` : kind === "reclamo" ? `/rewards/${id}/resume` : `/operations/${id}/resume`;
+      const path = kind === "lanzamiento" ? `/launches/${id}/resume` : kind === "orden" ? `/trade/${id}/resume` : kind === "reclamo" ? `/rewards/${id}/resume` : kind === "automatización" ? `/automations/${id}/resume` : `/operations/${id}/resume`;
       await api(path, { method: "POST", body: {} });
       await ack([id]);
     } catch (e) {
@@ -94,7 +94,7 @@ function PausedDialog({ status }: { status: VaultStatus }) {
             <li key={p.id} className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface-2/50 px-3 py-2 text-[13px]">
               <span className="flex-1">{p.label}</span>
               <span className="chip h-5 px-1.5 text-[10.5px]">{p.kind}</span>
-              {["operación", "lanzamiento", "orden", "reclamo"].includes(p.kind) ? (
+              {["operación", "lanzamiento", "orden", "reclamo", "automatización"].includes(p.kind) ? (
                 <button onClick={() => resume(p.id)} disabled={!!busy} className="btn h-7 px-2.5 text-[12px]">
                   {busy === p.id ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
                   Reanudar

@@ -44,7 +44,7 @@ const NAV: { group: string; items: Item[] }[] = [
   {
     group: "Sistema",
     items: [
-      { label: "Automatizaciones", href: "/automations", icon: Bot },
+      { label: "Automatizaciones", href: "/automations", icon: Bot, ready: true },
       { label: "Tracker", href: "/tracker", icon: Radar },
       { label: "Ajustes", href: "/settings", icon: Settings },
     ],
