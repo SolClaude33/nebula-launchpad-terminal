@@ -16,6 +16,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 - `pnpm install` en la raíz (`better-sqlite3` usa sus binarios precompilados).
 - `pnpm dev` arranca la API y la web en `http://127.0.0.1:4317`.
 - `pnpm test` (Vitest de la API), `pnpm typecheck`, `pnpm lint`, `pnpm build`.
+- Perfil `test`: `pnpm surfpool:install` (Surfpool 1.6.1 en `.tools/`, SHA-256 verificado) y luego `pnpm surfpool` (fork perezoso de mainnet en `127.0.0.1:8899`/`8900`, airdrop local).
 
 ## Diseño "Observatorio" (cerrado en F0)
 - **Estilo:** calmado y premium, nunca un casino.

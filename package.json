@@ -7,7 +7,9 @@
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm --filter server test"
+    "test": "pnpm --filter server test",
+    "surfpool:install": "node scripts/surfpool.mjs install",
+    "surfpool": "node scripts/surfpool.mjs"
   },
   "packageManager": "pnpm@10.23.0"
 }
