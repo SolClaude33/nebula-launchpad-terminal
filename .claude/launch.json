@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nebula-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "exec", "next", "dev", "--hostname", "127.0.0.1", "--port", "4317"],
+      "port": 4317,
+      "url": "http://127.0.0.1:4317"
+    }
+  ]
+}
