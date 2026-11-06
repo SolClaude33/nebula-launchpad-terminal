@@ -105,7 +105,12 @@ export function StepToken() {
             className={`relative aspect-square overflow-hidden rounded-[var(--radius-lg)] border border-dashed transition-colors ${drag ? "border-accent-b bg-accent-b/5" : "border-line-strong bg-surface-1"}`}
           >
             {d.image ? (
-              d.image.type.startsWith("video") ? (
+              !d.image.url ? (
+                <p className="flex size-full flex-col items-center justify-center gap-1 p-4 text-center text-[12px] text-muted">
+                  <span className="num text-fg">{d.image.name}</span>
+                  La vista previa no se guarda en el borrador; el archivo ya está subido.
+                </p>
+              ) : d.image.type.startsWith("video") ? (
                 <video src={d.image.url} className="size-full object-cover" muted loop autoPlay playsInline />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element

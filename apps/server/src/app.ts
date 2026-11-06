@@ -26,6 +26,7 @@ import { liveRoutes } from "./routes/live";
 import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
 import { Pnl } from "./pnl";
+import { Drafts } from "./drafts";
 import { dashboardRoutes } from "./routes/dashboard";
 
 export type Ctx = {
@@ -44,6 +45,7 @@ export type Ctx = {
   rewards: Rewards;
   automations: Automations;
   pnl: Pnl;
+  drafts: Drafts;
 };
 
 /** Rutas de log que nunca deben escribirse (NFR-SEC-004). */
@@ -124,6 +126,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     get pnl() {
       return pnl!;
     },
+    drafts: new Drafts(getDb),
     closeDb: () => {
       db?.close();
       db = null;

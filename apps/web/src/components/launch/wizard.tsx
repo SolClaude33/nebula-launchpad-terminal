@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, RotateCcw, X } from "lucide-react";
 import { issues, useDraft } from "@/lib/draft";
 import { useLaunchRun } from "@/lib/launch-run";
@@ -16,6 +16,9 @@ const STEPS = ["Token", "Configuración", "Financiación", "Revisar y lanzar"];
 
 export function LaunchWizard() {
   const router = useRouter();
+  const params = useSearchParams();
+  const draftParam = params.get("draft");
+  const fresh = params.get("new") === "1";
   const hydrate = useDraft((s) => s.hydrate);
   const hydrated = useDraft((s) => s.hydrated);
   const reset = useDraft((s) => s.reset);
@@ -26,9 +29,9 @@ export function LaunchWizard() {
   const [step, setStep] = useState(1);
 
   useEffect(() => {
-    hydrate();
+    void hydrate(draftParam, fresh);
     resetRun();
-  }, [hydrate, resetRun]);
+  }, [hydrate, resetRun, draftParam, fresh]);
 
   // Si este borrador ya se lanzó (o está en curso), se muestra su estado real
   useEffect(() => {
@@ -38,7 +41,7 @@ export function LaunchWizard() {
   // Esc cierra sin perder nada: el borrador ya está autoguardado (REQ-LAUNCH-004)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("[role=dialog]")) router.push("/wallets");
+      if (e.key === "Escape" && !document.querySelector("[role=dialog]")) router.push("/launches/drafts");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -97,7 +100,7 @@ export function LaunchWizard() {
               })}
             </ol>
           </nav>
-          <button onClick={() => router.push("/wallets")} className="btn btn-ghost size-9 p-0" aria-label="Cerrar asistente (el borrador se conserva)" title="Cerrar · Esc">
+          <button onClick={() => router.push("/launches/drafts")} className="btn btn-ghost size-9 p-0" aria-label="Cerrar asistente (el borrador se conserva)" title="Cerrar · Esc">
             <X className="size-4" />
           </button>
         </div>
@@ -116,9 +119,11 @@ export function LaunchWizard() {
           <button
             onClick={() => {
               if (confirm("¿Descartar este borrador y empezar uno nuevo? Un lanzamiento ya hecho no se ve afectado.")) {
-                reset();
-                resetRun();
-                setStep(1);
+                void reset().then(() => {
+                  resetRun();
+                  setStep(1);
+                  if (draftParam) router.replace("/launch/new?new=1");
+                });
               }
             }}
             className="btn btn-ghost h-10 text-[12.5px]"

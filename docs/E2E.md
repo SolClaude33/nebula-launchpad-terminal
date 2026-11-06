@@ -17,7 +17,7 @@ Estado: ✅ verde · ⏳ pendiente · ❌ falla (con el motivo).
 | E2E-05 | Lanzamiento Quick | API · mock + Surfpool: `launch.test.ts` | ⏳ |
 | E2E-06 | IPFS fallido bloquea el lanzamiento | UI: pendiente | ⏳ |
 | E2E-07 | Doble clic en «Lanzar» | API · mock + Surfpool: `launch.test.ts` | ⏳ |
-| E2E-08 | Borrador y reanudación | pendiente (bloque 3) | ⏳ |
+| E2E-08 | Borrador y reanudación | API: `drafts.test.ts` (reinicio con la misma carpeta de datos) · UI: pendiente (bloque 11) | ⏳ |
 | E2E-09 | Lanzamiento programado tras un reinicio | pendiente (bloque 6) | ⏳ |
 | E2E-10 | Launch Guard | pendiente (bloque 7) | ⏳ |
 | E2E-11 | Instant Trade con atajos | UI: pendiente | ⏳ |

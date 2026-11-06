@@ -12,6 +12,7 @@ import type { ChainManager } from "./chain-manager";
 import type { Live } from "./live";
 import type { Vault } from "./signer";
 import type { TokenInfo } from "./chain/types";
+import { Drafts } from "./drafts";
 
 export type Period = "24h" | "7d" | "30d" | "1y" | "all";
 const PERIOD_MS: Record<Period, number> = { "24h": 24 * 3600_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000, "1y": 365 * 86_400_000, all: Infinity };
@@ -257,8 +258,7 @@ export class Pnl {
       .get()
       .reader.solUsd()
       .catch(() => null);
-    const hasDrafts = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'launch_draft'").get();
-    const drafts = hasDrafts ? (db.prepare("SELECT COUNT(*) AS n FROM launch_draft WHERE archived = 0").get() as { n: number }).n : 0;
+    const drafts = new Drafts(this.db).count();
 
     return {
       period,

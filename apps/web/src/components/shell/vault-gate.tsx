@@ -26,7 +26,7 @@ export function VaultGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!status) return;
     if (!status.initialized) router.replace("/setup");
-    else if (!status.unlocked) router.replace(`/unlock?next=${encodeURIComponent(pathname)}`);
+    else if (!status.unlocked) router.replace(`/unlock?next=${encodeURIComponent(pathname + window.location.search)}`);
   }, [status, router, pathname]);
 
   useEffect(() => {

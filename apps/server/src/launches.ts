@@ -78,6 +78,25 @@ export class Launches {
     });
   }
 
+  /** /launches: todos los lanzamientos (estado, progreso de compras y error); los archivados, aparte. */
+  listAll(archived = false) {
+    const rows = this.db().prepare("SELECT id, status, paused_from, mint, config, create_sig, error, created_at, updated_at FROM launch WHERE archived = ? AND status != 'PREPARED' ORDER BY created_at DESC LIMIT 500").all(archived ? 1 : 0) as Row[];
+    const buys = this.db().prepare("SELECT status, COUNT(*) AS n FROM launch_buy WHERE launch_id = ? GROUP BY status");
+    return rows.map((r) => {
+      const c = JSON.parse(r.config) as Stored;
+      const counts = Object.fromEntries((buys.all(r.id) as { status: string; n: number }[]).map((b) => [b.status, b.n]));
+      return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, name: c.name, symbol: c.symbol, mode: c.mode, devBuyLamports: c.devBuyLamports, holders: c.holders.length, buys: { ok: counts.OK ?? 0, failed: counts.FAILED ?? 0, skipped: counts.SKIPPED ?? 0, pending: counts.PENDING ?? 0 }, createSignature: r.create_sig, error: r.error, createdAt: r.created_at, updatedAt: r.updated_at };
+    });
+  }
+
+  archive(id: string, archived: boolean) {
+    const r = this.row(id);
+    if (!r) throw Object.assign(new Error("Lanzamiento no encontrado"), { statusCode: 404 });
+    if (["CREATING", "CREATED", "BUYING"].includes(r.status)) throw Object.assign(new Error("No se puede archivar un lanzamiento en curso."), { statusCode: 409 });
+    this.db().prepare("UPDATE launch SET archived = ? WHERE id = ?").run(archived ? 1 : 0, id);
+    return { ok: true };
+  }
+
   async uploadMedia(bytes: Buffer, contentType: string) {
     const img = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(contentType);
     const vid = ["video/mp4", "video/webm"].includes(contentType);

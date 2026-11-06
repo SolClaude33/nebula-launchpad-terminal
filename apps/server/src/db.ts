@@ -210,6 +210,20 @@ const MIGRATIONS: string[] = [
   ALTER TABLE tx ADD COLUMN block_time INTEGER;
   CREATE INDEX tx_mint ON tx(mint, status);
   `,
+  `
+  -- REQ-LAUNCH-004: borradores del asistente en el servidor (sobreviven a reinicios y a otro navegador).
+  -- REQ-LAUNCH-020: lanzamientos archivados.
+  CREATE TABLE launch_draft (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    symbol TEXT NOT NULL DEFAULT '',
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  ALTER TABLE launch ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(dir: string): DB {

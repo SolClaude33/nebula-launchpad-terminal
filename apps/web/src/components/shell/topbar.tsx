@@ -12,7 +12,7 @@ import { storedTheme, useTheme } from "@/lib/theme";
 function titleFor(path: string) {
   if (path.startsWith("/t/")) return ["Live", "Workspace"];
   if (path === "/t") return ["Live", "Abrir token"];
-  if (path.startsWith("/launch")) return ["Lanzar", "Nuevo lanzamiento"];
+  if (path.startsWith("/launch/")) return ["Lanzar", "Nuevo lanzamiento"];
   if (path.startsWith("/wallets")) return ["Fondos", "Wallets"];
   if (path.startsWith("/funder")) return ["Fondos", "Funder"];
   if (path.startsWith("/rewards")) return ["Fondos", "Comisiones"];

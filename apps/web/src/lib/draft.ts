@@ -1,8 +1,9 @@
 "use client";
 
-// Borrador del asistente de lanzamiento. Se autoguarda en el navegador (REQ-LAUNCH-004);
+// Borrador del asistente de lanzamiento. Se autoguarda en la API local (REQ-LAUNCH-004);
 // el lanzamiento real lo prepara y ejecuta la API local con el draftId de este borrador.
 import { create } from "zustand";
+import { api } from "@/lib/api";
 
 export type UploadState = { status: "idle" | "uploading" | "done" | "error"; progress: number; cid?: string; error?: string };
 export type SaveState = "unsaved" | "saving" | "saved" | "error";
@@ -176,60 +177,88 @@ export function toConfig(d: Draft) {
   };
 }
 
-// ── Store con autoguardado ─────────────────────────────────────────
-const KEY = "nebula.draft.v2";
+// ── Store con autoguardado en la API local (REQ-LAUNCH-004) ───────────
+// El borrador vive en SQLite: sobrevive a reinicios, a otro navegador y se retoma desde /launches/drafts.
+const LEGACY_KEY = "nebula.draft.v2";
 
 type DraftStore = {
   draft: Draft;
   save: SaveState;
   hydrated: boolean;
-  hydrate: () => void;
+  /** Carga el borrador `id`; sin id, retoma el último sin lanzar o empieza uno nuevo (`fresh`). */
+  hydrate: (id?: string | null, fresh?: boolean) => Promise<void>;
   set: (patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => void;
-  reset: () => void;
+  /** Descarta el borrador actual en el servidor y empieza uno nuevo. */
+  reset: () => Promise<void>;
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let loadSeq = 0;
+
+const revive = (data: Partial<Draft>, id: string): Draft => {
+  // Una subida en curso no sobrevive a un cierre
+  const upload = data.upload?.status === "uploading" ? { status: "idle" as const, progress: 0 } : data.upload;
+  return { ...emptyDraft(), ...data, draftId: id, upload: upload ?? { status: "idle", progress: 0 } };
+};
+
+/** Lo que se guarda: la vista previa solo si es una imagen pequeña (un vídeo se vuelve a elegir). */
+const persistable = (d: Draft) => ({ ...d, image: d.image && d.image.url.length < 1_500_000 ? d.image : d.image ? { ...d.image, url: "" } : undefined });
+
+async function migrateLegacy() {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(LEGACY_KEY);
+  } catch {}
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as Partial<Draft>;
+    if (parsed.draftId) await api(`/drafts/${parsed.draftId}`, { method: "PUT", body: parsed });
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {}
+}
 
 export const useDraft = create<DraftStore>((set, get) => ({
   draft: emptyDraft(),
   save: "saved",
   hydrated: false,
-  hydrate: () => {
-    if (get().hydrated) return;
+  hydrate: async (id, fresh) => {
+    const seq = ++loadSeq;
+    clearTimeout(saveTimer);
+    set({ hydrated: false });
+    await migrateLegacy();
+    let next: Draft = emptyDraft();
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<Draft>;
-        // Una subida en curso no sobrevive a un cierre
-        const upload = parsed.upload?.status === "uploading" ? { status: "idle" as const, progress: 0 } : parsed.upload;
-        set({ draft: { ...emptyDraft(), ...parsed, upload: upload ?? { status: "idle", progress: 0 } }, hydrated: true, save: "saved" });
-        return;
+      if (id) {
+        const r = await api<{ id: string; data: Partial<Draft> }>(`/drafts/${id}`);
+        next = revive(r.data, r.id);
+      } else if (!fresh) {
+        const r = await api<{ draft: { id: string } | null }>("/drafts/latest");
+        if (r.draft) next = revive((await api<{ id: string; data: Partial<Draft> }>(`/drafts/${r.draft.id}`)).data, r.draft.id);
       }
-    } catch {}
-    set({ hydrated: true });
+    } catch {
+      // borrador inexistente o API caída: se empieza uno nuevo (nada se pierde: el anterior sigue en el servidor)
+    }
+    if (seq === loadSeq) set({ draft: next, hydrated: true, save: "saved" });
   },
   set: (patch) => {
     const next = { ...get().draft, ...(typeof patch === "function" ? patch(get().draft) : patch) };
     set({ draft: next, save: "unsaved" });
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
+    saveTimer = setTimeout(async () => {
+      const d = get().draft;
       set({ save: "saving" });
-      setTimeout(() => {
-        try {
-          const d = get().draft;
-          const persist = { ...d, image: d.image && d.image.url.length < 1_500_000 ? d.image : undefined };
-          localStorage.setItem(KEY, JSON.stringify(persist));
-          set({ save: "saved" });
-        } catch {
-          set({ save: "error" });
-        }
-      }, 200);
+      try {
+        await api(`/drafts/${d.draftId}`, { method: "PUT", body: persistable(d) });
+        if (get().draft.draftId === d.draftId) set((st) => ({ save: st.draft === d ? "saved" : st.save }));
+      } catch {
+        set({ save: "error" });
+      }
     }, 500);
   },
-  reset: () => {
-    try {
-      localStorage.removeItem(KEY);
-    } catch {}
+  reset: async () => {
+    clearTimeout(saveTimer);
+    const id = get().draft.draftId;
+    await api(`/drafts/${id}`, { method: "DELETE" }).catch(() => {});
     set({ draft: emptyDraft(), save: "saved" });
   },
 }));

@@ -47,7 +47,28 @@ export const launchRoutes =
       return ctx.launches.resume(id);
     });
 
-    app.get("/launches", async () => ({ items: ctx.launches.list() }));
+    app.get("/launches", async (req) => {
+      const q = z.object({ all: z.enum(["0", "1"]).default("0"), archived: z.enum(["0", "1"]).default("0") }).parse(req.query);
+      return { items: q.all === "1" ? ctx.launches.listAll(q.archived === "1") : ctx.launches.list() };
+    });
+
+    // REQ-LAUNCH-020: archivar o recuperar un lanzamiento (solo cambia la lista; nada en cadena)
+    app.post("/launches/:id/archive", async (req) => {
+      const { id } = z.object({ id: z.string() }).parse(req.params);
+      const { archived } = z.object({ archived: z.boolean() }).parse(req.body);
+      return ctx.launches.archive(id, archived);
+    });
+
+    // REQ-LAUNCH-004: borradores en el servidor
+    app.get("/drafts", async () => ({ items: ctx.drafts.list() }));
+    app.get("/drafts/latest", async () => ({ draft: ctx.drafts.latest() }));
+    app.get("/drafts/:id", async (req) => ctx.drafts.get(z.object({ id: z.string() }).parse(req.params).id));
+    app.put("/drafts/:id", { bodyLimit: 4 * 1024 * 1024 }, async (req) => {
+      const { id } = z.object({ id: z.string() }).parse(req.params);
+      const data = z.record(z.string(), z.unknown()).parse(req.body);
+      return ctx.drafts.save(id, data);
+    });
+    app.delete("/drafts/:id", async (req) => ctx.drafts.remove(z.object({ id: z.string() }).parse(req.params).id));
 
     app.get("/launches/:id", async (req) => {
       const { id } = z.object({ id: z.string() }).parse(req.params);
