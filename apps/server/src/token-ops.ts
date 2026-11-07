@@ -91,7 +91,18 @@ export class TokenOps {
   }
 
   async execute(kind: "send" | "burn", input: SendInput | BurnInput, stepUp?: string) {
+    // REVIEW-F1 P2-6: se reserva el id ANTES de cualquier await; si no, dos peticiones simultáneas con el
+    // mismo id pasaban la comprobación y podían emitir dos transacciones con blockhash distintos
     if (this.running.has(input.id)) throw Object.assign(new Error("Esta operación ya está en marcha."), { statusCode: 409 });
+    this.running.add(input.id);
+    try {
+      return await this.run(kind, input, stepUp);
+    } finally {
+      this.running.delete(input.id);
+    }
+  }
+
+  private async run(kind: "send" | "burn", input: SendInput | BurnInput, stepUp?: string) {
     const symbol = await this.symbolOf(input.mint).catch(() => null);
     if (kind === "burn") {
       const want = symbol ? norm(symbol) : "QUEMAR";
@@ -101,9 +112,8 @@ export class TokenOps {
     // Sacar tokens de la bóveda (destino que no es una wallet propia) exige reconfirmar la contraseña
     if (kind === "send" && !pre.to?.own) this.vault.consumeStepUp(stepUp, "withdraw");
     if (kind === "send" && pre.to?.offCurve) throw Object.assign(new Error("El destino es una dirección de programa (PDA): los tokens quedarían bloqueados."), { statusCode: 400 });
-    this.running.add(input.id);
     const chain = this.chain.get();
-    try {
+    {
       for (const it of pre.items) {
         if (it.status !== "READY") continue;
         const tx = kind === "send" ? await chain.adapter.buildTokenTransferTx({ mint: input.mint, from: it.address, to: (input as SendInput).to, tokens: BigInt(it.amount) }) : await chain.adapter.buildBurnTx({ mint: input.mint, owner: it.address, tokens: BigInt(it.amount) });
@@ -122,8 +132,6 @@ export class TokenOps {
         else if (res.status === "pending") (it.status = "PENDING"), (it.reason = res.message), (it.signature = res.signature ?? null);
         else if (res.status === "failed") (it.status = "FAILED"), (it.reason = res.message);
       }
-    } finally {
-      this.running.delete(input.id);
     }
     const ok = pre.items.filter((i) => i.status === "OK");
     const total = ok.reduce((a, i) => a + BigInt(i.amount), 0n);

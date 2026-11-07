@@ -81,6 +81,18 @@ describe.each(backends)("Enviar y quemar tokens · %s", (backend) => {
     expect(act.some((a) => a.kind === "tokens.send" && a.detail.includes(ext))).toBe(true);
   }, 120_000);
 
+  it.runIf(backend === "mock")("REVIEW-F1 P2-6 · dos peticiones simultáneas con el mismo id: una se rechaza y se quema una sola vez", async () => {
+    const own = await tokens(dev.address);
+    // con un RPC real, leer el símbolo tarda: las dos peticiones están a la vez dentro de execute
+    const realSymbol = ctx.tokenOps.symbolOf.bind(ctx.tokenOps);
+    ctx.tokenOps.symbolOf = async (m: string) => (await new Promise((r) => setTimeout(r, 200)), realSymbol(m));
+    const body = { id: randomUUID(), mint, walletIds: [dev.id], tokensEach: "1000000", confirmSymbol: "BURN" };
+    const [a, b] = await Promise.all([call("POST", "/api/tokens/burn", body), call("POST", "/api/tokens/burn", body)]);
+    ctx.tokenOps.symbolOf = realSymbol;
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect(await tokens(dev.address)).toBe(own - 1_000_000n);
+  });
+
   it("quemar el 100 % exige escribir el símbolo y baja la supply exactamente", async () => {
     const own = await tokens(dev.address);
     const supply0 = BigInt((await call("GET", `/api/live/${mint}`)).json.info.supply);
