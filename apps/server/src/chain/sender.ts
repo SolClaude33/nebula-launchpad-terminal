@@ -91,7 +91,15 @@ export class SolanaSender implements TxSender {
     // La creación con dev buy va justa: si la propina no cabe en 1.232 bytes, esa tx sale sin propina y solo por el
     // RPC normal. Nunca se parte la creación del dev buy ni se paga una propina en una tx aparte. Es determinista:
     // con la misma configuración, el dry-run y el envío deciden lo mismo.
-    if (tipLamports > 0n && vtx.serialize().length > MAX_TX_BYTES) {
+    // web3.js serializa el mensaje en un búfer fijo de 1.232 bytes y LANZA si se pasa: eso también es «no cabe».
+    const fits = (v: VersionedTransaction) => {
+      try {
+        return v.serialize().length <= MAX_TX_BYTES;
+      } catch {
+        return false;
+      }
+    };
+    if (tipLamports > 0n && !fits(vtx)) {
       tipLamports = 0n;
       vtx = new VersionedTransaction(compile(0n));
     }

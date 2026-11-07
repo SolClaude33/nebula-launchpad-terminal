@@ -199,6 +199,24 @@ describe("Jito · sender (unidad)", () => {
   });
 });
 
+describe("Jito · sender al límite con una firma", () => {
+  it("una compra de ~1.225 bytes: con propina el mensaje pasa de 1.232 (web3.js lanza) y sale sin propina en vez de fallar", async () => {
+    const db = openDb(tmpDir());
+    const { pool, sent } = stubPool();
+    const off = new SolanaSender(pool, () => db, sign, { computeUnitLimit: 200_000, priorityMicroLamports: () => 1, rebroadcastMs: 0 });
+    await off.send(txOf("buy", [someIx(0)]), { idempotencyKey: "probe-1sig" });
+    const fill = 1225 - sent[0].length;
+    const s = new SolanaSender(pool, () => db, sign, { computeUnitLimit: 200_000, priorityMicroLamports: () => 1, rebroadcastMs: 0, jito: () => ({ ...LIVE, simulated: true }) });
+    const r = await s.send(txOf("buy", [someIx(fill)]), { idempotencyKey: "big-buy" });
+    expect(r).toMatchObject({ status: "confirmed", tipLamports: 0n });
+    const raw = sent.at(-1)!;
+    expect(raw.length).toBeGreaterThanOrEqual(1224);
+    expect(raw.length).toBeLessThanOrEqual(MAX_TX_BYTES);
+    expect(tipsIn(raw)).toHaveLength(0);
+    db.close();
+  });
+});
+
 describe("Ajustes de Jito", () => {
   it("activar Jito exige una propina ≥ 1.000 lamports y un Block Engine https; /chain/status la expone como simulada en pruebas", async () => {
     const { app, call } = await makeApp();
