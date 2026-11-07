@@ -100,9 +100,15 @@ Un commit y un test que reproduce el fallo por punto:
 - `084a3d0` · **P1-5** · al cambiar la contraseña se borran las copias locales (`auto-*`, `pre-restore-*`) y se hace una nueva. El aviso recuerda borrar las exportadas fuera.
 - `333435b` · **P2-8** · la clave del RPC también se separa si va en el subdominio, en un segmento corto o en un parámetro con otro nombre. El host del estado pasa por `scrub`, y Ajustes avisa si una URL remota queda sin `{key}`.
 
-Los P3 (9–14) siguen abiertos como mejoras.
+P3, también el 2026-11-07:
+- `26aaf16` · **P3-9** · un destino PDA se rechaza antes de gastar la reconfirmación.
+- `134c50e` · **P3-11** · la clave de «Probar» de Pinata, aún sin guardar, también se redacta.
+- `6de8cd1` · **P3-12** · el diagnóstico redacta además semillas de 32 bytes (arrays y base58), claves de API con nombre y URLs con la clave en cualquier sitio. Las direcciones que la app conoce se conservan enteras y las ajenas se acortan a `abcd…wxyz`.
+- `0e6ab42` · **P3-14** · `stdout` y `stderr` del proceso pasan por `scrub` (`installOutputScrub` en `main.ts`).
+- Siguen abiertos el P3-10 (decimales fijos a 6; falla de forma segura) y el P3-13 (pasarela IPFS dedicada).
+- `0bf526c` · **`pnpm dev`** · en Windows, `tsx watch` bajo `pnpm -r --parallel` no llegaba a arrancar la API. Se reproduce desde la terminal, no era cosa del navegador integrado. Ahora `scripts/dev.mjs` lanza cada app con su propio `pnpm --filter <app> dev` y la API escucha en ~2 s.
 
-**Checks tras los arreglos (2026-11-07):** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 118/118; `pnpm test:chain` 111 en verde y 13 omitidos (solo corren con mock); E2E afectados (`01-first-run`, `03-launch`, con E2E-09 programado tras reinicio): 6/6 en verde.
+**Checks tras los arreglos (2026-11-07):** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 118/118 (121/121 tras los P3); `pnpm test:chain` 111 en verde y 13 omitidos (solo corren con mock); E2E afectados (`01-first-run`, `03-launch`, con E2E-09 programado tras reinicio): 6/6 en verde.
 
 ## Próximo paso
 
@@ -121,7 +127,8 @@ Los P3 (9–14) siguen abiertos como mejoras.
 - **IPFS público:**
   - Clonar un token ajeno depende de las pasarelas públicas. El 2026-11-06, ipfs.io y dweb.link devolvían 429 a esta IP; se rellenan nombre y símbolo desde la cadena y se avisa.
   - Los tokens antiguos que migraron a Raydium (antes de PumpSwap) aparecen como «migrating» en el Live, porque no tienen pool canónico.
-- **Preview del navegador integrado:** `pnpm dev` (con `tsx watch`) se colgaba al arrancar la API y no llegaba a escuchar en el 4318. Desde Bash arranca bien. Para verificar se usaron dos configuraciones temporales (API con `--filter server start` y web con `--filter web dev`).
+- **`pnpm dev` en Windows:** resuelto en `0bf526c` (ver arriba). Si alguna vez vuelve a colgarse, las dos apps se pueden arrancar por separado con `pnpm --filter server dev` y `pnpm --filter web dev`.
+- **Arranque de producción comprobado (2026-11-07):** `pnpm build` y `pnpm start` con `NEBULA_PROFILE=mainnet` y `NEBULA_DATA_DIR` temporal. La API escucha en 4318 y la web en 4317, y `/setup` carga con la CSP con nonce y sin errores de consola. El aviso `bigint: Failed to load bindings` es inocuo.
 - **Surfpool** a veces falla al traer cuentas de mainnet. Un envío queda pendiente y la orden o la tarea se pausa, que es el comportamiento correcto. Puede tumbar algún test de cadena suelto; en ese caso se repite.
 - **Pendientes del Should:** ladder, trailing stop y presets (REQ-AUTO-003/004/009); «financiar fees de reclamo» (REQ-REW-003); tracker; paleta Ctrl+K.
 

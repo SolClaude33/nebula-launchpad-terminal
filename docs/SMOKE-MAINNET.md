@@ -41,7 +41,12 @@ Criterio de salida de F1 (§12): la prueba de humo tiene que pasar. Hay que hace
 
 ## 1. Arranque en el perfil mainnet
 
+- [ ] Requisitos: Node 24 y pnpm 10.23 (los del `packageManager`). La primera vez, o tras un `git pull`, ejecuta `pnpm install` en la raíz.
 - [ ] En la raíz del repo: `pnpm mainnet`. Construye la web y arranca la API y la web con `NEBULA_PROFILE=mainnet`. Los datos van a `~/.nebula/mainnet`, separados de los de pruebas.
+  - En la terminal tiene que salir `Nébula API lista` con `"profile":"mainnet"` (API en `127.0.0.1:4318`) y `✓ Ready` de Next (web en `127.0.0.1:4317`).
+  - El aviso `bigint: Failed to load bindings, pure JS will be used` es inocuo: una dependencia de web3.js usa su versión en JS.
+  - Para cerrar la app: Ctrl+C en esa terminal. Si ya está construida, `pnpm mainnet --no-build` arranca sin volver a construir.
+  - Comprobado el 2026-11-07 (`pnpm build` + `pnpm start` con `NEBULA_PROFILE=mainnet` y una carpeta de datos temporal): `/setup` carga sin errores de consola ni de CSP.
 - [ ] Abre `http://127.0.0.1:4317`. Aparece `/setup` (bóveda nueva) y **no** sale el banner «PERFIL DE PRUEBAS».
 - [ ] Crea la contraseña maestra (12 caracteres o más) y guárdala en tu gestor de contraseñas.
 
