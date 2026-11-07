@@ -66,6 +66,20 @@ export class Backups {
     return made;
   }
 
+  /**
+   * REVIEW-F1 P1-5: tras cambiar la contraseña maestra, las copias de la carpeta de datos (automáticas y
+   * `pre-restore-*`) siguen abriéndose con la ANTERIOR, que quizá se filtró. Se borran y se hace al momento
+   * una copia nueva, que ya solo abre la contraseña nueva. Las copias exportadas fuera no se pueden tocar.
+   */
+  async purgeAfterPasswordChange() {
+    mkdirSync(this.dir, { recursive: true });
+    const old = readdirSync(this.dir).filter((f) => NAME.test(f) || /^pre-restore-\d+\.sqlite$/.test(f));
+    for (const f of old) rmSync(join(this.dir, f), { force: true });
+    const made = await this.doRun(true);
+    logActivity(this.db(), "vault.backup.purge", `Contraseña cambiada: ${old.length} copias locales con la contraseña anterior borradas y copia nueva ${made?.name ?? ""}`);
+    return { removed: old.length, made };
+  }
+
   /** Comprueba al arrancar y cada hora (el proceso puede pasar días abierto). */
   start(intervalMs = 3600_000) {
     void this.run().catch((e) => this.log(`Copia automática fallida: ${(e as Error).message}`));

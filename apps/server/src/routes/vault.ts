@@ -70,7 +70,9 @@ export const vaultRoutes =
       const { newPassword } = ChangePasswordBody.parse(req.body);
       await vault.changePassword(newPassword);
       logActivity(ctx.db(), "vault.password", "Contraseña maestra cambiada");
-      return { ok: true };
+      // las copias locales cifradas con la contraseña anterior se borran y se rehace una (REVIEW-F1 P1-5)
+      const purge = await ctx.backups.purgeAfterPasswordChange();
+      return { ok: true, backupsRemoved: purge.removed };
     });
 
     // REQ-VAULT-005: la copia es la base SQLite (claves cifradas + meta). Inútil sin la contraseña.

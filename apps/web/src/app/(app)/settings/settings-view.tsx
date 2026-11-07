@@ -403,7 +403,7 @@ function PasswordSection() {
   const err = pw && pw.length < MIN_PASSWORD ? `Mínimo ${MIN_PASSWORD} caracteres` : pw2 && pw !== pw2 ? "No coinciden" : null;
   return (
     <Section id="password" kicker="Bóveda" title="Cambiar la contraseña maestra">
-      <p className="mb-3.5 text-[12.5px] text-muted">Vuelve a cifrar toda la bóveda. Si se interrumpe, la anterior sigue intacta. No se puede recuperar: guárdala en un gestor de contraseñas.</p>
+      <p className="mb-3.5 text-[12.5px] text-muted">Vuelve a cifrar toda la bóveda. Si se interrumpe, la anterior sigue intacta. No se puede recuperar: guárdala en un gestor de contraseñas. Las copias locales se rehacen con la nueva; las que exportaste fuera siguen abriéndose con la anterior.</p>
       <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-4">
         <Field id="npw" label="Nueva contraseña">
           <input id="npw" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} className="field num h-9" />
@@ -424,11 +424,11 @@ function PasswordSection() {
           onClose={() => setAsk(false)}
           onToken={async (t) => {
             try {
-              await api("/vault/change-password", { method: "POST", body: { newPassword: pw }, stepUp: t });
+              const r = await api<{ ok: true; backupsRemoved: number }>("/vault/change-password", { method: "POST", body: { newPassword: pw }, stepUp: t });
               setPw("");
               setPw2("");
               setAsk(false);
-              toast({ tone: "buy", title: "Contraseña cambiada", body: "Las copias anteriores siguen abriéndose con la contraseña antigua." });
+              toast({ tone: "buy", title: "Contraseña cambiada", body: `${r.backupsRemoved} copias locales con la contraseña anterior borradas y una copia nueva hecha. Las copias que exportaste fuera de este equipo siguen abriéndose con la contraseña antigua: bórralas.` });
             } catch (e) {
               setAsk(false);
               toast({ tone: "error", title: "No se pudo cambiar", body: (e as ApiError).message });
