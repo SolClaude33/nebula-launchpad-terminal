@@ -180,6 +180,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   };
   launches = new Launches(getDb, chainManager, vault, metadataStoreFor(opts.profile, getDb, vault, opts.ipfs), opts.profile, priority, (m) => logger.info(m), opts.clock ?? Date.now);
   launches.pauseAllRunning();
+  launches.recoverInterrupted();
   vault.onLock(() => launches?.pauseAllRunning());
   // REQ-LAUNCH-015 / REQ-VAULT-003: un reinicio NO pausa los programados (se lanzan a su hora si la bóveda
   // está abierta); bloquear sí, y llegar la hora con la bóveda bloqueada también

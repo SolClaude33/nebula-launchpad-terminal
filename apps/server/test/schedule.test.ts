@@ -101,6 +101,49 @@ describe("REQ-LAUNCH-015 · lanzamiento programado", () => {
     await a.app.close();
   });
 
+  it("REVIEW-F1 P1-1 · si execute falla o la bóveda se bloquea al disparar, queda visible (FAILED o PAUSED); al arrancar no hay «disparados» huérfanos", async () => {
+    const clock = { now: Date.parse("2026-11-06T12:00:00Z") };
+    const dir = tmpDir();
+    let a = await open(dir, clock);
+    await a.call("POST", "/api/vault/setup", { password: PW, ack: true });
+    const { draftId: boom } = await prepare(a, "BOOM");
+    const { draftId: lock } = await prepare(a, "LCK");
+    const { draftId: orphan } = await prepare(a, "ORPH");
+    const T = clock.now + MIN;
+    for (const id of [boom, lock, orphan]) await a.call("POST", `/api/launches/${id}/schedule`, { at: T });
+    clock.now = T;
+    // 1) execute lanza un error (p. ej. el RPC cae justo entonces): FAILED con el motivo y visible en /launches
+    const realExecute = a.ctx.launches.execute.bind(a.ctx.launches);
+    const realPreflight = a.ctx.launches.preflight.bind(a.ctx.launches);
+    a.ctx.launches.execute = async (id: string) => (id === boom ? Promise.reject(new Error("RPC caído en el último momento")) : realExecute(id));
+    // 2) la bóveda se bloquea mientras se rehace el dry-run del segundo
+    a.ctx.launches.preflight = async (cfg: unknown) => {
+      if ((cfg as { draftId: string }).draftId === lock) a.ctx.vault.lock("manual");
+      return realPreflight(cfg);
+    };
+    // el tercero se queda como «disparado» huérfano, como si el proceso hubiera muerto (datos antiguos)
+    a.ctx.db().prepare("UPDATE launch SET schedule_state = 'FIRED' WHERE id = ?").run(orphan);
+    await a.ctx.launches.tickSchedule().catch(() => {});
+    a.ctx.launches.execute = realExecute;
+    a.ctx.launches.preflight = realPreflight;
+    await a.call("POST", "/api/vault/unlock", { password: PW });
+    const b = (await a.call("GET", `/api/launches/${boom}`)).json;
+    expect(b).toMatchObject({ status: "PREPARED", createSignature: null, schedule: { state: "FAILED" } });
+    expect(b.schedule.error).toMatch(/RPC caído/);
+    expect((await a.call("GET", `/api/launches/${lock}`)).json.schedule.state).toBe("PAUSED");
+    expect((await a.call("GET", "/api/vault/status")).json.paused.map((p: { id: string }) => p.id)).toContain(lock);
+    await a.app.close();
+    // al reabrir, el huérfano pasa a FAILED con el motivo
+    a = await open(dir, clock);
+    await a.call("POST", "/api/vault/unlock", { password: PW });
+    const o = (await a.call("GET", `/api/launches/${orphan}`)).json;
+    expect(o.schedule).toMatchObject({ state: "FAILED" });
+    expect(o.schedule.error).toMatch(/interrumpió/);
+    const listed = (await a.call("GET", "/api/launches?all=1")).json.items.map((l: { id: string; status: string }) => `${l.id}:${l.status}`);
+    expect(listed).toEqual(expect.arrayContaining([`${boom}:FAILED`, `${orphan}:FAILED`, `${lock}:PAUSED`]));
+    await a.app.close();
+  });
+
   it("si a su hora el dry-run ya no pasa, queda FAILED con el motivo y no se envía nada", async () => {
     const clock = { now: Date.parse("2026-11-06T12:00:00Z") };
     const a = await open(tmpDir(), clock);

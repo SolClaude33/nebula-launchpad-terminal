@@ -352,7 +352,8 @@ export class Launches {
     try {
       const r = this.row(id)!;
       const cfg = JSON.parse(r.config) as Stored;
-      this.db().prepare("UPDATE launch SET schedule_state = 'FIRED', updated_at = ? WHERE id = ?").run(this.clock(), id);
+      // REVIEW-F1 P1-1: la fila sigue WAITING mientras se rehace el dry-run; solo pasa a FIRED justo antes
+      // de ejecutar. Cualquier fallo deja un estado visible (PAUSED o FAILED), nunca un «disparado» huérfano.
       const { uri: _uri, preflight: _pf, ...plain } = cfg;
       void _uri;
       void _pf;
@@ -361,21 +362,35 @@ export class Launches {
         v = await this.preflight(plain);
       } catch (e) {
         if (e instanceof VaultError && e.code === "LOCKED") return this.pauseScheduled("due-locked");
-        v = null;
-        this.failSchedule(id, cfg.symbol, (e as Error).message, r.scheduled_at);
-        return;
+        return this.failSchedule(id, cfg.symbol, (e as Error).message, r.scheduled_at);
       }
       if (!v.preflight?.ok) {
         const why = (v.preflight?.checks ?? []).filter((c) => !c.ok).map((c) => `${c.label}: ${c.reason ?? "falló"}`).join(" · ");
         return this.failSchedule(id, cfg.symbol, `El dry-run a la hora programada no está en verde: ${why}`, r.scheduled_at);
       }
-      // el dry-run deja la fila PREPARED con su hora; se marca como disparado y se ejecuta
       this.db().prepare("UPDATE launch SET schedule_state = 'FIRED', updated_at = ? WHERE id = ?").run(this.clock(), id);
       logActivity(this.db(), "launch.schedule.fire", `Lanzamiento programado de $${cfg.symbol}${confirmed ? " (confirmado tras la pausa)" : ""}`);
-      await this.execute(id);
+      try {
+        await this.execute(id);
+      } catch (e) {
+        // execute falla antes de enviar nada (comprobaciones): la programación vuelve a un estado visible
+        this.db().prepare("UPDATE launch SET schedule_state = 'WAITING', updated_at = ? WHERE id = ? AND status = 'PREPARED'").run(this.clock(), id);
+        if (e instanceof VaultError && e.code === "LOCKED") return this.pauseScheduled("due-locked");
+        return this.failSchedule(id, cfg.symbol, `No se pudo lanzar a su hora: ${(e as Error).message}`, r.scheduled_at);
+      }
     } finally {
       this.firing.delete(id);
     }
+  }
+
+  /**
+   * Al arrancar: una fila PREPARED con la programación FIRED quedó interrumpida (cierre entre el disparo y
+   * el envío, o datos de una versión anterior). Pasa a FAILED con el motivo para que el operador la vea.
+   */
+  recoverInterrupted() {
+    const rows = this.db().prepare("SELECT id, config, scheduled_at FROM launch WHERE status = 'PREPARED' AND schedule_state = 'FIRED'").all() as { id: string; config: string; scheduled_at: number | null }[];
+    for (const r of rows) this.failSchedule(r.id, (JSON.parse(r.config) as Stored).symbol, "La ejecución programada se interrumpió (cierre de la app o error). No se envió nada: revisa y vuelve a programar o lanza a mano.", r.scheduled_at);
+    return rows.length;
   }
 
   private failSchedule(id: string, symbol: string, msg: string, at: number | null) {
