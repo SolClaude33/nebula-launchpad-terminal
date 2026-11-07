@@ -430,7 +430,23 @@ export class Launches {
           await this.testHooks.beforeBuy?.(id, b.ord);
           // REQ-LAUNCH-014: dentro de la ventana, si las compras externas superan el umbral se completa antes
           if (guard && this.clock() - guardStart <= guard.windowSec * 1000) {
-            const ext = await this.externalBuys(r.mint, guard.whitelist).catch(() => 0n);
+            // Falla cerrado: sin datos de la cadena (429, timeout) no se compra a ciegas (REVIEW-F1 P1-3)
+            let ext: bigint | null = null;
+            let readError = "";
+            for (let attempt = 0; attempt < 2 && ext === null; attempt++) {
+              try {
+                ext = await this.externalBuys(r.mint, guard.whitelist);
+              } catch (e) {
+                readError = (e as Error).message;
+                if (attempt === 0) await new Promise((res) => setTimeout(res, 1500));
+              }
+            }
+            if (ext === null) {
+              const why = `Launch Guard sin datos de la cadena (${readError.slice(0, 120)}): no se compra a ciegas`;
+              const n = this.db().prepare("UPDATE launch_buy SET status = 'SKIPPED', reason = ? WHERE launch_id = ? AND status = 'PENDING'").run(why, id).changes;
+              logActivity(this.db(), "launch.guard", `${why}: ${n} compras planificadas omitidas en $${cfg.symbol} (no se vende nada)`);
+              break;
+            }
             if (ext > BigInt(guard.thresholdLamports)) {
               const why = `Launch Guard: compras externas de ${(Number(ext) / 1e9).toFixed(4)} SOL superan el umbral de ${(Number(guard.thresholdLamports) / 1e9).toFixed(4)} SOL`;
               const n = this.db().prepare("UPDATE launch_buy SET status = 'SKIPPED', reason = ? WHERE launch_id = ? AND status = 'PENDING'").run(why, id).changes;

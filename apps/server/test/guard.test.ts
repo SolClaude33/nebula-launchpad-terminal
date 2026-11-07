@@ -99,6 +99,26 @@ describe.each(backends)("Launch Guard · %s", (backend) => {
     expect(act.some((a) => a.kind === "launch.guard" && /no se vende nada/.test(a.detail))).toBe(true);
   }, 300_000);
 
+  it.runIf(backend === "mock")("REVIEW-F1 P1-3 · si el guard no puede leer la cadena (429), falla cerrado: no se compra a ciegas", async () => {
+    let calls = 0;
+    ctx.launches.testHooks.beforeBuy = async (_id, ord) => {
+      if (ord === 1)
+        ctx.launches.attachTrades(async () => {
+          calls++;
+          throw new Error("429 Too Many Requests");
+        });
+    };
+    const id = await launch({ thresholdLamports: (SOL / 2n).toString(), windowSec: 120, whitelist: [] });
+    const v = await ctx.launches.waitIdle(id);
+    ctx.launches.testHooks = {};
+    ctx.launches.attachTrades((mint) => ctx.live.tradesNow(mint));
+    expect(v.status).toBe("DONE");
+    expect((v.buys as { status: string }[]).map((b) => b.status)).toEqual(["OK", "SKIPPED", "SKIPPED"]);
+    expect((v.buys as { reason: string }[])[1].reason).toMatch(/sin datos de la cadena/);
+    expect(calls).toBe(2); // un reintento antes de omitir
+    expect((ctx.db().prepare("SELECT COUNT(*) AS n FROM tx WHERE kind = 'sell'").get() as { n: number }).n).toBe(0);
+  });
+
   it.runIf(backend === "mock")("una dirección de la lista blanca no cuenta como externa: el plan se completa", async () => {
     const friend = Keypair.generate();
     ctx.launches.testHooks.beforeBuy = async (id, ord) => {
