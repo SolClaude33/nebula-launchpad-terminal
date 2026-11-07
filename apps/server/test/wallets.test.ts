@@ -14,7 +14,7 @@ const ready = async () => {
   await a.call("POST", "/api/vault/setup", { password: PW, ack: true });
   return a;
 };
-type W = { id: string; role: string | null; folderIds: string[]; kind: string; isDefaultFunder: boolean };
+type W = { id: string; label: string; role: string | null; folderIds: string[]; kind: string; isDefaultFunder: boolean };
 
 describe("REQ-WAL-001/003/004 · E2E-03", () => {
   it("crea 10, las mete en una carpeta, asigna rol y admite varias carpetas", async () => {
@@ -31,6 +31,16 @@ describe("REQ-WAL-001/003/004 · E2E-03", () => {
     expect(ws.every((w) => w.role === "holder")).toBe(true);
     expect((await call("PATCH", "/api/wallets", { ids: [ws[0].id], role: "Mal Rol" })).status).toBe(400);
     expect((await call("PATCH", "/api/wallets", { ids: [ws[0].id], role: "sniper_2" })).status).toBe(200);
+  });
+
+  it("renombra una wallet (recorta espacios; vacío o > 40 caracteres se rechaza)", async () => {
+    const { call } = await ready();
+    const id = (await call("POST", "/api/wallets", { count: 1, role: "dev" })).json.created[0];
+    expect((await call("PATCH", "/api/wallets", { ids: [id], label: "  Dev principal  " })).status).toBe(200);
+    const w = ((await call("GET", "/api/wallets")).json.wallets as W[]).find((x) => x.id === id)!;
+    expect(w.label).toBe("Dev principal");
+    expect((await call("PATCH", "/api/wallets", { ids: [id], label: "   " })).status).toBe(400);
+    expect((await call("PATCH", "/api/wallets", { ids: [id], label: "x".repeat(41) })).status).toBe(400);
   });
 });
 

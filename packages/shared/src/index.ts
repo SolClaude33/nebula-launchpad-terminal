@@ -72,7 +72,7 @@ export const PatchWalletsBody = z.object({
   ids: z.array(z.string()).min(1).max(1000),
   role: Role.nullable().optional(),
   archived: z.boolean().optional(),
-  label: z.string().min(1).max(40).optional(),
+  label: z.string().trim().min(1).max(40).optional(),
 });
 export const ExportBody = z.object({ ids: z.array(z.string()).min(1).max(1000) });
 export const FolderBody = z.object({ name: z.string().trim().min(1).max(40) });

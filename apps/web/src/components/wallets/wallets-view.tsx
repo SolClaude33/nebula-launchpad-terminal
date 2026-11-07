@@ -51,7 +51,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
   const profile = useVault((s) => s.status?.profile);
   const [airdropping, setAirdropping] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "folder" | "deposit" | "transfer" | "disperse" | "collect">(null);
+  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "rename" | "folder" | "deposit" | "transfer" | "disperse" | "collect">(null);
   const [revealed, setRevealed] = useState<{ label: string; address: string; secretKey: string }[] | null>(null);
   const [loadError, setLoadError] = useState("");
 
@@ -181,9 +181,10 @@ export function WalletsView({ kind }: { kind: Kind }) {
         <div className="panel p-4">
           <p className="telemetry">Selección · {selected.length}</p>
           {selected.length === 0 ? (
-            <p className="mt-2 text-[12.5px] text-muted">Marca wallets en la tabla para asignar rol, moverlas, exportarlas o archivarlas.</p>
+            <p className="mt-2 text-[12.5px] text-muted">Marca wallets en la tabla para renombrarlas, asignar rol, moverlas, exportarlas o archivarlas.</p>
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-1.5">
+              {selected.length === 1 && <ActionBtn icon={Pencil} label="Renombrar" onClick={() => setDialog("rename")} />}
               <ActionBtn icon={Tag} label="Rol" onClick={() => setDialog("role")} />
               <ActionBtn icon={FolderPlus} label="Carpeta" onClick={() => setDialog("folder")} />
               {kind === "funder" && selected.length === 1 && !selected[0].isDefaultFunder && (
@@ -239,6 +240,13 @@ export function WalletsView({ kind }: { kind: Kind }) {
       {dialog === "create" && <CreateDialog kind={kind} folders={folders} roles={roles} onClose={() => setDialog(null)} onDone={async () => (setDialog(null), await load())} />}
       {dialog === "import" && <ImportDialog kind={kind} folders={folders} onClose={() => setDialog(null)} onDone={load} />}
       {dialog === "role" && <RoleDialog roles={roles} count={ids.length} onClose={() => setDialog(null)} onPick={(r) => run(() => api("/wallets", { method: "PATCH", body: { ids, role: r } }), "Rol asignado").then(() => setDialog(null))} />}
+      {dialog === "rename" && selected.length === 1 && (
+        <RenameWalletDialog
+          current={selected[0].label}
+          onClose={() => setDialog(null)}
+          onSave={(label) => run(() => api("/wallets", { method: "PATCH", body: { ids, label } }), "Nombre cambiado").then(() => setDialog(null))}
+        />
+      )}
       {dialog === "folder" && <FolderDialog folders={folders} count={ids.length} onClose={() => setDialog(null)} onPick={(fid, op) => run(() => api(`/folders/${fid}/members`, { method: "POST", body: { walletIds: ids, op } }), op === "add" ? "Añadidas a la carpeta" : "Quitadas de la carpeta").then(() => setDialog(null))} />}
       {dialog === "export" && (
         <StepUpDialog
@@ -651,6 +659,34 @@ function ImportDialog({ kind, folders, onClose, onDone }: { kind: Kind; folders:
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+function RenameWalletDialog({ current, onClose, onSave }: { current: string; onClose: () => void; onSave: (label: string) => void }) {
+  const [name, setName] = useState(current);
+  const v = name.trim();
+  const valid = v.length >= 1 && v.length <= 40 && v !== current;
+  return (
+    <Modal title="Renombrar wallet" labelId="rename-title" onClose={onClose} width={400}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid) onSave(v);
+        }}
+        className="mt-4"
+      >
+        <label htmlFor="wallet-name" className="mb-1.5 block text-[13px] font-medium">
+          Nombre
+        </label>
+        <div className="flex gap-2">
+          <input id="wallet-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={40} className="field h-9" />
+          <button type="submit" disabled={!valid} className="btn h-9">
+            Guardar
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11.5px] text-faint">Hasta 40 caracteres. Solo cambia el nombre en Nébula; la dirección es la misma.</p>
+      </form>
     </Modal>
   );
 }
