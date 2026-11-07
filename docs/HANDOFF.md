@@ -85,9 +85,29 @@ Todo está en commits locales, sin push.
       - `--text-faint` pasó a `#8088a0` (oscuro) y `#5c637b` (claro).
       - El setup deriva el WS de un RPC local en el puerto siguiente.
 
+### Arreglos de la revisión previa a mainnet (`docs/REVIEW-F1.md`, 2026-11-07)
+
+Un commit y un test que reproduce el fallo por punto:
+- `67b6222` · **P1-3** · el Launch Guard falla cerrado: si no puede leer los trades tras un reintento, omite las compras restantes («sin datos de la cadena»).
+- `92d16f2` · **P1-1** · un programado nunca queda «disparado» e invisible. FIRED solo se marca justo antes de ejecutar, un error deja FAILED con el motivo, y al arrancar `recoverInterrupted()` pasa a FAILED las filas que quedaron a medias.
+- `c0c749e` · **P1-2** · ventana de gracia de 2 min. Si llega más tarde (equipo dormido, app cerrada), queda PAUSED con el motivo y solo se lanza al confirmar.
+- `8d21c9f` · **P2-6** · enviar y quemar reservan el id antes de cualquier `await`.
+- `8abdde2` · **P1-4** · el RPC limita las peticiones y los envíos por segundo (`rpcMaxRps` y `rpcSendPerSec`; 0 = sin límite).
+  - En Ajustes, el botón «Usar el preset Helius Free (8 y 1)» aplica los límites del plan Free.
+  - Un 429 al enviar reenvía la misma transacción firmada.
+  - `getTransactions` va en lotes de 10 como máximo.
+- `5d33838` · **P2-7** · fuera de `test`, holders nunca recurre a `getProgramAccounts` (la lista queda incompleta y se reintenta).
+- `084a3d0` · **P1-5** · al cambiar la contraseña se borran las copias locales (`auto-*`, `pre-restore-*`) y se hace una nueva. El aviso recuerda borrar las exportadas fuera.
+- `333435b` · **P2-8** · la clave del RPC también se separa si va en el subdominio, en un segmento corto o en un parámetro con otro nombre. El host del estado pasa por `scrub`, y Ajustes avisa si una URL remota queda sin `{key}`.
+
+Los P3 (9–14) siguen abiertos como mejoras.
+
+**Checks tras los arreglos (2026-11-07):** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 118/118; `pnpm test:chain` 111 en verde y 13 omitidos (solo corren con mock); E2E afectados (`01-first-run`, `03-launch`, con E2E-09 programado tras reinicio): 6/6 en verde.
+
 ## Próximo paso
 
 1. **Nicol:** ejecutar la prueba de humo en mainnet con `docs/SMOKE-MAINNET.md` (Helius Free + Pinata) y devolver las firmas y los costes mostrados. Claude los verificará en solo lectura.
+   En el paso 2 de la checklist, pulsa «Usar el preset Helius Free (8 y 1)» antes de guardar el RPC.
 2. Con la prueba de humo superada se cumple el criterio de salida de F1 (§12) y se puede pasar a F2: Jito, más pads, ladder/trailing y presets.
 
 ## Decisiones pendientes de Nicol
@@ -115,6 +135,6 @@ Todo está en commits locales, sin push.
   - `node scripts/js-budget.mjs` tras `pnpm build`.
 - **Mainnet:** `pnpm mainnet` (construye y arranca con `NEBULA_PROFILE=mainnet`). La checklist está en `docs/SMOKE-MAINNET.md`.
 - **Verificar en el navegador sin tocar `~/.nebula`:** añade temporalmente al `.claude/launch.json` de la carpeta padre una configuración con `NEBULA_DATA_DIR` apuntando a una carpeta temporal, y quítala al terminar.
-- **Al terminar:** para Surfpool y los servidores. En Windows comprueba que quedan libres los puertos 4317, 4318, 8899 y 8900.
+- **Al terminar:** para Surfpool y los servidores. En Windows comprueba que quedan libres los puertos 4317, 4318, 4390, 8899 y 8900.
 - **Exclusiones (§2.3):** nada que haga pasar actividad coordinada por orgánica.
 - **Publicación:** sin push ni despliegue hasta que Nicol lo pida.

@@ -66,8 +66,8 @@ Medido con `pnpm build && node scripts/js-budget.mjs`: build de producción y Ed
 | E2E-06 | IPFS fallido bloquea el lanzamiento | UI: `03-launch` (subida fallida → «Lanzar» deshabilitado con el motivo; volver a subir lo habilita) | ✅ |
 | E2E-07 | Doble clic en «Lanzar» | API · mock + Surfpool: `launch.test.ts` | ✅ |
 | E2E-08 | Borrador y reanudación | API: `drafts.test.ts` · UI: `03-launch` (Esc, reinicio de la API, retomar desde Borradores) | ✅ |
-| E2E-09 | Lanzamiento programado tras un reinicio | API · mock: `schedule.test.ts` · UI: `03-launch` (programado desde el asistente → reinicio de la API → desbloqueo → se lanza a su hora; otro se cancela) | ✅ |
-| E2E-10 | Launch Guard | API · mock + Surfpool: `guard.test.ts` (comprador externo fuera de la bóveda; compras restantes SKIPPED; ninguna venta) | ✅ |
+| E2E-09 | Lanzamiento programado tras un reinicio | API · mock: `schedule.test.ts` · UI: `03-launch` (programado desde el asistente → reinicio de la API → desbloqueo → se lanza a su hora; otro se cancela). Desde REVIEW-F1 también: no queda FIRED huérfano y si llega tarde se pausa) | ✅ |
+| E2E-10 | Launch Guard | API · mock + Surfpool: `guard.test.ts` (comprador externo fuera de la bóveda; compras restantes SKIPPED; ninguna venta; sin datos de la cadena, falla cerrado — REVIEW-F1 P1-3) | ✅ |
 | E2E-11 | Instant Trade con atajos | UI: `04-live` (sin Espacio no compra; Espacio + Q compra 0,05 SOL por wallet de la carpeta contra Surfpool; la posición sube) | ✅ |
 | E2E-12 | Operar tras la graduación | API · Surfpool: `live.test.ts` | ✅ |
 | E2E-13 | DCA y límite | API · mock + Surfpool: `automations.test.ts` | ✅ |
@@ -79,7 +79,7 @@ Medido con `pnpm build && node scripts/js-budget.mjs`: build de producción y Ed
 | E2E-19 | Retiro a dirección nueva | API · mock + Surfpool: `operations.test.ts` | ✅ |
 | E2E-20 | Failover de RPC | API: `rpc.test.ts` (≤ 3 s) | ✅ |
 | E2E-21 | Protección del backend local | API: `security.test.ts` · UI: `01-first-run` (página de otro origen intenta bloquear y leer: rechazado; sin token 401; Host ajeno 403) | ✅ |
-| E2E-22 | Copia y restauración | API: `vault.test.ts`, `backups.test.ts` (también una copia automática) | ✅ |
+| E2E-22 | Copia y restauración | API: `vault.test.ts`, `backups.test.ts` (también una copia automática, y la purga de copias al cambiar la contraseña — REVIEW-F1 P1-5) | ✅ |
 | E2E-23 | Dashboard | API · mock + Surfpool: `dashboard.test.ts` · UI: `04-live` | ✅ |
 | E2E-24 | Accesibilidad (axe a 1024 y 1440) | UI: `05-a11y`, 11 rutas + /unlock | ✅ |
 | — | Prueba de humo en mainnet (Helius) | Manual, la ejecuta Nicol: `docs/SMOKE-MAINNET.md` | ⏳ |

@@ -2,7 +2,7 @@
 
 - **Fecha:** 2026-11-07.
 - **Alcance:** `git diff 99a2d0a..HEAD` (bloques 1–11; 24 archivos del servidor, más web y E2E).
-- **Modo:** solo lectura. No se ejecutó nada, ni servidores ni tests, porque la sesión de cierre usa los puertos. Este archivo es lo único modificado y **no se ha aplicado ningún arreglo**.
+- **Modo:** la revisión se hizo en solo lectura. **Los 5 P1 y los 3 P2 están resueltos el 2026-11-07**, con un commit y un test por arreglo (marcados ✅ abajo). Los P3 siguen abiertos como mejoras.
 - **Foco:** fallos que puedan perder dinero o filtrar secretos con SOL real, en el contexto de la prueba de humo con **Helius Free**:
   - 10 peticiones/s;
   - `sendTransaction` a 1/s;
@@ -19,7 +19,9 @@ Las líneas son las de `HEAD` (`c29c054`).
 
 ## P1 · antes de la prueba de humo
 
-### 1. Un lanzamiento programado puede quedarse «disparado» para siempre e invisible
+### ✅ 1. Un lanzamiento programado puede quedarse «disparado» para siempre e invisible
+
+> **Resuelto en `92d16f2`** (2026-11-07), con un test que reproduce el fallo. La fila sigue WAITING durante el dry-run y pasa a FIRED solo justo antes de `execute`. Un error deja FAILED con el motivo, un bloqueo deja PAUSED y al arrancar `recoverInterrupted()` pasa a FAILED los huérfanos.
 - **Dónde:** `apps/server/src/launches.ts:349-376` (`fire`) y `:340-345` (`tickSchedule`).
 - **Escenario:**
   1. `fire()` marca `schedule_state = 'FIRED'` (línea ~355) **antes** de rehacer el dry-run.
@@ -35,7 +37,9 @@ Las líneas son las de `HEAD` (`c29c054`).
   - Al arrancar, convertir `PREPARED + FIRED` en `FAILED`, con el motivo «interrumpido».
   - Test: bloquear entre el disparo y el dry-run, y que `execute` lance un error.
 
-### 2. Un lanzamiento programado se dispara aunque llegue horas tarde
+### ✅ 2. Un lanzamiento programado se dispara aunque llegue horas tarde
+
+> **Resuelto en `c0c749e`** (2026-11-07), con un test que reproduce el fallo. Ventana de gracia de 2 min: con más retraso queda PAUSED con el motivo y solo se lanza al confirmar.
 - **Dónde:** `apps/server/src/launches.ts:340-345`.
 - **Escenario:**
   1. Bóveda abierta y equipo suspendido, o RPC caído durante horas.
@@ -46,7 +50,9 @@ Las líneas son las de `HEAD` (`c29c054`).
   - Ventana de gracia de unos 2 min. Pasada esa ventana, el programado pasa a `PAUSED` con el motivo «llegó tarde» y espera confirmación.
   - Test con reloj inyectable: `scheduled_at + 10 min` debe acabar en `PAUSED`.
 
-### 3. El Launch Guard deja pasar las compras si no puede leer la cadena
+### ✅ 3. El Launch Guard deja pasar las compras si no puede leer la cadena
+
+> **Resuelto en `67b6222`** (2026-11-07), con un test que reproduce el fallo. Reintenta una vez y, si vuelve a fallar, omite las compras restantes con el motivo «sin datos de la cadena».
 - **Dónde:** `apps/server/src/launches.ts:433`. `this.externalBuys(...).catch(() => 0n)`.
 - **Escenario:**
   1. Con Helius Free, `Live.tradesNow` → `sync` (firmas y transacciones en lotes) recibe un 429 o un timeout.
@@ -58,7 +64,9 @@ Las líneas son las de `HEAD` (`c29c054`).
   - Nunca asumir 0.
   - Test con el mock: `tradesNow` lanza un error → ninguna compra más.
 
-### 4. Los límites de Helius Free provocan pausas en cadena (429)
+### ✅ 4. Los límites de Helius Free provocan pausas en cadena (429)
+
+> **Resuelto en `8abdde2`** (2026-11-07), con un test que reproduce el fallo. Cubo de fichas configurable (`rpcMaxRps`, `rpcSendPerSec`) y preset «Helius Free» (8 y 1) en Ajustes. Un 429 al enviar reenvía la misma transacción firmada. Lotes de `getTransactions` de 10 como máximo.
 - **Dónde:**
   - `apps/server/src/trading.ts:16`: `PARALLEL = 6` envíos a la vez.
   - `apps/server/src/chain/rpc.ts`: `withRetry`, 3 reintentos de 400, 800 y 1.200 ms ante 429.
@@ -81,7 +89,9 @@ Las líneas son las de `HEAD` (`c29c054`).
   - Modo **Escalonado** por defecto en mainnet.
   - Hasta tenerlo: en la checklist, escalonado y una sola wallet, como ya pone `docs/SMOKE-MAINNET.md`.
 
-### 5. Las copias automáticas siguen abriéndose con la contraseña anterior
+### ✅ 5. Las copias automáticas siguen abriéndose con la contraseña anterior
+
+> **Resuelto en `084a3d0`** (2026-11-07), con un test que reproduce el fallo. Al cambiar la contraseña se borran las copias `auto-*` y `pre-restore-*` y se hace una nueva. Ajustes avisa de las copias exportadas fuera.
 - **Dónde:**
   - `apps/server/src/backups.ts` (`backups/auto-*.nebula-vault`, se conservan 7);
   - `routes/vault.ts` (`/change-password`);
@@ -98,7 +108,9 @@ Las líneas son las de `HEAD` (`c29c054`).
 
 ## P2 · antes de usar montos reales
 
-### 6. Dos peticiones iguales de enviar o quemar pueden ejecutarse a la vez
+### ✅ 6. Dos peticiones iguales de enviar o quemar pueden ejecutarse a la vez
+
+> **Resuelto en `8d21c9f`** (2026-11-07), con un test que reproduce el fallo. El id se reserva antes de cualquier `await` y se libera en `finally`.
 - **Dónde:** `apps/server/src/token-ops.ts:94` frente a `running.add` (línea ~104).
 - **Escenario:**
   1. La comprobación `running.has(id)` va al principio.
@@ -107,7 +119,9 @@ Las líneas son las de `HEAD` (`c29c054`).
 - **Impacto:** un doble envío o una doble quema de tokens. Es poco probable desde la interfaz, porque el botón se deshabilita, pero es posible por la API.
 - **Arreglo propuesto:** hacer `running.add` en la misma línea de la comprobación y quitarlo en `finally`.
 
-### 7. Ante cualquier fallo, la lista de holders recurre a `getProgramAccounts` en mainnet
+### ✅ 7. Ante cualquier fallo, la lista de holders recurre a `getProgramAccounts` en mainnet
+
+> **Resuelto en `5d33838`** (2026-11-07), con un test que reproduce el fallo. Fuera de `test`, la lista queda incompleta y se reintenta; nunca `getProgramAccounts`.
 - **Dónde:** `apps/server/src/chain/index.ts:76-91`.
 - **Escenario:**
   1. Si `getTokenLargestAccounts` falla una vez (por ejemplo, un 429), se llama a `getProgramAccounts` sobre todo el programa de token, filtrando por el mint.
@@ -116,7 +130,9 @@ Las líneas son las de `HEAD` (`c29c054`).
 - **Impacto:** consume créditos, provoca más 429 en cadena y deja el Live lento.
 - **Arreglo propuesto:** en mainnet, nunca recurrir a `getProgramAccounts`. Usar la última lista o solo las wallets propias, y reintentar en el siguiente tick.
 
-### 8. Una URL de RPC con la clave en un subdominio o en un segmento corto no se separa
+### ✅ 8. Una URL de RPC con la clave en un subdominio o en un segmento corto no se separa
+
+> **Resuelto en `333435b`** (2026-11-07), con un test que reproduce el fallo. También se separan el subdominio, los segmentos cortos con dígitos y los parámetros con otro nombre. El host del estado pasa por `scrub` y Ajustes avisa si una URL remota queda sin `{key}`.
 - **Dónde:** `apps/server/src/settings.ts:47-75` (`splitRpcKey`).
 - **Escenario:** la clave va en un subdominio, en un segmento de ruta de menos de 20 caracteres o en un parámetro con otro nombre.
 - **Impacto:** la clave queda **en claro** en `kv.settings`, en `GET /settings`, en las copias y en el diagnóstico. La redacción del diagnóstico solo cubre parámetros de consulta conocidos.
