@@ -77,7 +77,9 @@ export function Topbar() {
   const live = pathname.startsWith("/t/");
   const mm = String(Math.max(0, Math.floor(left / 60))).padStart(2, "0");
   const ss = String(Math.max(0, left % 60)).padStart(2, "0");
-  const warn = left <= 60;
+  // Sin bloqueo automático (0 = nunca) no hay cuenta atrás: el botón solo bloquea a mano.
+  const autoLock = status?.lockInSec != null;
+  const warn = autoLock && left <= 60;
 
   return (
     <>
@@ -110,15 +112,21 @@ export function Topbar() {
           </button>
           <button onClick={lock} className="btn h-9 gap-2 pr-2.5 pl-3" title="Bloquear ahora (Ctrl+Shift+L)">
             <Lock className="size-3.5" aria-hidden />
-            <span className={`num text-[12px] ${warn ? "text-warn" : "text-muted"}`}>
-              {mm}:{ss}
-            </span>
-            <span className="sr-only">para el bloqueo automático. Bloquear ahora.</span>
+            {autoLock ? (
+              <>
+                <span className={`num text-[12px] ${warn ? "text-warn" : "text-muted"}`}>
+                  {mm}:{ss}
+                </span>
+                <span className="sr-only">para el bloqueo automático. Bloquear ahora.</span>
+              </>
+            ) : (
+              <span className="text-[12px] text-muted">Bloquear</span>
+            )}
           </button>
         </div>
       </header>
 
-      {warn && left > 0 && (
+      {autoLock && warn && left > 0 && (
         <div role="alert" className="rise fixed top-16 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-[var(--radius-md)] border border-warn/30 bg-[color-mix(in_oklab,var(--surface-1)_92%,transparent)] px-4 py-2.5 text-[13px] shadow-[var(--shadow-float)] backdrop-blur-xl">
           <TriangleAlert className="size-4 text-warn" aria-hidden />
           La bóveda se bloquea en <span className="num text-warn">{left} s</span> por inactividad.

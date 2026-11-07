@@ -31,7 +31,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 
 ## Diseño "Observatorio" (cerrado en F0)
 - **Estilo:** calmado y premium, nunca un casino.
-- **Recursos visuales:** telemetría en mono, retículas (`.reticle`), la graduación como una órbita, e Instrument Serif solo en la marca y los títulos grandes.
+- **Recursos visuales:** telemetría en mono, retículas (`.reticle`) y la graduación como una órbita. La marca y los títulos grandes (`.font-display`) usan Geist en seminegrita, sin cursiva: Nicol pidió quitar la serif cursiva por legibilidad (2026-11-07).
 - **Tokens:** en `apps/web/src/app/globals.css`, con un tema claro de los mismos nombres. Valores: `--bg #07080C`, acento `#7C5CFF → #22D3EE`, `--buy #22C55E`, `--sell #F43F5E`, `--warn #F59E0B`.
 - **Fuentes:** Geist y Geist Mono (`.num`, cifras tabulares).
 - **Movimiento y CSS:** 120–220 ms, con `prefers-reduced-motion`. Las clases propias van en `@layer components`, y `backdrop-filter` no acepta `var()`.
@@ -40,6 +40,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 ## Seguridad y límites
 - **Superficie local:** solo loopback, con Host y Origin exactos, token de sesión y CSP con nonce (`src/proxy.ts`). En el perfil `test` el RPC tiene que ser local, y el airdrop solo existe ahí.
 - **Secretos:** los de ajustes van cifrados en la bóveda, nunca en `.env`. Una URL de RPC con credencial se guarda con `{key}` y la clave va a la bóveda. Los logs pasan por la redacción de pino y por `scrub` (por valor). El diagnóstico redacta también por patrón. Hay tests que lo comprueban.
+- **Bloqueo automático:** desactivado por defecto (`autoLockMin` = 0, nunca), a petición de Nicol (2026-11-07). Se puede activar en Ajustes con 1–240 minutos. «Bloquear» a mano (Ctrl+Shift+L) sigue igual.
 - **Acciones sensibles:** exportar, borrar, cambiar la contraseña, restaurar y retirar exigen reconfirmar la contraseña en el servidor. Toda comprobación de contraseña comparte el retardo creciente.
 - **Datos locales:** fuera del repositorio (`.gitignore`).
 - **Dependencias:** a versión exacta. Las nuevas cerca de las claves se revisan a mano, como `@pump-fun/pump-sdk`.

@@ -186,6 +186,18 @@ describe("REQ-VAULT-003 · REQ-AUTO-008 · E2E-02/14 bloqueo y pausa", () => {
     expect(status()).toBe("PAUSED"); // nunca se reanuda sola
   });
 
+  it("por defecto no hay bloqueo automático: sin cuenta atrás y abierta tras horas sin actividad", async () => {
+    const { call, ctx } = track(await makeApp());
+    await call("POST", "/api/vault/setup", { password: PW, ack: true });
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    ctx.vault.touch();
+    ctx.vault.startAutoLock();
+    expect((await call("GET", "/api/vault/status")).json).toMatchObject({ unlocked: true, lockInSec: null, autoLockMin: 0 });
+    vi.advanceTimersByTime(6 * 60 * 60_000);
+    expect((await call("GET", "/api/vault/status")).json.unlocked).toBe(true);
+    vi.useRealTimers();
+  });
+
   it("los sondeos de la interfaz (GET cada 15 s) no impiden el bloqueo automático", async () => {
     const { call, ctx } = track(await makeApp());
     await call("POST", "/api/vault/setup", { password: PW, ack: true });

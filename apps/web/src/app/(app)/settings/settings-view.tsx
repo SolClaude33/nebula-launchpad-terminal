@@ -360,12 +360,12 @@ function SecuritySection({ s, save }: { s: SettingsDto; save: (p: Patch, what: s
   const refreshVault = useVault((v) => v.refresh);
   const [busy, setBusy] = useState(false);
   const m = Number(min);
-  const err = Number.isInteger(m) && m >= 1 && m <= 240 ? null : "Entero entre 1 y 240";
+  const err = Number.isInteger(m) && m >= 0 && m <= 240 ? null : "Entero entre 0 y 240";
   const dirty = m !== s.autoLockMin || layout !== s.keyboardLayout;
   return (
     <Section id="security" kicker="Bóveda y teclado" title="Seguridad y apariencia">
       <div className="grid grid-cols-3 gap-4">
-        <Field id="autolock" label="Bloqueo automático (minutos)" error={err} hint="Aviso 60 s antes; al bloquear, lo que está en marcha queda en pausa.">
+        <Field id="autolock" label="Bloqueo automático (minutos)" error={err} hint="0 = nunca. Con minutos: aviso 60 s antes y, al bloquear, lo que está en marcha queda en pausa.">
           <input id="autolock" inputMode="numeric" value={min} onChange={(e) => setMin(e.target.value)} className="field num h-9" aria-invalid={!!err} />
         </Field>
         <Field id="layout" label="Distribución del teclado" hint="Atajos Espacio+tecla del Instant Trade.">

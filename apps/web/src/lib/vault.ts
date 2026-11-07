@@ -43,7 +43,7 @@ export const useVault = create<VaultStore>((set, get) => ({
     const now = Date.now();
     if (now - lastBeat < 20_000 || !get().status?.unlocked) return;
     lastBeat = now;
-    api<{ lockInSec: number }>("/vault/activity", { method: "POST" })
+    api<{ lockInSec: number | null }>("/vault/activity", { method: "POST" })
       .then((r) => set((st) => ({ status: st.status ? { ...st.status, lockInSec: r.lockInSec } : st.status, readAt: Date.now() })))
       .catch(() => {});
   },

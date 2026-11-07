@@ -104,12 +104,13 @@ export class Vault {
     return this.dek !== null;
   }
 
+  /** Minutos de inactividad hasta el bloqueo automático; 0 (por defecto, a petición de Nicol) = nunca. */
   autoLockMin() {
-    return Number(kvGet(this.db, "autoLockMin") ?? 15);
+    return Number(kvGet(this.db, "autoLockMin") ?? 0);
   }
 
   lockInSec() {
-    if (!this.dek) return null;
+    if (!this.dek || this.autoLockMin() === 0) return null;
     return Math.max(0, Math.round((this.lastActivity + this.autoLockMin() * 60_000 - Date.now()) / 1000));
   }
 

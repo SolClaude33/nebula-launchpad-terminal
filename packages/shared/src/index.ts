@@ -89,7 +89,7 @@ export const SettingsDto = z.object({
   slippageBuyPct: z.number().min(0.1).max(50),
   slippageSellPct: z.number().min(0.1).max(50),
   priorityFeeSol: z.number().min(0).max(0.1),
-  autoLockMin: z.number().int().min(1).max(240),
+  autoLockMin: z.number().int().min(0).max(240),
   keyboardLayout: z.enum(["qwerty", "azerty", "qwertz"]),
   theme: z.enum(["dark", "light"]),
   /** Pasarela pública con la que se forman las URI de metadatos (Pinata solo sube). */
