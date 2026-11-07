@@ -110,6 +110,22 @@ P3, también el 2026-11-07:
 
 **Checks tras los arreglos (2026-11-07):** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 118/118 (121/121 tras los P3); `pnpm test:chain` 111 en verde y 13 omitidos (solo corren con mock); E2E afectados (`01-first-run`, `03-launch`, con E2E-09 programado tras reinicio): 6/6 en verde.
 
+### Primer lanzamiento real en mainnet y lo que salió de él (2026-11-07)
+
+Nicol lanzó $BOB (mint `BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`, modo Pro con 2 SNIPE). Creación, dev buy y las 2 compras entraron. La SNIPE 2 tardó ~52 s y el lanzamiento se pausó hasta reanudar a mano.
+
+- **Causa:** la red descartó el primer envío y no se reenviaba. Al caducar el blockhash, `classify()` no reconoció «block height exceeded» (un `Error` se serializaba como `{}`), así que quedó «pendiente» y pausó.
+- **Arreglos (cada uno con su test):**
+  - `91961e7` · **sender**: la caducidad se reconoce; se reenvían los mismos bytes firmados cada 2 s con cupo sobrante (`TokenBucket.tryTake` / `RpcPool.tryRun`); si caduca dos veces, falla en vez de pausar.
+  - `e93ab50` · **modo Pro**: la espera cuenta desde el envío anterior y las confirmaciones corren a la vez. La vista da `sentAt`, `sentAfterMs` y `confirmedAfterMs`, y la UI muestra «enviada · esperando confirmación · N s». `/chain/status` expone `sendPerSec` y el paso 3 avisa si una espera es menor de lo que permite el RPC.
+  - `ca0e1ee` · **«Lanzar» abre el Live** (`/t/<mint>?launch=<id>`). Muestra «Creando $SYM…» mientras el mint no existe y después una tira con el progreso. La ejecución sigue en el asistente, nunca al cargar una URL.
+  - `3c0460f` · **panel «Mis wallets»** del Live: compra y venta 25/50/100 % por wallet o para las marcadas. El alcance «Marcadas» se usa en el ticket y el Instant Trade.
+- **Checks:**
+  - `pnpm test`: 134/134.
+  - `pnpm test:chain`: 7/8 a la primera; `automations` falló por la activación de la tabla en Surfpool y al repetirlo pasa (24 + 3 omitidos).
+  - E2E: 12/12 a la primera.
+  - Revisión visual en Surfpool: lanzamiento Pro con esperas de 0/1500/1500 ms, que salieron en T+357, T+1.884 y T+3.387 ms; venta del 25 % desde el panel; «Creando $SYM…».
+
 ## Próximo paso
 
 1. **Nicol:** ejecutar la prueba de humo en mainnet con `docs/SMOKE-MAINNET.md` (Helius Free + Pinata) y devolver las firmas y los costes mostrados. Claude los verificará en solo lectura.
