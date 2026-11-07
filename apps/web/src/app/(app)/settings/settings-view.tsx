@@ -173,6 +173,14 @@ function RpcSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: string
     setF((x) => ({ ...x, ph: s.rpcPrimaryHttp, pw: s.rpcPrimaryWs, bh: s.rpcBackupHttp, bw: s.rpcBackupWs }));
   }, [s.rpcPrimaryHttp, s.rpcPrimaryWs, s.rpcBackupHttp, s.rpcBackupWs]);
   const needsKey = (u: string) => u.includes(RPC_KEY_PLACEHOLDER);
+  // REVIEW-F1 P2-8: una URL remota guardada sin {key} puede llevar la clave en un sitio que no se detecta
+  const unsplit = [s.rpcPrimaryHttp, s.rpcPrimaryWs, s.rpcBackupHttp, s.rpcBackupWs].filter((u) => {
+    try {
+      return !!u && !u.includes(RPC_KEY_PLACEHOLDER) && !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(new URL(u).hostname);
+    } catch {
+      return false;
+    }
+  });
   return (
     <Section
       id="rpc"
@@ -222,6 +230,11 @@ function RpcSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: string
           <input id="rpc-send" inputMode="decimal" value={f.send} onChange={(e) => setF({ ...f, send: e.target.value.trim() })} className="field num h-9 text-[12.5px]" aria-invalid={!!errs.send} />
         </Field>
       </div>
+      {unsplit.length > 0 && (
+        <p role="note" className="mt-3 rounded-[var(--radius-sm)] border border-warn/30 bg-[var(--warn-soft)] p-2.5 text-[12px] text-warn">
+          {unsplit.length === 1 ? "Una URL remota no lleva" : `${unsplit.length} URL remotas no llevan`} <span className="num">{RPC_KEY_PLACEHOLDER}</span>. Si tu proveedor puso la clave dentro de la URL y Nébula no la detectó, sustitúyela por <span className="num">{RPC_KEY_PLACEHOLDER}</span> y pega la clave en su campo: si no, queda en claro en la base y en las copias. Una URL pública sin clave (p. ej. api.mainnet-beta.solana.com) está bien así.
+        </p>
+      )}
       <div className="mt-4 flex items-center justify-between gap-3">
         <p className="text-[11.5px] text-faint">Al guardar se reconecta y se reinician los vigilantes del Live. Con la bóveda bloqueada, un RPC con clave queda desconectado.</p>
         <SaveBtn busy={busy} disabled={!dirty || bad} onClick={submit} />

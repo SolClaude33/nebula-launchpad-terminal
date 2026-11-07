@@ -61,23 +61,44 @@ export function splitRpcKey(url: string): { url: string; key: string | null } {
   } catch {
     return { url, key: null };
   }
-  for (const [k, v] of u.searchParams) {
-    if (KEY_PARAMS.test(k) && v.length >= 6) {
-      // se reconstruye a mano para no codificar las llaves del marcador
-      const rest = [...u.searchParams].filter(([kk]) => kk !== k).map(([kk, vv]) => `${encodeURIComponent(kk)}=${encodeURIComponent(vv)}`);
-      const q = [`${encodeURIComponent(k)}=${RPC_KEY_PLACEHOLDER}`, ...rest].join("&");
-      return { url: `${u.protocol}//${u.host}${u.pathname}?${q}${u.hash}`, key: v };
-    }
+  // Separar de más es inocuo (la clave se vuelve a poner tal cual al conectar); separar de menos deja la
+  // clave en claro en la base, en GET /settings, en las copias y en el diagnóstico (REVIEW-F1 P2-8).
+  // Un parámetro con nombre de clave se separa siempre; las heurísticas, solo en hosts remotos.
+  const remote = !isLoopbackHost(u.hostname);
+  const params = [...u.searchParams];
+  const qi = params.findIndex(([k, v]) => (KEY_PARAMS.test(k) && v.length >= 6) || (remote && tokenLike(v, 20)));
+  if (qi >= 0) {
+    const [k, v] = params[qi];
+    // se reconstruye a mano para no codificar las llaves del marcador
+    const q = params.map(([kk, vv], j) => `${encodeURIComponent(kk)}=${j === qi ? RPC_KEY_PLACEHOLDER : encodeURIComponent(vv)}`).join("&");
+    return { url: `${u.protocol}//${u.host}${u.pathname}?${q}${u.hash}`, key: v };
   }
+  if (!remote) return { url, key: null };
   const segs = u.pathname.split("/");
-  const i = segs.findIndex((s) => /^[A-Za-z0-9_-]{20,}$/.test(s));
+  const i = segs.findIndex((s) => tokenLike(s, 16));
   if (i >= 0) {
     const key = segs[i];
     segs[i] = RPC_KEY_PLACEHOLDER;
     return { url: `${u.protocol}//${u.host}${segs.join("/")}${u.search}${u.hash}`, key };
   }
+  // credencial como subdominio (p. ej. <token>.proveedor.com)
+  const labels = u.hostname.split(".");
+  const li = labels.slice(0, -2).findIndex((l) => tokenLike(l, 16));
+  if (li >= 0) {
+    const key = labels[li];
+    labels[li] = RPC_KEY_PLACEHOLDER;
+    return { url: `${u.protocol}//${labels.join(".")}${u.port ? `:${u.port}` : ""}${u.pathname}${u.search}${u.hash}`, key };
+  }
   return { url, key: null };
 }
+
+/** Parece una credencial: solo caracteres de token y con dígitos, o muy largo. */
+function tokenLike(s: string, min: number) {
+  return s.length >= min && /^[A-Za-z0-9_-]+$/.test(s) && (/\d/.test(s) || s.length >= 24);
+}
+
+const isLoopbackHost = (h: string) => /^(127\.0\.0\.1|localhost|\[::1\])$/.test(h);
+
 
 /** Sustituye {key} por la credencial. Sin credencial disponible (bóveda cerrada o sin configurar) devuelve null. */
 export function resolveRpcUrl(url: string, key: string | null): string | null {

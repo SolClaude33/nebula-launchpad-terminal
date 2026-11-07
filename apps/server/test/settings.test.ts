@@ -75,6 +75,16 @@ describe("REQ-SET-002 · clave del RPC dentro de la bóveda", () => {
     expect(q.url).toBe("https://dry-snowy-x.solana-mainnet.quiknode.pro/{key}/");
     expect(q.key).toBe("abcdef0123456789abcdef0123456789");
     expect(splitRpcKey("http://127.0.0.1:8899")).toEqual({ url: "http://127.0.0.1:8899", key: null });
+    // REVIEW-F1 P2-8: credencial en el subdominio, en un segmento corto o en un parámetro con otro nombre
+    const sub = splitRpcKey("https://a1b2c3d4e5f6g7h8i9.rpc.example.com/");
+    expect(sub).toEqual({ url: "https://{key}.rpc.example.com/", key: "a1b2c3d4e5f6g7h8i9" });
+    expect(resolveRpcUrl(sub.url, sub.key)).toBe("https://a1b2c3d4e5f6g7h8i9.rpc.example.com/");
+    expect(splitRpcKey("https://rpc.example.com/v2/k3y0123456789abc")).toEqual({ url: "https://rpc.example.com/v2/{key}", key: "k3y0123456789abc" });
+    const other = splitRpcKey("https://rpc.example.com/?x-credencial=9f8e7d6c5b4a39281706&net=main");
+    expect(other).toEqual({ url: "https://rpc.example.com/?x-credencial={key}&net=main", key: "9f8e7d6c5b4a39281706" });
+    // sin nada que parezca una clave, la URL no cambia
+    expect(splitRpcKey("https://api.mainnet-beta.solana.com")).toEqual({ url: "https://api.mainnet-beta.solana.com", key: null });
+    expect(splitRpcKey("https://solana-mainnet.example.com/v2")).toEqual({ url: "https://solana-mainnet.example.com/v2", key: null });
     expect(resolveRpcUrl("https://x/?api-key={key}", null)).toBeNull();
   });
 

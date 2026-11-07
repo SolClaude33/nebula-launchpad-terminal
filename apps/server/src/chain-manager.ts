@@ -78,7 +78,8 @@ export class ChainManager {
   state(): ChainState {
     if (!this.chain) return { mode: "off", healthy: false, host: null, latencyMs: null, usingBackup: false, error: this.error };
     const s = this.chain.status();
-    return { mode: this.chain.kind, healthy: s.healthy, host: s.host, latencyMs: s.latencyMs, usingBackup: s.usingBackup, error: null };
+    // el host puede llevar la clave (credencial en el subdominio): siempre pasa por la redacción
+    return { mode: this.chain.kind, healthy: s.healthy, host: s.host ? scrub(s.host) : null, latencyMs: s.latencyMs, usingBackup: s.usingBackup, error: null };
   }
 
   stop() {
