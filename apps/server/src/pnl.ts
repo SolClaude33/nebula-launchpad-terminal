@@ -119,16 +119,9 @@ export class Pnl {
     this.prices.clear();
   }
 
-  /** `tzOffsetMin`: Date.getTimezoneOffset() del navegador, para que los días empiecen a medianoche local. */
-  async summary(period: Period, tzOffsetMin = 0) {
-    // Hasta 5 s esperando a indexar lo propio; si tarda más, se informa como pendiente
-    await Promise.race([this.indexOwn().catch(() => 0), new Promise((r) => setTimeout(r, 5000))]);
+  /** Repaso de trades propios (coste medio) y envíos propios: posiciones, totales del período y movimientos fechados. */
+  private core(start: number) {
     const db = this.db();
-    const now = this.clock();
-    const start = period === "all" ? 0 : now - PERIOD_MS[period];
-    const bucketMs = period === "24h" ? HOUR : DAY;
-    const local = -tzOffsetMin * 60_000;
-    const floorB = (ts: number) => Math.floor((ts + local) / bucketMs) * bucketMs - local;
     const own = this.ownAddresses();
     const ownList = [...own];
 
@@ -137,12 +130,9 @@ export class Pnl {
       : [];
     const txs = db.prepare("SELECT signature, kind, mint, COALESCE(chain_fee, fee_lamports, 0) AS fee, COALESCE(tip_lamports, 0) AS tip, own_delta, COALESCE(block_time * 1000, created_at) AS at FROM tx WHERE status = 'CONFIRMED' AND signature IS NOT NULL").all() as TxRow[];
 
-    const buckets = new Map<number, number>();
-    const addB = (ts: number, v: number) => {
-      if (ts < start) return;
-      const b = floorB(ts);
-      buckets.set(b, (buckets.get(b) ?? 0) + v);
-    };
+    // Movimientos de P&L con su fecha, de TODO el historial (los cortes por período los hace quien llama)
+    const events: { ts: number; v: number }[] = [];
+    const addB = (ts: number, v: number) => void events.push({ ts, v });
 
     // Posición conjunta por token con coste medio
     type Pos = { cost: number; tok: number; realizedAll: number; realizedP: number; buysAll: number; feesAll: number; feesP: number; soldInP: boolean };
@@ -170,11 +160,11 @@ export class Pnl {
         p.cost -= part;
         p.tok = Math.max(0, p.tok - k);
         p.realizedAll += r;
+        addB(t.ts, r);
         if (inP) {
           sells += l;
           p.realizedP += r;
           p.soldInP = true;
-          addB(t.ts, r);
         }
       }
       if (inP) {
@@ -194,18 +184,39 @@ export class Pnl {
         p.feesAll += x.fee + x.tip;
         if (inP) p.feesP += x.fee + x.tip;
       }
+      addB(x.at, -x.fee - x.tip);
+      const gross = x.kind === "claim" && x.own_delta !== null ? x.own_delta + x.fee : null;
+      if (gross !== null) addB(x.at, gross);
       if (!inP) continue;
       networkFees += x.fee;
       jito += x.tip;
-      addB(x.at, -x.fee - x.tip);
-      if (x.kind === "claim" && x.own_delta !== null) {
-        const gross = x.own_delta + x.fee;
+      if (gross !== null) {
         claims += gross;
-        addB(x.at, gross);
       } else if (x.mint && x.own_delta !== null && ["create", "buy", "sell"].includes(x.kind)) {
         // la propina sale de la wallet (está en own_delta): no es rent
         rent += (tradeNet.get(x.signature) ?? 0) - x.fee - x.tip - x.own_delta;
       }
+    }
+
+    return { trades, txs, pos, events, buys, sells, padFees, nTrades, networkFees, jito, claims, rent };
+  }
+
+  /** `tzOffsetMin`: Date.getTimezoneOffset() del navegador, para que los días empiecen a medianoche local. */
+  async summary(period: Period, tzOffsetMin = 0) {
+    // Hasta 5 s esperando a indexar lo propio; si tarda más, se informa como pendiente
+    await Promise.race([this.indexOwn().catch(() => 0), new Promise((r) => setTimeout(r, 5000))]);
+    const db = this.db();
+    const now = this.clock();
+    const start = period === "all" ? 0 : now - PERIOD_MS[period];
+    const bucketMs = period === "24h" ? HOUR : DAY;
+    const local = -tzOffsetMin * 60_000;
+    const floorB = (ts: number) => Math.floor((ts + local) / bucketMs) * bucketMs - local;
+    const { trades, txs, pos, events, buys, sells, padFees, nTrades, networkFees, jito, claims, rent } = this.core(start);
+    const buckets = new Map<number, number>();
+    for (const e of events) {
+      if (e.ts < start) continue;
+      const b = floorB(e.ts);
+      buckets.set(b, (buckets.get(b) ?? 0) + e.v);
     }
 
     // Posición abierta al precio actual (no entra en el P&L del período)
@@ -276,6 +287,44 @@ export class Pnl {
       counts: { wallets: wallets.filter((w) => w.kind === "wallet").length, funders: wallets.filter((w) => w.kind === "funder").length, launches: launches.length, drafts },
       indexing: { pending: this.pending() },
       at: now,
+    };
+  }
+  /**
+   * REQ-DASH-003: calendario de P&L. Con `month` (1–12), una celda por día de ese mes; sin él, una por mes del
+   * año. Usa los mismos movimientos que `summary()` (realizado − fees de red − Jito + comisiones), en hora local.
+   */
+  async calendar(year: number, month: number | null, tzOffsetMin = 0) {
+    await Promise.race([this.indexOwn().catch(() => 0), new Promise((r) => setTimeout(r, 5000))]);
+    const local = -tzOffsetMin * 60_000;
+    const { events } = this.core(0);
+    const n = month ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 12;
+    const cells = Array.from({ length: n }, (_, i) => ({ index: i + 1, pnlLamports: 0, moves: 0 }));
+    let first: number | null = null;
+    for (const e of events) {
+      const d = new Date(e.ts + local); // fecha local leída con los getters UTC
+      first = first === null ? e.ts : Math.min(first, e.ts);
+      if (d.getUTCFullYear() !== year || (month && d.getUTCMonth() + 1 !== month)) continue;
+      const c = cells[(month ? d.getUTCDate() : d.getUTCMonth() + 1) - 1];
+      c.pnlLamports += e.v;
+      c.moves++;
+    }
+    for (const c of cells) c.pnlLamports = Math.round(c.pnlLamports);
+    const active = cells.filter((c) => c.moves > 0);
+    const solUsd = await this.chain
+      .get()
+      .reader.solUsd()
+      .catch(() => null);
+    return {
+      year,
+      month,
+      // día de la semana del 1 del mes (0 = lunes), para colocar la rejilla
+      firstWeekday: month ? (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7 : null,
+      cells,
+      totalLamports: active.reduce((a, c) => a + c.pnlLamports, 0),
+      positive: active.filter((c) => c.pnlLamports > 0).length,
+      negative: active.filter((c) => c.pnlLamports < 0).length,
+      firstMoveAt: first,
+      solUsd,
     };
   }
 }

@@ -10,6 +10,7 @@ import { ArrowDownRight, ArrowUpRight, Landmark, Layers, Rocket, Trophy, Wallet 
 import { api, ApiError } from "@/lib/api";
 import { fmtPct, fmtSol, fmtUsd, shortAddr, timeAgo } from "@/lib/format";
 import type { Point } from "@/components/dashboard/pnl-charts";
+import { PnlCalendar } from "@/components/dashboard/pnl-calendar";
 
 // Los gráficos no entran en el JS inicial (§8.6)
 const CumulativeChart = dynamic(() => import("@/components/dashboard/pnl-charts").then((m) => m.CumulativeChart), { ssr: false, loading: () => <div className="skeleton h-[168px]" /> });
@@ -214,6 +215,8 @@ export function DashboardView() {
         <LaunchTable title="Mejores lanzamientos" icon={<Trophy className="size-4 text-accent-b" aria-hidden />} rows={best} fmt={fmt} />
         <LaunchTable title="Lanzamientos recientes" icon={<Rocket className="size-4 text-accent-b" aria-hidden />} rows={recent} fmt={fmt} recent />
       </div>
+
+      <PnlCalendar fmt={fmt} />
     </div>
   );
 }

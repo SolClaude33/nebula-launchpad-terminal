@@ -127,4 +127,21 @@ describe.each(backends)("Dashboard y P&L · %s", (backend) => {
     expect(d.totals.trades).toBe(7);
     expect((await call("GET", "/api/dashboard?period=semana")).status).toBe(400);
   });
+
+  it("REQ-DASH-003 · calendario: el mes y el año suman lo mismo que el P&L de «Todo», en hora local", async () => {
+    const tz = 180; // UTC−3
+    const all = (await call("GET", `/api/dashboard?period=all&tz=${tz}`)).json;
+    const now = new Date(Date.now() - tz * 60_000);
+    const [y, m, day] = [now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()];
+    const mon = (await call("GET", `/api/dashboard/calendar?year=${y}&month=${m}&tz=${tz}`)).json;
+    expect(mon.cells).toHaveLength(new Date(Date.UTC(y, m, 0)).getUTCDate());
+    expect(mon.firstWeekday).toBe((new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7);
+    // todo pasó hoy: una sola celda con movimientos y el total cuadra con el resumen
+    expect(mon.cells.filter((c: { moves: number }) => c.moves > 0).map((c: { index: number }) => c.index)).toEqual([day]);
+    expect(Math.abs(mon.totalLamports - all.totals.pnlLamports)).toBeLessThanOrEqual(1);
+    const yr = (await call("GET", `/api/dashboard/calendar?year=${y}&tz=${tz}`)).json;
+    expect(yr.cells).toHaveLength(12);
+    expect(yr.cells[m - 1].pnlLamports).toBe(mon.totalLamports);
+    expect((await call("GET", `/api/dashboard/calendar?year=${y}&month=13`)).status).toBe(400);
+  });
 });

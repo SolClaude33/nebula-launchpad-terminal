@@ -227,7 +227,7 @@ Siguen el modelo de tareas de Vortex: estados `IDLE`, `RUNNING`, `PAUSED`, `COMP
 |---|---|---|---|---|
 | REQ-DASH-001 | M | Rendimiento por período (24 H, 7 D, 30 D, 1 A, Todo), en USD o SOL. Gráficos de rendimiento total, P&L diario y win rate. | El P&L descuenta las fees de red, la propina Jito y las fees de Pump.fun. | Proxima, Vortex |
 | REQ-DASH-002 | M | Saldo total (funder más wallets), mejores lanzamientos, lanzamientos recientes y P&L medio por lanzamiento | — | Proxima |
-| REQ-DASH-003 | S | Calendario de P&L (mes o año) | — | Proxima |
+| REQ-DASH-003 | S | Calendario de P&L (mes o año) | Mes por días y año por meses, en hora local, con los mismos movimientos que el P&L del dashboard (la suma cuadra con «Todo»). | Proxima |
 | REQ-DASH-004 | C | Tarjeta de P&L exportable a PNG | Se genera en local. | Proxima, Block X |
 | REQ-DASH-005 | M | Estado vacío que guía a crear la primera wallet y el primer lanzamiento | — | Proxima |
 

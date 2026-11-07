@@ -14,4 +14,9 @@ export const dashboardRoutes =
       const { period, tz } = z.object({ period: z.enum(["24h", "7d", "30d", "1y", "all"]).default("30d"), tz: z.coerce.number().int().min(-840).max(840).default(0) }).parse(req.query);
       return ctx.pnl.summary(period, tz);
     });
+    // REQ-DASH-003: calendario de P&L por días de un mes o por meses de un año
+    app.get("/dashboard/calendar", async (req) => {
+      const q = z.object({ year: z.coerce.number().int().min(2020).max(2100), month: z.coerce.number().int().min(1).max(12).optional(), tz: z.coerce.number().int().min(-840).max(840).default(0) }).parse(req.query);
+      return ctx.pnl.calendar(q.year, q.month ?? null, q.tz);
+    });
   };
