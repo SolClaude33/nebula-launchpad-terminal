@@ -6,7 +6,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../src/app";
-import { splitRpcKey, resolveRpcUrl } from "../src/settings";
+import { splitRpcKey, resolveRpcUrl, scrub } from "../src/settings";
+import { PinataStore } from "../src/ipfs";
 import { HOST, ORIGIN, PW, tmpDir } from "./helpers";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -175,6 +176,24 @@ describe("IPFS de mainnet con Pinata (stub de la API v3)", () => {
     await call("POST", `/api/launches/${draftId}/execute`);
     for (let i = 0; i < 100 && (await call("GET", `/api/launches/${draftId}`)).json.status !== "DONE"; i++) await new Promise((r) => setTimeout(r, 50));
     expect((await call("GET", `/api/launches/${draftId}`)).json.status).toBe("DONE");
+  });
+});
+
+describe("REVIEW-F1 P3-11 · «Probar» con una clave aún sin guardar", () => {
+  it("si Pinata devuelve la clave en su respuesta, no aparece en el mensaje ni en lo que pase por scrub", async () => {
+    const TYPED = "clave-pinata-escrita-sin-guardar-4711";
+    // un servidor que repite la credencial en el error (el peor caso)
+    const echo = (async (_u: string, init?: RequestInit) => {
+      const auth = new Headers(init?.headers).get("authorization") ?? "";
+      return new Response(JSON.stringify({ error: { details: `Credencial rechazada: ${auth}` } }), { status: 401, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    const store = new PinataStore(() => null, () => "https://ipfs.io/ipfs/", { upload: "http://pinata.invalid/up", auth: "http://pinata.invalid/auth" }, echo);
+    const r = await store.testAuth(TYPED);
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/no es válida/);
+    expect(r.message).not.toContain(TYPED);
+    // y cualquier log posterior que la repita también sale redactado
+    expect(scrub(`log con ${TYPED}`)).not.toContain(TYPED);
   });
 });
 

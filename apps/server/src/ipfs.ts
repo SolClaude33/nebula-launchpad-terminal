@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import type { Profile } from "@nebula/shared";
 import type { DB } from "./db";
 import type { Vault } from "./signer";
-import { readSecret, scrub, storedSettings } from "./settings";
+import { readSecret, remember, scrub, storedSettings } from "./settings";
 
 export type Stored = { cid: string; uri: string };
 
@@ -119,6 +119,8 @@ export class PinataStore implements MetadataStore {
   async testAuth(override?: string): Promise<{ ok: boolean; message: string }> {
     const jwt = override ?? this.key();
     if (!jwt) return { ok: false, message: "No hay clave de Pinata guardada." };
+    // una clave escrita para probar, aún sin guardar, también se redacta en todo lo que salga (REVIEW-F1 P3-11)
+    remember(jwt);
     try {
       const res = await this.fetchImpl(this.endpoints.auth, { headers: { authorization: `Bearer ${jwt}`, accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
       if (res.ok) return { ok: true, message: "Pinata acepta la clave." };
