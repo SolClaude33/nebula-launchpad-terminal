@@ -22,8 +22,13 @@ export const LaunchConfig = z.object({
   links: z.object({ x: url.default(""), telegram: url.default(""), web: url.default("") }).default({ x: "", telegram: "", web: "" }),
   devWalletId: z.string(),
   devBuyLamports: z.string().regex(/^\d+$/),
-  mode: z.enum(["quick", "manual"]),
-  holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/) })).max(40).default([]),
+  /** quick: compras seguidas tras la creación · pro: igual, con una espera fija por wallet · manual: solo dev. */
+  mode: z.enum(["quick", "pro", "manual"]),
+  /**
+   * `delaySec` (solo en Pro): segundos fijos de espera antes de la compra de esa wallet, contados desde que se
+   * confirmó la compra anterior (o la creación, para la primera). Sin aleatoriedad.
+   */
+  holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/), delaySec: z.number().int().min(0).max(600).default(0) })).max(40).default([]),
   slippagePct: z.number().min(0.1).max(50),
   mayhem: z.boolean().default(false),
   feeMode: z.enum(["creator", "holders"]),
@@ -43,6 +48,9 @@ export const LaunchConfig = z.object({
     .default(null),
 });
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
+/** Quick y Pro compran con las wallets del plan tras crear el token; Manual solo crea con el dev buy. */
+const buysAfterCreate = (mode: LaunchConfig["mode"]) => mode !== "manual";
+const MODE_LABEL: Record<LaunchConfig["mode"], string> = { quick: "Quick", pro: "Pro", manual: "Manual" };
 
 type Status = "PREPARED" | "CREATING" | "CREATED" | "BUYING" | "DONE" | "FAILED" | "PAUSED";
 type Row = { id: string; status: Status; paused_from: Status | null; config: string; preflight_fp: string | null; mint: string; create_sig: string | null; error: string | null; created_at: number; updated_at: number; scheduled_at: number | null; schedule_state: "WAITING" | "PAUSED" | "FIRED" | "FAILED" | null; schedule_error: string | null };
@@ -107,7 +115,13 @@ export class Launches {
     const r = this.row(id);
     if (!r) throw Object.assign(new Error("Lanzamiento no encontrado"), { statusCode: 404 });
     const cfg = JSON.parse(r.config) as Stored;
-    const buys = this.db().prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord").all(id);
+    // Momento real de cada envío (tabla tx, por su idempotency key), en ms desde la confirmación de la creación
+    const created = this.db().prepare("SELECT updated_at FROM tx WHERE idempotency_key = ? AND status = 'CONFIRMED'").get(`launch:${id}:create`) as { updated_at: number } | undefined;
+    const buys = (
+      this.db()
+        .prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
+        .all(id) as { ord: number; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null }[]
+    ).map(({ sentAt, ...b }) => ({ ...b, delaySec: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delaySec ?? 0) : 0, sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null }));
     const scheduled = r.scheduled_at !== null && (r.schedule_state === "WAITING" || r.schedule_state === "PAUSED" || r.schedule_state === "FAILED") && r.status === "PREPARED";
     return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
   }
@@ -172,8 +186,8 @@ export class Launches {
     if (existing && !["PREPARED", "FAILED"].includes(existing.status)) return this.view(cfg.draftId);
     const chain = this.chain.get();
     const dev = this.wallet(cfg.devWalletId);
-    const holders = cfg.mode === "quick" ? cfg.holders.map((h) => ({ ...h, w: this.wallet(h.walletId) })) : [];
-    if (cfg.mode === "quick" && holders.length === 0) throw Object.assign(new Error("El modo Quick necesita al menos una wallet holder."), { statusCode: 400 });
+    const holders = buysAfterCreate(cfg.mode) ? cfg.holders.map((h) => ({ ...h, w: this.wallet(h.walletId) })) : [];
+    if (buysAfterCreate(cfg.mode) && holders.length === 0) throw Object.assign(new Error(`El modo ${MODE_LABEL[cfg.mode]} necesita al menos una wallet holder.`), { statusCode: 400 });
     if (new Set(holders.map((h) => h.walletId)).size !== holders.length) throw Object.assign(new Error("Hay wallets repetidas en el plan."), { statusCode: 400 });
     if (holders.some((h) => h.walletId === dev.id)) throw Object.assign(new Error("La wallet dev no puede estar también como holder."), { statusCode: 400 });
 
@@ -232,14 +246,14 @@ export class Launches {
     const db = this.db();
     db.transaction(() => {
       db.prepare("DELETE FROM launch_buy WHERE launch_id = ?").run(id);
-      if (cfg.mode === "quick") {
+      if (buysAfterCreate(cfg.mode)) {
         const ins = db.prepare("INSERT INTO launch_buy(launch_id, ord, wallet_id, lamports, status) VALUES(?, ?, ?, ?, 'PENDING')");
         cfg.holders.forEach((h, i) => ins.run(id, i, h.walletId, Number(h.lamports)));
       }
       // lanzar a mano un programado lo da por disparado (no vuelve a lanzarse a su hora)
       db.prepare("UPDATE launch SET status = 'CREATING', schedule_state = CASE WHEN schedule_state IS NULL THEN NULL ELSE 'FIRED' END, updated_at = ? WHERE id = ?").run(Date.now(), id);
     })();
-    logActivity(db, "launch.start", `Lanzamiento de $${cfg.symbol} (${cfg.mode === "quick" ? `Quick, ${cfg.holders.length} holders` : "Manual"}) · mint ${r.mint}`);
+    logActivity(db, "launch.start", `Lanzamiento de $${cfg.symbol} (${buysAfterCreate(cfg.mode) ? `${MODE_LABEL[cfg.mode]}, ${cfg.holders.length} holders` : "Manual"}) · mint ${r.mint}`);
     void this.run(id);
     return this.view(id);
   }
@@ -440,7 +454,7 @@ export class Launches {
         r = this.row(id)!;
       }
       if (r.status === "CREATED") {
-        this.set(id, cfg.mode === "quick" ? "BUYING" : "DONE");
+        this.set(id, buysAfterCreate(cfg.mode) ? "BUYING" : "DONE");
         r = this.row(id)!;
       }
       if (r.status === "BUYING") {
@@ -452,6 +466,17 @@ export class Launches {
         for (const b of buys) {
           if (this.row(id)!.status !== "BUYING") return;
           await this.testHooks.beforeBuy?.(id, b.ord);
+          // Pro: espera fija antes de esta compra. Se corta si el lanzamiento deja de estar en BUYING (pausa,
+          // bloqueo); al reanudar, la espera de la wallet en curso empieza de cero.
+          const delaySec = cfg.mode === "pro" ? (cfg.holders[b.ord]?.delaySec ?? 0) : 0;
+          if (delaySec > 0) {
+            const until = Date.now() + delaySec * 1000;
+            while (Date.now() < until) {
+              if (this.row(id)!.status !== "BUYING") return;
+              await new Promise((res) => setTimeout(res, Math.min(250, until - Date.now())));
+            }
+            if (this.row(id)!.status !== "BUYING") return;
+          }
           // REQ-LAUNCH-014: dentro de la ventana, si las compras externas superan el umbral se completa antes
           if (guard && this.clock() - guardStart <= guard.windowSec * 1000) {
             // Falla cerrado: sin datos de la cadena (429, timeout) no se compra a ciegas (REVIEW-F1 P1-3)
@@ -494,7 +519,7 @@ export class Launches {
         this.set(id, "DONE");
       }
       const v = this.view(id);
-      if (v.status === "DONE") logActivity(this.db(), "launch.done", `Lanzado $${cfg.symbol} · mint ${r.mint}${cfg.mode === "quick" ? ` · ${(v.buys as { status: string }[]).filter((b) => b.status === "OK").length}/${cfg.holders.length} compras` : ""}`);
+      if (v.status === "DONE") logActivity(this.db(), "launch.done", `Lanzado $${cfg.symbol} · mint ${r.mint}${buysAfterCreate(cfg.mode) ? ` · ${(v.buys as { status: string }[]).filter((b) => b.status === "OK").length}/${cfg.holders.length} compras` : ""}`);
     } catch (e) {
       const cur = this.row(id);
       if (e instanceof VaultError && e.code === "LOCKED" && cur) this.pause(id, cur.status === "PAUSED" ? "CREATING" : cur.status);

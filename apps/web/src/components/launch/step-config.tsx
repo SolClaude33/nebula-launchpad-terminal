@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { CalendarClock, ShieldAlert, TriangleAlert } from "lucide-react";
-import { fieldErrors, useDraft } from "@/lib/draft";
+import { buysAfterCreate, fieldErrors, useDraft } from "@/lib/draft";
 import { fmtLamports } from "@/lib/chain";
 import { Field, RadioCard, SectionTitle, Suffix } from "./ui";
 import { useLaunchData } from "./use-launch-data";
@@ -98,11 +98,12 @@ export function StepConfig() {
 
       <fieldset>
         <legend className="mb-2 text-[13px] font-medium">Modo de lanzamiento</legend>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Tras crear el token compran, en orden, las wallets holder del plan (paso 3). Verás la supply que queda en wallets propias." />
+          <RadioCard name="lm" value="pro" checked={d.launchMode === "pro"} onSelect={() => set({ launchMode: "pro" })} title="Pro" body="Como Quick, pero eliges cuántos segundos espera cada wallet antes de comprar (paso 3). Esperas fijas, sin aleatoriedad." />
           <RadioCard name="lm" value="manual" checked={d.launchMode === "manual"} onSelect={() => set({ launchMode: "manual" })} title="Manual" body="Solo crea el token con el dev buy." />
         </div>
-        {d.launchMode === "quick" && (
+        {buysAfterCreate(d) && (
           <div className="mt-3 grid grid-cols-[auto_1fr] items-start gap-4 rounded-[var(--radius-md)] border border-line bg-surface-1 p-4">
             <div role="radiogroup" aria-label="Monto por wallet" className="flex rounded-[var(--radius-sm)] border border-line bg-surface-2 p-0.5">
               {(["fixed", "range"] as const).map((m) => (
@@ -131,7 +132,7 @@ export function StepConfig() {
         )}
       </fieldset>
 
-      {d.launchMode === "quick" && <GuardPanel />}
+      {buysAfterCreate(d) && <GuardPanel />}
 
       <p className="flex items-start gap-2 rounded-[var(--radius-md)] border border-line bg-surface-1 p-3.5 text-[12.5px] text-muted">
         <CalendarClock className="mt-0.5 size-4 shrink-0 text-accent-b" aria-hidden />

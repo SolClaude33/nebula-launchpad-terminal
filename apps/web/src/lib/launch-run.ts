@@ -14,9 +14,9 @@ export type LaunchView = {
   error: string | null;
   name: string;
   symbol: string;
-  mode: "quick" | "manual";
+  mode: "quick" | "pro" | "manual";
   preflight: { ok: boolean; checks: Check[]; at: number } | null;
-  buys: { ord: number; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null }[];
+  buys: { ord: number; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null; delaySec?: number; sentAfterMs?: number | null }[];
   /** REQ-LAUNCH-015: programación activa (esperando, en pausa o fallida a su hora) */
   schedule: { at: number; state: "WAITING" | "PAUSED" | "FAILED"; error: string | null; cancellableUntil: number } | null;
 };

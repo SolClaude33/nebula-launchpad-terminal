@@ -17,7 +17,7 @@ type LaunchItem = {
   mint: string;
   name: string;
   symbol: string;
-  mode: "quick" | "manual";
+  mode: "quick" | "pro" | "manual";
   devBuyLamports: string;
   holders: number;
   buys: { ok: number; failed: number; skipped: number; pending: number };
@@ -147,7 +147,7 @@ function LaunchList({ onCount, onDrafts }: { onCount: (n: number) => void; onDra
                     <span className={`chip h-5 ${st.cls}`}>{st.label}</span>
                   </p>
                   <p className="num mt-0.5 text-[11.5px] text-faint">
-                    {shortAddr(l.mint)} · {l.mode === "quick" ? `Quick · ${l.buys.ok}/${l.holders} compras${l.buys.failed ? ` · ${l.buys.failed} fallidas` : ""}${l.buys.skipped ? ` · ${l.buys.skipped} omitidas` : ""}` : "Manual"} · dev buy {fmtSol(Number(l.devBuyLamports) / 1e9, 3)} ·{" "}
+                    {shortAddr(l.mint)} · {l.mode !== "manual" ? `${l.mode === "pro" ? "Pro" : "Quick"} · ${l.buys.ok}/${l.holders} compras${l.buys.failed ? ` · ${l.buys.failed} fallidas` : ""}${l.buys.skipped ? ` · ${l.buys.skipped} omitidas` : ""}` : "Manual"} · dev buy {fmtSol(Number(l.devBuyLamports) / 1e9, 3)} ·{" "}
                     {l.status === "SCHEDULED" && l.scheduledAt ? `programado ${new Date(l.scheduledAt).toLocaleString("es-ES")}` : `hace ${timeAgo(l.createdAt)}`}
                   </p>
                   {l.error && <p className="mt-1 truncate text-[12px] text-sell" title={l.error}>{l.error}</p>}

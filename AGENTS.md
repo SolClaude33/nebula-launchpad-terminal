@@ -51,6 +51,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
   - A su hora se rehace el dry-run.
   - Se puede cancelar hasta T−10 s.
   - El Launch Guard solo omite compras propias: nunca vende.
+  - Modos: Quick (compras seguidas tras crear), **Pro** (igual, con una espera fija de 0–600 s por wallet, contada desde la confirmación de la compra anterior; sin aleatoriedad; pausar o bloquear corta la espera y al reanudar empieza de cero) y Manual (solo dev). La vista de cada compra da `sentAfterMs` (envío real desde la creación).
 - **Descargas de terceros (clonar):** solo https y solo IP pública, con límites de tamaño.
 - **Exclusiones:** no se implementa nada que haga pasar actividad coordinada por orgánica, como volumen o wash trading, MEV de bloque 0, evasión de bubble maps, wallets envejecidas, financiación vía mixer o saltos por CEX, o el «Nuke» del Sniper Guard (§2.3 de la spec).
 - **Publicación:** nada de push, remoto ni despliegue hasta que Nicol lo pida.

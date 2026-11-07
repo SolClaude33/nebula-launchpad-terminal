@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CircleDashed, FlaskConical, Loader2, Table2, XCircle } from "lucide-react";
-import { planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { buysAfterCreate, delayTimeline, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports } from "@/lib/chain";
 import { SectionTitle } from "./ui";
@@ -40,7 +40,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
         ["Comisiones", d.feeMode === "creator" ? "Creator Fees" : "Holder Rewards"],
         ["Wallet dev", byId.get(d.devWalletId)?.label ?? "—"],
         ["Dev buy", fmtLamports(toLamports(d.devBuy), 3)],
-        ["Modo", d.launchMode === "quick" ? `Quick · ${d.plan.length} wallets` : "Manual"],
+        ["Modo", d.launchMode === "quick" ? `Quick · ${d.plan.length} wallets` : d.launchMode === "pro" ? `Pro · ${d.plan.length} wallets · esperas ${delayTimeline(d).at(-1) ?? 0} s` : "Manual"],
         ["Slippage", `${d.slippage} %`],
       ],
     },
@@ -49,7 +49,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
       step: 3,
       items: [
         ["Compras holders", fmtLamports(holdersTotal, 3)],
-        ["Transacciones", String(1 + (d.launchMode === "quick" ? d.plan.length : 0))],
+        ["Transacciones", String(1 + (buysAfterCreate(d) ? d.plan.length : 0))],
       ],
     },
   ];

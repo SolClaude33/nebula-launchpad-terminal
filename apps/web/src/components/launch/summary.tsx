@@ -122,7 +122,7 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
           <div className="min-w-0">
             <p className="truncate text-[15px] font-semibold">{d.name || "Sin nombre"}</p>
             <p className="num text-[12px] text-muted">
-              {d.symbol ? `$${d.symbol}` : "$—"} · Pump.fun · {d.launchMode === "quick" ? "Quick" : "Manual"}
+              {d.symbol ? `$${d.symbol}` : "$—"} · Pump.fun · {d.launchMode === "quick" ? "Quick" : d.launchMode === "pro" ? "Pro" : "Manual"}
             </p>
           </div>
         </div>
@@ -243,7 +243,7 @@ function LaunchResult() {
           </div>
         )}
       </dl>
-      {view.mode === "quick" && (
+      {view.mode !== "manual" && (
         <>
           <p className="mt-3 mb-1.5 text-[12px] text-muted">
             Compras · {ok}/{view.buys.length}
@@ -254,6 +254,8 @@ function LaunchResult() {
                 {b.status === "OK" ? <CheckCircle2 className="size-3.5 text-buy" aria-label="entró" /> : b.status === "FAILED" ? <XCircle className="size-3.5 text-sell" aria-label="falló" /> : b.status === "SKIPPED" ? <CircleSlash className="size-3.5 text-faint" aria-label="omitida" /> : <Loader2 className="size-3.5 animate-spin text-muted" aria-label="pendiente" />}
                 <span className="w-24 truncate">{b.label}</span>
                 <span className="num text-muted">{fmtLamports(BigInt(b.lamports), 3)}</span>
+                {view.mode === "pro" && <span className="num text-faint">espera {b.delaySec ?? 0} s</span>}
+                {b.sentAfterMs != null && <span className="num text-faint" title="Momento real del envío, desde la confirmación de la creación">T+{(b.sentAfterMs / 1000).toFixed(1).replace(".", ",")} s</span>}
                 {b.reason && <span className="truncate text-sell">{b.reason}</span>}
               </li>
             ))}

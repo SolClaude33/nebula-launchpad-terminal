@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
-import { fundingNeeds, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { buysAfterCreate, delayOf, delayTimeline, fieldErrors, fundingNeeds, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fmtLamports } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
 import { useLaunchData } from "./use-launch-data";
 
 const COLS = "grid-cols-[24px_minmax(0,1fr)_84px_92px_110px] xl:grid-cols-[28px_minmax(0,1fr)_110px_120px_140px]";
+/** Modo Pro: columna extra «Espera» */
+const COLS_PRO = "grid-cols-[24px_minmax(0,1fr)_96px_84px_92px_110px] xl:grid-cols-[28px_minmax(0,1fr)_120px_110px_120px_140px]";
 const short = (a?: string) => (a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "—");
 
 type RowProps = {
@@ -25,16 +27,19 @@ type RowProps = {
   onDrop: () => void;
   onMove: (to: number) => void;
   onRemove: () => void;
+  /** Modo Pro: espera de esta wallet y segundo acumulado en que compraría (sin contar confirmaciones) */
+  pro?: { value: string; at: number; invalid: boolean; onChange: (v: string) => void };
+  cols: string;
 };
 
-function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDragStart, onDrop, onMove, onRemove }: RowProps) {
+function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDragStart, onDrop, onMove, onRemove, pro, cols }: RowProps) {
   return (
     <li
       draggable={!dev}
       onDragStart={() => !dev && onDragStart()}
       onDragOver={(e) => e.preventDefault()}
       onDrop={() => !dev && onDrop()}
-      className={`group grid ${COLS} items-center gap-3 border-b border-line/50 px-4 py-2.5 text-[12.5px] last:border-0 ${dev ? "bg-surface-2/30" : dragging ? "opacity-40" : "hover:bg-surface-2/50"}`}
+      className={`group grid ${cols} items-center gap-3 border-b border-line/50 px-4 py-2.5 text-[12.5px] last:border-0 ${dev ? "bg-surface-2/30" : dragging ? "opacity-40" : "hover:bg-surface-2/50"}`}
     >
       <span className="flex items-center gap-0.5 text-faint">
         {!dev && <GripVertical className="size-3.5 cursor-grab" aria-hidden />}
@@ -60,6 +65,18 @@ function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDr
           </span>
         )}
       </span>
+      {cols === COLS_PRO &&
+        (dev || !pro ? (
+          <span className="num text-right text-[12px] text-muted">T+0 s</span>
+        ) : (
+          <span className="flex flex-col items-end gap-0.5">
+            <span className="relative">
+              <input aria-label={`Espera antes de la compra de ${label}`} inputMode="numeric" value={pro.value} placeholder="0" onChange={(e) => pro.onChange(e.target.value)} aria-invalid={pro.invalid} className="field num h-7 w-[64px] pr-5 text-right text-[12px]" />
+              <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[11px] text-faint">s</span>
+            </span>
+            <span className="num text-[10.5px] text-faint">{pro.invalid ? "0–600 s" : `≈ T+${pro.at} s`}</span>
+          </span>
+        ))}
       <span className="num text-right">{fmtLamports(amount, 3)}</span>
       <span className="num text-right text-muted">{fmtLamports(have, 3)}</span>
       {shortBy > 0n ? (
@@ -88,6 +105,11 @@ export function StepFunding() {
   const shortList = needs.filter((n) => n.short > 0n);
   const maxShort = shortList.reduce((a, n) => (n.short > a ? n.short : a), 0n);
   const toSend = shortList.reduce((a, n) => a + n.short, 0n);
+  const isPro = d.launchMode === "pro";
+  const cols = isPro ? COLS_PRO : COLS;
+  const timeline = delayTimeline(d);
+  const [allDelay, setAllDelay] = useState("5");
+  const delayErr = fieldErrors(d).delays;
   const funders = wallets.filter((w) => w.kind === "funder" && !w.archived);
   const def = funders.find((f) => f.isDefaultFunder);
   const folders = useMemo(() => [...new Set(wallets.flatMap((w) => w.folderIds))], [wallets]);
@@ -115,6 +137,8 @@ export function StepFunding() {
       amount: dev ? toLamports(d.devBuy) : amounts[i],
       have: n?.have,
       shortBy: n?.short ?? 0n,
+      cols,
+      pro: isPro && !dev ? { value: d.delays?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delays: { ...d.delays, [id]: v } }) } : undefined,
       dragging: dragId === id,
       onDragStart: () => setDragId(id),
       onDrop: () => {
@@ -152,8 +176,8 @@ export function StepFunding() {
         </div>
         <div className="panel p-4">
           <p className="telemetry">Wallets en el plan</p>
-          <p className="num mt-1.5 text-[20px]">{d.launchMode === "quick" ? d.plan.length : 0}</p>
-          <p className="text-[11.5px] text-faint">{d.launchMode === "quick" ? "compran en este orden tras crear el token" : "modo Manual: solo dev"}</p>
+          <p className="num mt-1.5 text-[20px]">{buysAfterCreate(d) ? d.plan.length : 0}</p>
+          <p className="text-[11.5px] text-faint">{isPro ? `compran en este orden; esperas que suman ${timeline.at(-1) ?? 0} s` : buysAfterCreate(d) ? "compran en este orden tras crear el token" : "modo Manual: solo dev"}</p>
         </div>
       </div>
 
@@ -162,7 +186,23 @@ export function StepFunding() {
           <p className="text-[13px] font-medium">
             Orden de compra <span className="ml-1 text-[12px] font-normal text-faint">arrastra o usa las flechas</span>
           </p>
-          {d.launchMode === "quick" && (
+          {isPro && d.plan.length > 0 && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                set({ delays: { ...d.delays, ...Object.fromEntries(d.plan.map((id) => [id, allDelay])) } });
+              }}
+              className="ml-auto mr-2 flex items-center gap-1.5 text-[12px] text-muted"
+            >
+              <label htmlFor="all-delay">Espera para todas</label>
+              <input id="all-delay" inputMode="numeric" value={allDelay} onChange={(e) => setAllDelay(e.target.value)} className="field num h-8 w-[56px] text-right text-[12px]" />
+              <span>s</span>
+              <button type="submit" className="btn h-8 text-[12px]">
+                Aplicar
+              </button>
+            </form>
+          )}
+          {buysAfterCreate(d) && (
             <button onClick={() => setAdding((a) => !a)} aria-expanded={adding} className="btn h-8">
               <Plus className="size-3.5" aria-hidden /> Añadir wallets
             </button>
@@ -201,17 +241,23 @@ export function StepFunding() {
             </ul>
           </div>
         )}
-        <div aria-hidden className={`grid ${COLS} gap-3 border-b border-line bg-surface-2/40 px-4 py-2`}>
+        {isPro && (
+          <p className={`border-b border-line px-4 py-2 text-[11.5px] ${delayErr ? "text-sell" : "text-faint"}`}>
+            {delayErr ?? "La espera de cada wallet cuenta desde que se confirma la compra anterior (la primera, desde la creación). A cada compra súmale ~1–2 s de confirmación."}
+          </p>
+        )}
+        <div aria-hidden className={`grid ${cols} gap-3 border-b border-line bg-surface-2/40 px-4 py-2`}>
           <span />
           <span className="telemetry">Wallet</span>
+          {isPro && <span className="telemetry text-right">Espera</span>}
           <span className="telemetry text-right">Compra</span>
           <span className="telemetry text-right">Saldo</span>
           <span className="telemetry text-right">Estado</span>
         </div>
         <ol id="plan">
           {d.devWalletId ? <PlanRow {...rowProps(d.devWalletId, 0, true)} /> : <li className="px-4 py-3 text-[12.5px] text-warn">Elige la wallet dev en el paso 2.</li>}
-          {d.launchMode === "quick" && d.plan.map((id, i) => <PlanRow key={id} {...rowProps(id, i)} />)}
-          {d.launchMode === "quick" && d.plan.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-muted">Añade wallets holder al plan.</li>}
+          {buysAfterCreate(d) && d.plan.map((id, i) => <PlanRow key={id} {...rowProps(id, i)} />)}
+          {buysAfterCreate(d) && d.plan.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-muted">Añade wallets holder al plan.</li>}
         </ol>
       </div>
 

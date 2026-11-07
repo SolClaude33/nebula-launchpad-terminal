@@ -22,7 +22,8 @@ export type Draft = {
   feeAck: boolean;
   devWalletId: string;
   devBuy: string;
-  launchMode: "quick" | "manual";
+  /** quick: compras seguidas tras crear · pro: con espera fija por wallet · manual: solo dev */
+  launchMode: "quick" | "pro" | "manual";
   amountMode: "fixed" | "range";
   fixedAmount: string;
   rangeMin: string;
@@ -30,6 +31,8 @@ export type Draft = {
   slippage: string;
   /** wallets holder del plan, en orden de compra */
   plan: string[];
+  /** Modo Pro: segundos de espera antes de la compra de cada wallet (por id), desde la compra anterior */
+  delays: Record<string, string>;
   /** REQ-LAUNCH-014: Launch Guard (solo modo Quick) */
   guardEnabled: boolean;
   guardSol: string;
@@ -58,6 +61,7 @@ export const emptyDraft = (): Draft => ({
   rangeMax: "0,3",
   slippage: "15",
   plan: [],
+  delays: {},
   guardEnabled: false,
   guardSol: "1",
   guardSec: "30",
@@ -74,6 +78,24 @@ export const toLamports = (s: string) => {
 };
 
 /** Monto de cada holder del plan (determinista dentro del rango para que la vista previa sea estable). */
+/** Quick y Pro compran con las wallets del plan tras crear el token. */
+export const buysAfterCreate = (d: Pick<Draft, "launchMode">) => d.launchMode !== "manual";
+
+/** Espera (s) antes de la compra de una wallet; solo cuenta en Pro. NaN si el texto no es válido. */
+export function delayOf(d: Pick<Draft, "launchMode" | "delays">, id: string): number {
+  if (d.launchMode !== "pro") return 0;
+  const raw = (d.delays?.[id] ?? "").trim();
+  if (raw === "") return 0;
+  const v = Number(raw.replace(",", "."));
+  return Number.isInteger(v) && v >= 0 && v <= 600 ? v : NaN;
+}
+
+/** Segundos acumulados de espera hasta cada compra del plan (sin contar las confirmaciones). */
+export const delayTimeline = (d: Draft) => {
+  let acc = 0;
+  return d.plan.map((id) => (acc += delayOf(d, id) || 0));
+};
+
 export function planAmounts(d: Draft): bigint[] {
   if (d.launchMode === "manual") return [];
   if (d.amountMode === "fixed") return d.plan.map(() => toLamports(d.fixedAmount));
@@ -106,7 +128,7 @@ export function fieldErrors(d: Draft) {
   if (!urlOk(d.links.web)) e.web = "URL completa, con https://";
   const dev = num(d.devBuy);
   if (Number.isNaN(dev) || dev < 0) e.devBuy = "Indica un número ≥ 0.";
-  if (d.launchMode === "quick" && d.guardEnabled) {
+  if (buysAfterCreate(d) && d.guardEnabled) {
     const g = num(d.guardSol);
     if (Number.isNaN(g) || g <= 0) e.guardSol = "Indica un umbral mayor que 0.";
     const sec = Number(d.guardSec);
@@ -116,7 +138,8 @@ export function fieldErrors(d: Draft) {
   }
   const slip = num(d.slippage);
   if (Number.isNaN(slip) || slip < 0.1 || slip > 50) e.slippage = "Entre 0,1 % y 50 %.";
-  if (d.launchMode === "quick") {
+  if (d.launchMode === "pro" && d.plan.some((id) => Number.isNaN(delayOf(d, id)))) e.delays = "Espera: segundos enteros entre 0 y 600.";
+  if (buysAfterCreate(d)) {
     if (d.amountMode === "fixed") {
       const a = num(d.fixedAmount);
       if (Number.isNaN(a) || a <= 0) e.fixedAmount = "Indica un monto mayor que 0.";
@@ -145,11 +168,11 @@ export function issues(d: Draft, ctx: { balances: Record<string, bigint>; addres
   else if (d.upload.status !== "done") out.push({ id: "upload", step: 1, field: "image", message: "Sube la imagen." });
   for (const [k, v] of Object.entries(fe)) {
     if (!v) continue;
-    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : 2, field: k, message: v });
+    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : k === "delays" ? 3 : 2, field: k, message: v });
   }
   if (!d.devWalletId) out.push({ id: "dev", step: 2, field: "devWallet", message: "Elige la wallet dev." });
   if (!d.feeAck) out.push({ id: "feeAck", step: 2, field: "feeAck", message: "Confirma el destino de las comisiones (irreversible)." });
-  if (d.launchMode === "quick" && d.plan.length === 0) out.push({ id: "plan", step: 3, field: "plan", message: "Añade al menos una wallet holder o usa el modo Manual." });
+  if (buysAfterCreate(d) && d.plan.length === 0) out.push({ id: "plan", step: 3, field: "plan", message: "Añade al menos una wallet holder o usa el modo Manual." });
   const short = fundingNeeds(d, ctx).filter((n) => n.short > 0n).length;
   if (short > 0) out.push({ id: "funding", step: 3, field: "funding", message: `${short} wallets sin saldo suficiente. Financia desde el funder.` });
   return out;
@@ -188,12 +211,12 @@ export function toConfig(d: Draft) {
     devWalletId: d.devWalletId,
     devBuyLamports: toLamports(d.devBuy).toString(),
     mode: d.launchMode,
-    holders: d.launchMode === "quick" ? d.plan.map((id, i) => ({ walletId: id, lamports: amounts[i].toString() })) : [],
+    holders: buysAfterCreate(d) ? d.plan.map((id, i) => ({ walletId: id, lamports: amounts[i].toString(), delaySec: delayOf(d, id) || 0 })) : [],
     slippagePct: num(d.slippage),
     mayhem: d.mode === "mayhem",
     feeMode: d.feeMode,
     feeAck: d.feeAck,
-    guard: d.launchMode === "quick" && d.guardEnabled ? { thresholdLamports: toLamports(d.guardSol).toString(), windowSec: Number(d.guardSec), whitelist: guardList(d) } : null,
+    guard: buysAfterCreate(d) && d.guardEnabled ? { thresholdLamports: toLamports(d.guardSol).toString(), windowSec: Number(d.guardSec), whitelist: guardList(d) } : null,
   };
 }
 
