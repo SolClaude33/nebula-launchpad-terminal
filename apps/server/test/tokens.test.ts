@@ -74,9 +74,13 @@ describe.each(backends)("Enviar y quemar tokens · %s", (backend) => {
     // ya está en la libreta: la próxima vez no es «nueva»
     expect((await call("POST", "/api/tokens/send/preview", { ...body, id: randomUUID() })).json.to.newAddress).toBe(false);
     const pda = PublicKey.findProgramAddressSync([Buffer.from("nebula")], new PublicKey("11111111111111111111111111111111"))[0].toBase58();
-    const bad = await call("POST", "/api/tokens/send", { ...body, id: randomUUID(), to: pda }, { "x-nebula-stepup": await stepUp() });
+    const tok = await stepUp();
+    const bad = await call("POST", "/api/tokens/send", { ...body, id: randomUUID(), to: pda }, { "x-nebula-stepup": tok });
     expect(bad.status).toBe(400);
     expect(bad.json.message).toMatch(/PDA/);
+    // REVIEW-F1 P3-9: el rechazo no gasta la reconfirmación
+    const again = await call("POST", "/api/tokens/send", { ...body, id: randomUUID(), to: Keypair.generate().publicKey.toBase58() }, { "x-nebula-stepup": tok });
+    expect(again.status, JSON.stringify(again.json)).toBe(200);
     const act = (await call("GET", "/api/activity?kind=tokens")).json.items as { kind: string; detail: string }[];
     expect(act.some((a) => a.kind === "tokens.send" && a.detail.includes(ext))).toBe(true);
   }, 120_000);

@@ -110,8 +110,9 @@ export class TokenOps {
     }
     const pre = await this.plan(kind, input);
     // Sacar tokens de la bóveda (destino que no es una wallet propia) exige reconfirmar la contraseña
-    if (kind === "send" && !pre.to?.own) this.vault.consumeStepUp(stepUp, "withdraw");
+    // el rechazo del PDA va antes de gastar la reconfirmación (REVIEW-F1 P3-9)
     if (kind === "send" && pre.to?.offCurve) throw Object.assign(new Error("El destino es una dirección de programa (PDA): los tokens quedarían bloqueados."), { statusCode: 400 });
+    if (kind === "send" && !pre.to?.own) this.vault.consumeStepUp(stepUp, "withdraw");
     const chain = this.chain.get();
     {
       for (const it of pre.items) {
