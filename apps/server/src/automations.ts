@@ -14,7 +14,7 @@
 //   Límite → COMPLETED con todos los objetivos y TIMEOUT si caduca antes. La duración es de reloj: el
 //   tiempo en pausa cuenta.
 import { randomUUID } from "node:crypto";
-import { AUTO_FINAL, CreateAutomationBody, dcaPlan, type AutoStatus, type AutomationConfig, type AutomationExecution } from "@nebula/shared";
+import { AUTO_FINAL, CreateAutomationBody, dcaPlan, trailingStopUsd, type AutoStatus, type AutomationConfig, type AutomationExecution } from "@nebula/shared";
 import type { z } from "zod";
 import type { DB } from "./db";
 import { logActivity } from "./db";
@@ -49,11 +49,14 @@ export type AutoState = {
   lastError: string | null;
   endReason: string | null;
   mcUsd: number | null;
+  /** trailing stop: máximo de market cap (USD) visto desde la activación, y si ya está activado */
+  peakUsd: number | null;
+  armed: boolean;
 };
-type Row = { id: string; type: "dca" | "limit"; label: string; status: AutoStatus; config: string; attempt: number; mint: string; state: string; created_at: number; updated_at: number };
+type Row = { id: string; type: "dca" | "limit" | "trailing"; label: string; status: AutoStatus; config: string; attempt: number; mint: string; state: string; created_at: number; updated_at: number };
 type Task = Omit<Row, "config" | "state"> & { config: AutomationConfig; state: AutoState };
 
-const fresh = (): AutoState => ({ startAt: null, endsAt: null, nextAt: null, seq: 0, spent: "0", consecErrors: 0, fired: 0, order: null, waiting: null, lastError: null, endReason: null, mcUsd: null });
+const fresh = (): AutoState => ({ startAt: null, endsAt: null, nextAt: null, seq: 0, spent: "0", consecErrors: 0, fired: 0, order: null, waiting: null, lastError: null, endReason: null, mcUsd: null, peakUsd: null, armed: false });
 const bad = (message: string, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 const fmtUsd = (v: number) => `$${v >= 1e6 ? `${(v / 1e6).toFixed(2)} M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} K` : v.toFixed(0)}`;
 
@@ -153,7 +156,9 @@ export class Automations {
       progress:
         c.type === "dca"
           ? { executions: t.state.seq, planned, spent: t.state.spent, total: c.end.kind !== "duration" ? c.end.totalAmount : null, nextAmount: plan!.amountAt(t.state.seq).toString() }
-          : { fired: t.state.fired, targets: c.targets.length, next: c.targets[t.state.fired]?.mcUsd ?? null },
+          : c.type === "trailing"
+            ? { fired: t.state.fired, targets: 1, next: null, armed: t.state.armed, peakUsd: t.state.peakUsd, stopUsd: t.state.peakUsd !== null ? trailingStopUsd(t.state.peakUsd, c.trailPct) : null }
+            : { fired: t.state.fired, targets: c.targets.length, next: c.targets[t.state.fired]?.mcUsd ?? null },
       state: { startAt: t.state.startAt, endsAt: t.state.endsAt, nextAt: t.state.nextAt, waiting: t.state.waiting, lastError: t.state.lastError, endReason: t.state.endReason, consecErrors: t.state.consecErrors, mcUsd: t.state.mcUsd, inFlight: t.state.order?.id ?? null },
       createdAt: t.created_at,
       updatedAt: t.updated_at,
@@ -206,6 +211,7 @@ export class Automations {
   private labelFor(c: AutomationConfig) {
     const sym = this.symbol(c.mint);
     const side = c.side === "buy" ? "compra" : "venta";
+    if (c.type === "trailing") return `Trailing stop ${c.trailPct} % · vende ${c.sellPct} %${sym ? ` · ${sym}` : ""}`;
     return c.type === "dca" ? `DCA de ${side}${sym ? ` · ${sym}` : ""}` : `Límite de ${side} · ${c.targets.length} ${c.targets.length === 1 ? "objetivo" : "objetivos"}${sym ? ` · ${sym}` : ""}`;
   }
 
@@ -398,6 +404,7 @@ export class Automations {
     const st = t.state;
     if (st.endsAt !== null && now >= st.endsAt) {
       if (c.type === "dca") return this.end(t, "COMPLETED", "Duración cumplida.");
+      if (c.type === "trailing") return this.end(t, "TIMEOUT", "Caducó sin que saltara el trailing stop.");
       return this.end(t, "TIMEOUT", `Caducó con ${st.fired} de ${c.targets.length} objetivos ejecutados.`);
     }
     if (st.startAt !== null && now < st.startAt) return this.wait(t, "Retardo de inicio");
@@ -409,12 +416,13 @@ export class Automations {
       if (remaining <= 0n) return this.end(t, "COMPLETED", "Monto total alcanzado.");
     }
     if (c.type === "limit" && st.fired >= c.targets.length) return this.end(t, "COMPLETED", "Todos los objetivos ejecutados.");
+    if (c.type === "trailing" && st.fired >= 1) return this.end(t, "COMPLETED", "Trailing stop ejecutado.");
 
     // market cap del indexer + Pyth
     const m = await this.live.market(t.mint);
     const mcUsd = m.mcUsd;
     if (m.info.venue === "migrating") return this.wait(t, "Migración a PumpSwap en curso", { mcUsd });
-    const needPrice = c.type === "limit" || c.mcMinUsd !== null || c.mcMaxUsd !== null;
+    const needPrice = c.type !== "dca" || c.mcMinUsd !== null || c.mcMaxUsd !== null;
     if (needPrice && mcUsd === null) return this.wait(t, "Sin precio SOL/USD vigente (Pyth)", { mcUsd });
     if (mcUsd !== null && ((c.mcMinUsd !== null && mcUsd < c.mcMinUsd) || (c.mcMaxUsd !== null && mcUsd > c.mcMaxUsd))) return this.wait(t, `Market cap ${fmtUsd(mcUsd)} fuera del rango`, { mcUsd });
 
@@ -428,6 +436,17 @@ export class Automations {
       if (remaining !== null && each * BigInt(n) > remaining) each = remaining / BigInt(n);
       if (each <= 0n) return this.end(t, "COMPLETED", "Monto total alcanzado.");
       body = c.side === "buy" ? { ...baseOrder, lamportsEach: each.toString() } : { ...baseOrder, tokensEach: each.toString() };
+    } else if (c.type === "trailing") {
+      // REQ-AUTO-004: el máximo solo sube; se vende al caer trailPct % desde él (una vez)
+      const armed = st.armed || c.activationMcUsd === null || mcUsd! >= c.activationMcUsd;
+      if (!armed) return this.wait(t, `Esperando activación ≥ ${fmtUsd(c.activationMcUsd!)} (ahora ${fmtUsd(mcUsd!)})`, { mcUsd });
+      const peakUsd = Math.max(st.peakUsd ?? mcUsd!, mcUsd!);
+      const stop = trailingStopUsd(peakUsd, c.trailPct);
+      if (mcUsd! > stop) return this.wait(t, `Máximo ${fmtUsd(peakUsd)} · salta a ≤ ${fmtUsd(stop)} (ahora ${fmtUsd(mcUsd!)})`, { mcUsd, peakUsd, armed: true });
+      st.peakUsd = peakUsd;
+      st.armed = true;
+      target = 0;
+      body = { ...baseOrder, pct: c.sellPct };
     } else {
       target = st.fired;
       const tg = c.targets[target];
@@ -491,7 +510,7 @@ export class Automations {
     if (ok.length > 0) {
       st.consecErrors = 0;
       st.lastError = null;
-      if (c.type === "limit") st.fired = (ref.target ?? st.fired) + 1;
+      if (c.type !== "dca") st.fired = (ref.target ?? st.fired) + 1;
     } else {
       st.consecErrors += 1;
       st.lastError = v.items.map((i) => i.reason).find(Boolean) ?? "Ninguna wallet entró.";
@@ -503,6 +522,7 @@ export class Automations {
     if (st.consecErrors >= c.maxErrors) return this.end(next, "FAILED", `Parada tras ${st.consecErrors} ejecuciones seguidas sin entrar: ${st.lastError}`);
     if (c.type === "dca" && c.end.kind !== "duration" && BigInt(st.spent) >= BigInt(c.end.totalAmount!)) return this.end(next, "COMPLETED", "Monto total alcanzado.");
     if (c.type === "limit" && st.fired >= c.targets.length) return this.end(next, "COMPLETED", "Todos los objetivos ejecutados.");
+    if (c.type === "trailing" && st.fired >= 1) return this.end(next, "COMPLETED", "Trailing stop ejecutado.");
   }
 
   private countError(id: string, message: string) {
@@ -523,6 +543,6 @@ export class Automations {
     if (t.state.order?.id !== ref.id) return;
     const v = this.trading.view(ref.id);
     const sum = v.items.filter((i) => i.status === "OK").reduce((a, i) => a + BigInt(i.amount ?? "0"), 0n);
-    this.save(id, { ...t.state, order: null, seq: ref.seq + 1, spent: (BigInt(t.state.spent) + sum).toString(), fired: t.config.type === "limit" && sum > 0n ? (ref.target ?? t.state.fired) + 1 : t.state.fired });
+    this.save(id, { ...t.state, order: null, seq: ref.seq + 1, spent: (BigInt(t.state.spent) + sum).toString(), fired: t.config.type !== "dca" && sum > 0n ? (ref.target ?? t.state.fired) + 1 : t.state.fired });
   }
 }

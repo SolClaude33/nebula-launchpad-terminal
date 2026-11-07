@@ -2,7 +2,7 @@
 // (NEBULA_CHAIN_TESTS=1) Surfpool. El reloj del motor es controlable: los intervalos se «adelantan».
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { automationIssues, dcaPlan, DcaConfig, LimitConfig } from "@nebula/shared";
+import { AutomationConfig, automationIssues, dcaPlan, DcaConfig, ladderTargets, LimitConfig, trailingStopUsd } from "@nebula/shared";
 import { buildApp } from "../src/app";
 import { HOST, ORIGIN, PW, tmpDir } from "./helpers";
 
@@ -38,6 +38,24 @@ describe("plan y validación (sin cadena)", () => {
     expect(lim("buy", [30_000, 40_000])[0]).toMatch(/mayor a menor/);
     expect(lim("sell", [30_000, 40_000])).toEqual([]);
     expect(lim("sell", [40_000, 40_000])[0]).toMatch(/menor a mayor/);
+  });
+
+  it("REQ-AUTO-003 · ladder: N tramos geométricos ascendentes entre dos market caps, válidos como límite de venta", () => {
+    const t = ladderTargets(100_000, 1_600_000, 5, 20);
+    expect(t.map((x) => x.mcUsd)).toEqual([100_000, 200_000, 400_000, 800_000, 1_600_000]);
+    expect(t.every((x) => x.pct === 20)).toBe(true);
+    expect(automationIssues(LimitConfig.parse({ type: "limit", side: "sell", mint: "M".repeat(32), walletIds: ["a"], targets: t }))).toEqual([]);
+    expect(ladderTargets(500, 100, 3, 10)).toEqual([]); // hasta < desde: nada
+    expect(ladderTargets(100, 200, 40, 10)).toHaveLength(10); // como mucho 10 tramos
+  });
+
+  it("REQ-AUTO-004 · trailing stop: solo venta, caída entre 1 y 90 %, precio de disparo desde el máximo", () => {
+    const base = { type: "trailing", side: "sell", mint: "M".repeat(32), walletIds: ["a"], sellPct: 50 };
+    expect(AutomationConfig.safeParse({ ...base, trailPct: 20 }).success).toBe(true);
+    expect(AutomationConfig.safeParse({ ...base, trailPct: 0.5 }).success).toBe(false);
+    expect(AutomationConfig.safeParse({ ...base, trailPct: 95 }).success).toBe(false);
+    expect(AutomationConfig.safeParse({ ...base, side: "buy", trailPct: 20 }).success).toBe(false);
+    expect(trailingStopUsd(100_000, 20)).toBe(80_000);
   });
 });
 
@@ -303,6 +321,36 @@ describe.each(backends)("Automatizaciones · %s", (backend) => {
     const f = await until(err.id, (x) => x.status !== "RUNNING");
     expect(f.status).toBe("FAILED");
     expect(f.state.endReason).toMatch(/2 ejecuciones seguidas.*Saldo insuficiente/);
+  });
+
+  it("REQ-AUTO-004 · trailing stop: espera la activación, sigue el máximo sin vender y vende una vez al caer", async () => {
+    const seller = holders[0];
+    const before = await tokens(seller.address);
+    expect(before).toBeGreaterThan(0n);
+    const mc = await mcUsd();
+    const tr = await task({ type: "trailing", side: "sell", walletIds: [seller.id], trailPct: 20, sellPct: 50, activationMcUsd: mc * 1.1 });
+    await until(tr.id, (x) => !!x.state.waiting?.startsWith("Esperando activación"));
+    // la ballena sube el market cap: se activa y sigue el máximo, sin vender
+    const up = await order({ side: "buy", walletIds: [whale.id], lamportsEach: (5n * SOL).toString() });
+    expect(up.status).toBe("COMPLETED");
+    const high = await mcUsd();
+    expect(high).toBeGreaterThan(mc * 1.1);
+    const armed = await until(tr.id, (x) => x.progress.armed === true && x.progress.peakUsd >= high * 0.999);
+    expect(armed.state.waiting).toMatch(/Máximo .* salta a/);
+    expect(armed.progress.stopUsd).toBeCloseTo(armed.progress.peakUsd * 0.8, 0);
+    expect(await tokens(seller.address)).toBe(before);
+    // la ballena vende todo: el market cap cae más del 20 % desde el máximo y salta (una sola venta del 50 %)
+    const down = await order({ side: "sell", walletIds: [whale.id], pct: 100 });
+    expect(down.status).toBe("COMPLETED");
+    expect(await mcUsd()).toBeLessThan(armed.progress.peakUsd * 0.8);
+    const done = await until(tr.id, (x) => x.status !== "RUNNING");
+    expect(done.status, JSON.stringify(done.state)).toBe("COMPLETED");
+    expect(done.state.endReason).toMatch(/Trailing stop ejecutado/);
+    const r = await runs(tr.id);
+    expect(r).toHaveLength(1);
+    expect(r[0].items[0].status).toBe("OK");
+    expect(BigInt(r[0].items[0].amount)).toBe(before / 2n);
+    expect(await tokens(seller.address)).toBe(before - BigInt(r[0].items[0].amount));
   });
 
   it("REQ-AUTO-006 · duplicar, borrar solo si está parada y ejecutar de nuevo con keys nuevas", async () => {

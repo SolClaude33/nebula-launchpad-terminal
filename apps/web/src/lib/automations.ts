@@ -9,7 +9,7 @@ import { toast } from "@/lib/toast";
 
 export type AutoView = {
   id: string;
-  type: "dca" | "limit";
+  type: "dca" | "limit" | "trailing";
   side: "buy" | "sell";
   label: string;
   mint: string;
@@ -19,7 +19,7 @@ export type AutoView = {
   config: AutomationConfig;
   wallets: { id: string; label: string; dev: boolean }[];
   includesDev: boolean;
-  progress: { executions: number; planned: number | null; spent: string; total: string | null; nextAmount: string } | { fired: number; targets: number; next: number | null };
+  progress: { executions: number; planned: number | null; spent: string; total: string | null; nextAmount: string } | { fired: number; targets: number; next: number | null; armed?: boolean; peakUsd?: number | null; stopUsd?: number | null };
   state: { startAt: number | null; endsAt: number | null; nextAt: number | null; waiting: string | null; lastError: string | null; endReason: string | null; consecErrors: number; mcUsd: number | null; inFlight: string | null };
   createdAt: number;
   updatedAt: number;

@@ -27,6 +27,7 @@ export function describe(t: AutoView) {
     const a = c.amount.kind === "fixed" ? amt(c.side, c.amount.each) : `${amt(c.side, c.amount.min)} → ${amt(c.side, c.amount.max)}`;
     return `${a} por wallet cada ${fmtDuration(c.intervalSec)}`;
   }
+  if (c.type === "trailing") return `Vende ${c.sellPct} % al caer ${c.trailPct} % desde el máximo${c.activationMcUsd ? ` · se activa en ${fmtUsd(c.activationMcUsd)}` : ""}`;
   return c.targets.map((x) => `${fmtUsd(x.mcUsd)}${c.side === "buy" ? ` · ${amt("buy", x.lamportsEach)}` : ` · ${x.pct} %`}`).join("  →  ");
 }
 
@@ -38,6 +39,11 @@ function progressLine(t: AutoView) {
     else parts.push(`${amt(t.side, p.spent)} ${t.side === "buy" ? "gastados" : "vendidos"}`);
     const pct = p.total ? Number(p.spent) / Number(p.total) : p.planned ? p.executions / p.planned : null;
     return { text: parts.join(" · "), pct };
+  }
+  if (t.type === "trailing") {
+    if (p.fired >= 1) return { text: "Trailing stop ejecutado", pct: 1 };
+    if (!p.armed || p.peakUsd == null) return { text: "Sin activar todavía", pct: null };
+    return { text: `Máximo ${fmtUsd(p.peakUsd)} · salta a ≤ ${fmtUsd(p.stopUsd ?? 0)}`, pct: null };
   }
   return { text: `${p.fired} / ${p.targets} objetivos${p.next !== null ? ` · siguiente ${fmtUsd(p.next)}` : ""}`, pct: p.fired / p.targets };
 }

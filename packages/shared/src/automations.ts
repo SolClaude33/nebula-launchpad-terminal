@@ -66,10 +66,42 @@ export const LimitConfig = z.object({
 });
 export type LimitConfig = z.infer<typeof LimitConfig>;
 
+/**
+ * REQ-AUTO-004 · Trailing stop: vende `sellPct` % de la posición de cada wallet cuando el market cap (USD) cae
+ * `trailPct` % desde el máximo visto. Con `activationMcUsd`, el máximo solo empieza a contar al alcanzarlo.
+ * Una sola venta y la tarea termina. Pausar o parar nunca vende.
+ */
+export const TrailingConfig = z.object({
+  type: z.literal("trailing"),
+  side: z.literal("sell"),
+  trailPct: z.number().min(1, "La caída mínima es 1 %").max(90, "La caída máxima es 90 %"),
+  sellPct: z.number().min(1).max(100),
+  activationMcUsd: Usd.nullable().default(null),
+  expirySec: z.number().int().min(60).max(AUTO_MAX_DURATION_SEC).nullable().default(null),
+  ...common,
+});
+export type TrailingConfig = z.infer<typeof TrailingConfig>;
+
+/** Precio de disparo del trailing stop para un máximo dado. */
+export const trailingStopUsd = (peakUsd: number, trailPct: number) => peakUsd * (1 - trailPct / 100);
+
+/**
+ * REQ-AUTO-003 · Ladder: N tramos de venta entre dos market caps, con el mismo % de la posición en cada uno.
+ * Reparto geométrico (cada tramo multiplica el anterior por la misma razón), que es como suele crecer un market cap.
+ * Devuelve objetivos de una orden límite de venta (ascendentes).
+ */
+export function ladderTargets(fromUsd: number, toUsd: number, steps: number, pctEach: number): LimitTarget[] {
+  const n = Math.max(1, Math.min(10, Math.round(steps)));
+  if (!(fromUsd > 0) || !(toUsd > fromUsd)) return [];
+  const ratio = n === 1 ? 1 : Math.pow(toUsd / fromUsd, 1 / (n - 1));
+  return Array.from({ length: n }, (_, i) => ({ mcUsd: Math.round(fromUsd * Math.pow(ratio, i)), lamportsEach: null, pct: pctEach }));
+}
+
 /** Errores de coherencia que zod no expresa por campo (orden de objetivos, rangos, fin). */
-export function automationIssues(c: DcaConfig | LimitConfig): string[] {
+export function automationIssues(c: DcaConfig | LimitConfig | TrailingConfig): string[] {
   const out: string[] = [];
   if (c.mcMinUsd != null && c.mcMaxUsd != null && c.mcMinUsd >= c.mcMaxUsd) out.push("El market cap mínimo tiene que ser menor que el máximo.");
+  if (c.type === "trailing") return out;
   if (c.type === "dca") {
     if (c.amount.kind === "fixed" && BigInt(c.amount.each) <= 0n) out.push("El monto por ejecución tiene que ser mayor que 0.");
     if (c.amount.kind === "range") {
@@ -96,7 +128,7 @@ export function automationIssues(c: DcaConfig | LimitConfig): string[] {
   return out;
 }
 
-export const AutomationConfig = z.discriminatedUnion("type", [DcaConfig, LimitConfig]).superRefine((c, ctx) => {
+export const AutomationConfig = z.discriminatedUnion("type", [DcaConfig, LimitConfig, TrailingConfig]).superRefine((c, ctx) => {
   for (const m of automationIssues(c)) ctx.addIssue({ code: "custom", message: m });
 });
 export type AutomationConfig = z.infer<typeof AutomationConfig>;

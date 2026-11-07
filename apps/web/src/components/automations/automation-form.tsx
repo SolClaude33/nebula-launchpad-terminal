@@ -5,7 +5,7 @@
 // muestra antes de guardar: rango = rampa fija del mínimo al máximo, sin aleatoriedad.
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Bot, Loader2, Plus, Trash2, X } from "lucide-react";
-import { AUTO_DEFAULT_MAX_ERRORS, AUTO_DEFAULT_SLIPPAGE, AutomationConfig, dcaPlan, type DcaConfig } from "@nebula/shared";
+import { AUTO_DEFAULT_MAX_ERRORS, AUTO_DEFAULT_SLIPPAGE, AutomationConfig, dcaPlan, ladderTargets, trailingStopUsd, type DcaConfig } from "@nebula/shared";
 import type { FolderDto, WalletDto } from "@nebula/shared";
 import { api, ApiError } from "@/lib/api";
 import { saveAutomation, fmtDuration, type AutoView } from "@/lib/automations";
@@ -32,7 +32,7 @@ type Target = { mc: string; amount: string };
 export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: { initial?: AutoView | null; mint?: string | null; onClose: () => void; onSaved: (v: AutoView) => void }) {
   const editing = !!initial;
   const c0 = initial?.config;
-  const [type, setType] = useState<"dca" | "limit">(c0?.type ?? "dca");
+  const [type, setType] = useState<"dca" | "limit" | "trailing">(c0?.type ?? "dca");
   const [side, setSide] = useState<"buy" | "sell">(c0?.side ?? "buy");
   const [mint, setMint] = useState(c0?.mint ?? presetMint ?? "");
   const [label, setLabel] = useState(initial?.label ?? "");
@@ -55,7 +55,13 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
   // Límite
   const lim = c0?.type === "limit" ? c0 : null;
   const [targets, setTargets] = useState<Target[]>(lim ? lim.targets.map((t) => ({ mc: String(t.mcUsd), amount: lim.side === "buy" ? fromUnits(t.lamportsEach, 9) : String(t.pct ?? "") })) : [{ mc: "", amount: "" }]);
-  const [expiry, setExpiry] = useState<[string, Unit]>(splitSec(lim?.expirySec, ["", "h"]));
+  const tr = c0?.type === "trailing" ? c0 : null;
+  const [expiry, setExpiry] = useState<[string, Unit]>(splitSec(lim?.expirySec ?? tr?.expirySec, ["", "h"]));
+  // Ladder (genera objetivos de venta) y trailing stop
+  const [ladder, setLadder] = useState({ from: "", to: "", steps: "4", pct: "25" });
+  const [trailPct, setTrailPct] = useState(tr ? String(tr.trailPct).replace(".", ",") : "20");
+  const [sellPct, setSellPct] = useState(tr ? String(tr.sellPct).replace(".", ",") : "100");
+  const [activation, setActivation] = useState(tr?.activationMcUsd ? String(tr.activationMcUsd) : "");
   // Comunes
   const [mcMin, setMcMin] = useState(c0?.mcMinUsd ? String(c0.mcMinUsd) : "");
   const [mcMax, setMcMax] = useState(c0?.mcMaxUsd ? String(c0.mcMaxUsd) : "");
@@ -107,7 +113,9 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
       mode,
     };
     const raw =
-      type === "dca"
+      type === "trailing"
+        ? { type, side: "sell", ...common, trailPct: num(trailPct), sellPct: num(sellPct), activationMcUsd: activation.trim() ? num(activation) : null, expirySec: expiry[0].trim() ? sec(expiry) : null }
+        : type === "dca"
         ? {
             type,
             side,
@@ -124,7 +132,7 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
             expirySec: expiry[0].trim() ? sec(expiry) : null,
           };
     return AutomationConfig.safeParse(raw);
-  }, [type, side, mint, sel, includeDev, mcMin, mcMax, delay, slippage, maxErrors, mode, amountKind, each, min, max, dec, interval, endKind, total, duration, targets, expiry]);
+  }, [type, side, mint, sel, includeDev, mcMin, mcMax, delay, slippage, maxErrors, mode, amountKind, each, min, max, dec, interval, endKind, total, duration, targets, expiry, trailPct, sellPct, activation]);
 
   const issues = config.success ? [] : [...new Set(config.error.issues.map((i) => i.message))];
   const plan = config.success && config.data.type === "dca" ? dcaPlan(config.data as DcaConfig, config.data.walletIds.length) : null;
@@ -179,10 +187,20 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
           {/* tipo y lado */}
           <div>
             <p className="mb-1.5 text-[12px] text-muted">Tipo</p>
-            <div role="radiogroup" aria-label="Tipo" className="grid grid-cols-2 gap-1 rounded-[var(--radius-sm)] border border-line bg-surface-2/60 p-1">
-              {(["dca", "limit"] as const).map((t) => (
-                <button key={t} role="radio" aria-checked={type === t} disabled={editing} onClick={() => setType(t)} className={seg(type === t)}>
-                  {t === "dca" ? "DCA" : "Orden límite"}
+            <div role="radiogroup" aria-label="Tipo" className="grid grid-cols-3 gap-1 rounded-[var(--radius-sm)] border border-line bg-surface-2/60 p-1">
+              {(["dca", "limit", "trailing"] as const).map((t) => (
+                <button
+                  key={t}
+                  role="radio"
+                  aria-checked={type === t}
+                  disabled={editing}
+                  onClick={() => {
+                    setType(t);
+                    if (t === "trailing") setSide("sell");
+                  }}
+                  className={seg(type === t)}
+                >
+                  {t === "dca" ? "DCA" : t === "limit" ? "Orden límite" : "Trailing stop"}
                 </button>
               ))}
             </div>
@@ -191,7 +209,7 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
             <p className="mb-1.5 text-[12px] text-muted">Lado</p>
             <div role="radiogroup" aria-label="Lado" className="grid grid-cols-2 gap-1 rounded-[var(--radius-sm)] border border-line bg-surface-2/60 p-1">
               {(["buy", "sell"] as const).map((s) => (
-                <button key={s} role="radio" aria-checked={side === s} disabled={editing} onClick={() => setSide(s)} className={seg(side === s, s)}>
+                <button key={s} role="radio" aria-checked={side === s} disabled={editing || (type === "trailing" && s === "buy")} onClick={() => setSide(s)} className={seg(side === s, s)} title={type === "trailing" && s === "buy" ? "El trailing stop solo vende" : undefined}>
                   {s === "buy" ? <ArrowUpRight className="size-3.5" aria-hidden /> : <ArrowDownRight className="size-3.5" aria-hidden />}
                   {s === "buy" ? "Comprar" : "Vender"}
                 </button>
@@ -216,7 +234,7 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
             <label htmlFor="auto-label" className="mb-1.5 block text-[12px] text-muted">
               Nombre <span className="text-faint">(opcional)</span>
             </label>
-            <input id="auto-label" value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} placeholder={type === "dca" ? "DCA de compra" : "Límite de venta"} className="field h-9 py-0" />
+            <input id="auto-label" value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} placeholder={type === "dca" ? "DCA de compra" : type === "limit" ? "Límite de venta" : "Trailing stop"} className="field h-9 py-0" />
           </div>
 
           {/* wallets */}
@@ -303,11 +321,66 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
                 </div>
               </div>
             </>
+          ) : type === "trailing" ? (
+            <div className="grid grid-cols-2 gap-3 md:col-span-2 md:grid-cols-4">
+              <div>
+                <label htmlFor="trail-pct" className="mb-1.5 block text-[12px] text-muted">
+                  Salta al caer (%)
+                </label>
+                <input id="trail-pct" inputMode="decimal" value={trailPct} onChange={(e) => setTrailPct(e.target.value)} className="field num h-9 py-0" />
+              </div>
+              <div>
+                <label htmlFor="trail-sell" className="mb-1.5 block text-[12px] text-muted">
+                  Vende (% de la posición)
+                </label>
+                <input id="trail-sell" inputMode="decimal" value={sellPct} onChange={(e) => setSellPct(e.target.value)} className="field num h-9 py-0" />
+              </div>
+              <div>
+                <label htmlFor="trail-act" className="mb-1.5 block text-[12px] text-muted">
+                  Se activa en MC ≥ $ <span className="text-faint">(opcional)</span>
+                </label>
+                <input id="trail-act" inputMode="decimal" value={activation} onChange={(e) => setActivation(e.target.value)} placeholder="ya" className="field num h-9 py-0" />
+              </div>
+              <div>
+                <label htmlFor="auto-expiry" className="mb-1.5 block text-[12px] text-muted">
+                  Validez <span className="text-faint">(vacío = sin caducidad)</span>
+                </label>
+                {unitSel(expiry, setExpiry, ["h", "d"], "auto-expiry", "Validez", "—")}
+              </div>
+              <p className="col-span-full text-[11.5px] text-faint">
+                Sigue el máximo del market cap (USD) desde la activación y vende una sola vez cuando cae el % indicado desde ese máximo
+                {num(trailPct) > 0 && num(trailPct) < 100 ? ` (con un máximo de $100.000, saltaría a ${fmtUsd(trailingStopUsd(100_000, num(trailPct)))})` : ""}. Pausar o parar nunca vende.
+              </p>
+            </div>
           ) : (
             <div className="md:col-span-2">
               <p className="mb-1.5 text-[12px] text-muted">
                 Objetivos por market cap (USD) · {side === "buy" ? "compras de mayor a menor" : "ventas de menor a mayor"}
               </p>
+              {side === "sell" && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 px-2.5 py-2 text-[12px] text-muted">
+                  <span className="font-medium text-fg">Ladder</span> desde $
+                  <input aria-label="Ladder: market cap inicial en USD" inputMode="decimal" value={ladder.from} onChange={(e) => setLadder({ ...ladder, from: e.target.value })} placeholder="50000" className="field num h-7 w-[96px] py-0 text-[12px]" />
+                  hasta $
+                  <input aria-label="Ladder: market cap final en USD" inputMode="decimal" value={ladder.to} onChange={(e) => setLadder({ ...ladder, to: e.target.value })} placeholder="500000" className="field num h-7 w-[96px] py-0 text-[12px]" />
+                  en
+                  <input aria-label="Ladder: número de tramos" inputMode="numeric" value={ladder.steps} onChange={(e) => setLadder({ ...ladder, steps: e.target.value })} className="field num h-7 w-[44px] py-0 text-[12px]" />
+                  tramos de
+                  <input aria-label="Ladder: porcentaje por tramo" inputMode="decimal" value={ladder.pct} onChange={(e) => setLadder({ ...ladder, pct: e.target.value })} className="field num h-7 w-[52px] py-0 text-[12px]" />
+                  %
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const g = ladderTargets(num(ladder.from), num(ladder.to), Math.round(num(ladder.steps)), num(ladder.pct));
+                      if (g.length) setTargets(g.map((x) => ({ mc: String(x.mcUsd), amount: String(x.pct).replace(".", ",") })));
+                      else toast({ tone: "warn", title: "Ladder", body: "El market cap final tiene que ser mayor que el inicial." });
+                    }}
+                    className="btn ml-auto h-7 px-2.5 text-[12px]"
+                  >
+                    Generar tramos
+                  </button>
+                </div>
+              )}
               <ol className="space-y-1.5">
                 {targets.map((t, i) => (
                   <li key={i} className="flex items-center gap-2">
@@ -394,6 +467,9 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
               </p>
               {side === "sell" && <p className="mt-1 text-[11.5px] text-faint">Cada venta se recorta al saldo de la wallet; sin tokens, la wallet queda omitida.</p>}
             </div>
+          )}
+          {type === "trailing" && config.success && config.data.type === "trailing" && (
+            <p className="text-[12px] text-faint md:col-span-2">Se dispara con el market cap del indexer y el precio SOL/USD de Pyth.</p>
           )}
           {type === "limit" && config.success && config.data.type === "limit" && (
             <p className="text-[12px] text-faint md:col-span-2">
