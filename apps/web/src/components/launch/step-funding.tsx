@@ -196,7 +196,7 @@ export function StepFunding() {
       <div className="panel overflow-hidden">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <p className="text-[13px] font-medium">
-            Orden de compra <span className="ml-1 text-[12px] font-normal text-faint">arrastra o usa las flechas</span>
+            Orden de compra <span className={`ml-1 text-[12px] font-normal text-faint ${isPro ? "hidden xl:inline" : ""}`}>arrastra o usa las flechas</span>
           </p>
           {isPro && d.plan.length > 0 && (
             <form
@@ -206,7 +206,7 @@ export function StepFunding() {
               }}
               className="ml-auto mr-2 flex items-center gap-1.5 text-[12px] text-muted"
             >
-              <label htmlFor="all-delay">Espera para todas</label>
+              <label htmlFor="all-delay" className="whitespace-nowrap">Espera para todas</label>
               <input id="all-delay" inputMode="numeric" value={allDelay} onChange={(e) => setAllDelay(e.target.value)} className="field num h-8 w-[56px] text-right text-[12px]" />
               <span>s</span>
               <button type="submit" className="btn h-8 text-[12px]">
@@ -215,7 +215,7 @@ export function StepFunding() {
             </form>
           )}
           {buysAfterCreate(d) && (
-            <button onClick={() => setAdding((a) => !a)} aria-expanded={adding} className="btn h-8">
+            <button onClick={() => setAdding((a) => !a)} aria-expanded={adding} className="btn h-8 whitespace-nowrap">
               <Plus className="size-3.5" aria-hidden /> Añadir wallets
             </button>
           )}
