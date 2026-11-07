@@ -42,6 +42,16 @@ export class TokenBucket {
     this.tokens -= cost;
     if (this.tokens < 0) await new Promise((r) => setTimeout(r, Math.ceil((-this.tokens / this.rate) * 1000)));
   }
+  /** Sin esperar: toma una ficha solo si sobra (para trabajo de baja prioridad, como reenviar). */
+  tryTake(cost = 1) {
+    if (!this.rate || this.rate <= 0) return true;
+    const now = Date.now();
+    this.tokens = Math.min(this.rate, this.tokens + ((now - this.last) / 1000) * this.rate);
+    this.last = now;
+    if (this.tokens < cost) return false;
+    this.tokens -= cost;
+    return true;
+  }
 }
 
 const RATE_LIMITED = /429|Too Many Requests|rate limit|-32005/i;
@@ -102,6 +112,16 @@ export class RpcPool {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * Baja prioridad: ejecuta `fn` una vez contra el RPC activo solo si sobra cupo (sin esperar ni reintentar).
+   * Devuelve `undefined` si no había cupo. Lo usan los reenvíos para no retrasar envíos nuevos.
+   */
+  async tryRun<T>(fn: (c: Connection) => Promise<T>, opts: { send?: boolean } = {}): Promise<T | undefined> {
+    if (opts.send && !this.sendBucket.tryTake(1)) return undefined;
+    if (!this.bucket.tryTake(1)) return undefined;
+    return fn(this.slots[this.active].conn);
   }
 
   /** Ejecuta `fn` contra el RPC activo; ante un error de red pasa al siguiente endpoint sano y reintenta. */

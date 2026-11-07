@@ -11,10 +11,16 @@ import { isNetworkError, isRateLimited } from "./rpc";
 import type { MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
 import type { PumpPayload } from "./pumpfun";
 
-export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number };
+/** `rebroadcastMs`: cada cuánto se reenvía la MISMA transacción firmada mientras se espera la confirmación (0 = nunca). */
+export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number; rebroadcastMs?: number };
+
+/** Por defecto, un reenvío cada 2 s: con Helius Free (1 envío/s) deja cupo a los envíos nuevos. */
+export const REBROADCAST_MS = 2000;
 
 export function classify(logs: string[] | null | undefined, err: unknown): { code: SendErrorCode; message: string } {
-  const text = `${JSON.stringify(err ?? "")} ${(logs ?? []).join("\n")}`;
+  // Un Error de JS se serializa como «{}»: su nombre y su mensaje se añaden aparte (p. ej. «block height exceeded»)
+  const errText = err instanceof Error ? `${err.name}: ${err.message}` : "";
+  const text = `${JSON.stringify(err ?? "")} ${errText} ${(logs ?? []).join("\n")}`;
   if (/0x1772|0x1773|TooMuchSolRequired|TooLittleSolReceived|slippage/i.test(text)) return { code: "SLIPPAGE", message: "Slippage excedido: el precio se movió más que la tolerancia configurada." };
   if (/0x1775|BondingCurveComplete/i.test(text)) return { code: "CURVE_COMPLETE", message: "La curva está completa; el token se opera en PumpSwap." };
   if (/InsufficientFundsForRent|insufficient funds for rent/i.test(text)) return { code: "RENT", message: "Una cuenta quedaría por debajo del mínimo exento de rent (≈ 0,00089 SOL)." };
@@ -113,7 +119,13 @@ export class SolanaSender implements TxSender {
 
       try {
         await this.broadcast(built.vtx);
-        const conf = await this.pool.run((c) => c.confirmTransaction({ signature: built.signature, blockhash: built.blockhash, lastValidBlockHeight: built.lastValidBlockHeight }, "confirmed"));
+        const stopRebroadcast = this.rebroadcast(built.vtx);
+        let conf: Awaited<ReturnType<import("@solana/web3.js").Connection["confirmTransaction"]>>;
+        try {
+          conf = await this.pool.run((c) => c.confirmTransaction({ signature: built.signature, blockhash: built.blockhash, lastValidBlockHeight: built.lastValidBlockHeight }, "confirmed"));
+        } finally {
+          stopRebroadcast();
+        }
         if (conf.value.err) {
           const c = classify(null, conf.value.err);
           return this.markFailed(idempotencyKey, c.code, c.message, built.signature);
@@ -126,9 +138,11 @@ export class SolanaSender implements TxSender {
         const landed = await this.statusOf(built.signature).catch(() => "unknown" as const);
         if (landed === "confirmed") return this.markConfirmed(idempotencyKey, built.signature);
         if (landed === "failed") return this.markFailed(idempotencyKey, "SIMULATION_FAILED", "La transacción falló en la cadena.", built.signature);
-        if (c.code === "BLOCKHASH_EXPIRED" && attempt === 0) {
+        if (c.code === "BLOCKHASH_EXPIRED") {
+          // Caducó sin aterrizar: ya no puede entrar, así que volver a firmar con un blockhash nuevo no duplica nada
           this.db().prepare("UPDATE tx SET status = 'EXPIRED', updated_at = ? WHERE idempotency_key = ?").run(Date.now(), idempotencyKey);
-          continue;
+          if (attempt === 0) continue;
+          return { status: "failed", code: "BLOCKHASH_EXPIRED", message: "La red no incluyó la transacción y su blockhash caducó dos veces. No se cobró nada.", signature: built.signature };
         }
         // Estado desconocido: queda en SENT y se informa como pendiente (la conciliación lo resolverá)
         void c;
@@ -136,6 +150,26 @@ export class SolanaSender implements TxSender {
       }
     }
     return { status: "failed", code: "BLOCKHASH_EXPIRED", message: "El blockhash caducó dos veces seguidas." };
+  }
+
+  /**
+   * Reenvía los MISMOS bytes firmados (misma firma: nunca duplica) cada `rebroadcastMs` hasta que se llame a la
+   * función devuelta. Solo usa cupo sobrante del limitador, así que nunca retrasa un envío nuevo.
+   */
+  private rebroadcast(vtx: VersionedTransaction) {
+    const every = this.opts.rebroadcastMs ?? REBROADCAST_MS;
+    if (every <= 0 || typeof this.pool.tryRun !== "function") return () => {};
+    const raw = vtx.serialize();
+    let done = false;
+    const timer = setInterval(() => {
+      if (done) return;
+      void this.pool.tryRun((c) => c.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }), { send: true }).catch(() => {});
+    }, every);
+    timer.unref?.();
+    return () => {
+      done = true;
+      clearInterval(timer);
+    };
   }
 
   private async broadcast(vtx: VersionedTransaction) {
