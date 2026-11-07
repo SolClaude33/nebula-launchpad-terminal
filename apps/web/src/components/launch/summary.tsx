@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
 import { Address } from "@/components/address";
 import { api } from "@/lib/api";
@@ -74,6 +75,12 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
   const fp = useLaunchRun((s) => s.fp);
   const busy = useLaunchRun((s) => s.busy);
   const launch = useLaunchRun((s) => s.launch);
+  const router = useRouter();
+  // Al aceptar el lanzamiento, el Live del mint se abre ya: el gráfico se ve desde la creación
+  const launchAndWatch = async () => {
+    const v = await launch(d);
+    if (v && v.mint && v.status !== "FAILED" && v.status !== "PREPARED") router.push(`/t/${v.mint}?launch=${encodeURIComponent(v.id)}`);
+  };
   const resume = async () => {
     if (!view) return;
     await api(`/launches/${view.id}/resume`, { method: "POST", body: {} });
@@ -193,7 +200,7 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
               <ScheduledCard />
             ) : (
               <>
-                <button onClick={() => launch(d)} disabled={!canLaunch || busy === "launch"} aria-describedby="launch-why" className="cta cta-fill mt-4 flex h-12 w-full items-center justify-center gap-2 text-[14px] font-semibold">
+                <button onClick={launchAndWatch} disabled={!canLaunch || busy === "launch"} aria-describedby="launch-why" className="cta cta-fill mt-4 flex h-12 w-full items-center justify-center gap-2 text-[14px] font-semibold">
                   {busy === "launch" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}
                   {busy === "launch" ? "Enviando…" : "Lanzar"}
                 </button>

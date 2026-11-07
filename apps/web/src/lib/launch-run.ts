@@ -32,7 +32,8 @@ type RunStore = {
   load: (id: string) => Promise<void>;
   runDry: (d: Draft) => Promise<void>;
   createAlt: (payerWalletId: string, d: Draft) => Promise<void>;
-  launch: (d: Draft) => Promise<void>;
+  /** Devuelve la vista aceptada por el servidor (o null si falló) para poder abrir el Live del mint. */
+  launch: (d: Draft) => Promise<LaunchView | null>;
   schedule: (d: Draft, at: number) => Promise<void>;
   cancelSchedule: (id: string) => Promise<void>;
   reset: () => void;
@@ -90,16 +91,19 @@ export const useLaunchRun = create<RunStore>((set, get) => {
     },
     // REQ-LAUNCH-016: el servidor ignora el segundo clic (un lanzamiento por draftId)
     launch: async (d) => {
-      if (get().busy === "launch") return;
+      if (get().busy === "launch") return null;
       set({ busy: "launch", error: null });
+      let out: LaunchView | null = null;
       try {
         const v = await api<LaunchView>(`/launches/${d.draftId}/execute`, { method: "POST", body: {} });
         set({ view: v });
         if (active(v.status)) watch(v.id);
+        out = v;
       } catch (e) {
         set({ error: (e as ApiError).message });
       }
       set({ busy: null });
+      return out;
     },
     // REQ-LAUNCH-015: el servidor lo guarda en SQLite y lo dispara a su hora (si la bóveda está abierta)
     schedule: async (d, at) => {

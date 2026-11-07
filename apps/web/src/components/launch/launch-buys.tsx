@@ -10,7 +10,7 @@ import type { LaunchView } from "@/lib/launch-run";
 
 type Buy = LaunchView["buys"][number];
 
-function useNow(active: boolean) {
+export function useNow(active: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -20,15 +20,16 @@ function useNow(active: boolean) {
   return now;
 }
 
-function state(b: Buy, now: number) {
-  if (b.status === "OK") return { icon: <CheckCircle2 className="size-3.5 shrink-0 text-buy" aria-hidden />, text: "entró", tone: "text-buy" };
-  if (b.status === "FAILED") return { icon: <XCircle className="size-3.5 shrink-0 text-sell" aria-hidden />, text: "falló", tone: "text-sell" };
-  if (b.status === "SKIPPED") return { icon: <CircleSlash className="size-3.5 shrink-0 text-faint" aria-hidden />, text: "omitida", tone: "text-faint" };
+/** Estado legible de una compra; `short` para chips. */
+export function buyState(b: Buy, now: number) {
+  if (b.status === "OK") return { icon: <CheckCircle2 className="size-3.5 shrink-0 text-buy" aria-hidden />, text: "entró", short: "entró", tone: "text-buy" };
+  if (b.status === "FAILED") return { icon: <XCircle className="size-3.5 shrink-0 text-sell" aria-hidden />, text: "falló", short: "falló", tone: "text-sell" };
+  if (b.status === "SKIPPED") return { icon: <CircleSlash className="size-3.5 shrink-0 text-faint" aria-hidden />, text: "omitida", short: "omitida", tone: "text-faint" };
   if (b.sentAt) {
     const s = Math.max(0, Math.round((now - b.sentAt) / 1000));
-    return { icon: <Send className="size-3.5 shrink-0 animate-pulse text-accent-b" aria-hidden />, text: `enviada · esperando confirmación · ${s} s`, tone: "text-accent-b" };
+    return { icon: <Send className="size-3.5 shrink-0 animate-pulse text-accent-b" aria-hidden />, text: `enviada · esperando confirmación · ${s} s`, short: `confirmando ${s} s`, tone: "text-accent-b" };
   }
-  return { icon: <Clock className="size-3.5 shrink-0 text-muted" aria-hidden />, text: "en cola", tone: "text-muted" };
+  return { icon: <Clock className="size-3.5 shrink-0 text-muted" aria-hidden />, text: "en cola", short: "en cola", tone: "text-muted" };
 }
 
 export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, "mode" | "buys">; max?: string }) {
@@ -42,7 +43,7 @@ export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, 
       </p>
       <ul className={`scroll-thin ${max} space-y-1.5 overflow-y-auto`}>
         {view.buys.map((b) => {
-          const st = state(b, now);
+          const st = buyState(b, now);
           return (
             <li key={b.ord} className="text-[12px]">
               <div className="flex items-center gap-2">

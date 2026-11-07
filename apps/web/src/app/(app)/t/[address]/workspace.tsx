@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Orbit, TriangleAlert, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { useChain } from "@/lib/chain";
@@ -14,6 +14,7 @@ import { ActivityTabs } from "@/components/live/activity-tabs";
 import { TradeTicket } from "@/components/live/trade-ticket";
 import { PositionCard } from "@/components/live/position-card";
 import { InstantTrade } from "@/components/live/instant-trade";
+import { LaunchPending, LaunchStrip, useLaunchWatch } from "@/components/live/launch-strip";
 
 const PriceChart = dynamic(() => import("@/components/live/price-chart").then((m) => m.PriceChart), {
   ssr: false,
@@ -28,6 +29,11 @@ export function Workspace() {
   const ready = useLive((s) => !!s.info && s.mint === address);
   const error = useLive((s) => s.error);
   const venue = useLive((s) => s.info?.venue);
+  // Lanzamiento recién aprobado desde el asistente (?launch=<id>): solo se muestra, nunca se ejecuta desde aquí
+  const launchId = useSearchParams().get("launch");
+  const { view: launchView, refresh: refreshLaunch } = useLaunchWatch(launchId);
+  const launchHere = !!launchId && (!launchView || launchView.mint === address);
+  const [launchClosed, setLaunchClosed] = useState(false);
   const [split, setSplit] = useState(0.56);
   const [showInstant, setShowInstant] = useState(true);
   const col = useRef<HTMLDivElement>(null);
@@ -75,11 +81,14 @@ export function Workspace() {
     }
   };
 
+  // El token aún no existe (se está creando): «Creando $SYM…» en lugar del error
+  if (!ready && launchHere && (!error || error.status === 404)) return <LaunchPending view={launchView} refresh={refreshLaunch} />;
   if (!ready && error) return <WorkspaceError status={error.status} message={error.message} />;
   if (!ready) return <WorkspaceSkeleton />;
 
   return (
     <div className="flex h-[calc(100dvh-80px)] min-h-[640px] flex-col gap-3 p-3">
+      {launchHere && launchView && !launchClosed && <LaunchStrip view={launchView} refresh={refreshLaunch} onClose={() => setLaunchClosed(true)} />}
       {venue === "migrating" && <MigratingNotice mint={address} />}
       {error && <p role="status" className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-warn/25 bg-[var(--warn-soft)] px-3 py-1.5 text-[12px] text-warn"><TriangleAlert className="size-3.5" aria-hidden /> Sin datos nuevos: {error.message} Se reintenta cada segundo.</p>}
       <TokenHeader mint={address} />
