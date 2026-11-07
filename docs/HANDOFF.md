@@ -1,13 +1,13 @@
-# Traspaso: estado de Nébula (2026-11-06)
+# Traspaso: estado de Nébula (2026-11-07)
 
 Documento para retomar el trabajo en otra sesión. El contexto general está en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
 
-## Estado: F1 casi completa (falta cerrar la suite E2E de interfaz y la prueba de humo en mainnet; Jito pasa a F2)
+## Estado: F1 completa en el perfil `test`: los 24 E2E en verde. Falta la prueba de humo en mainnet (la hace Nicol con Helius). Jito pasa a F2.
 
 Todo está en commits locales, sin push.
 - **F0:** aprobado.
 - **F1, bloques 1 a 6** (anteriores): bóveda, wallets, fondos, lanzamiento real, Live Workspace con PumpSwap, comisiones y automatizaciones.
-- **F1, bloques de cierre:** de `975767f` a `b7df4c7`, más el commit de trabajo de la suite E2E. Se detallan abajo.
+- **F1, bloques de cierre:** de `975767f` a `b7df4c7`, más la suite E2E (`ea16a88`), las decisiones de Nicol (`c29c054`) y los arreglos del cierre (`bfd177d`, `547a9b6`, `4a9ccb9`). Se detallan abajo.
 
 ### Bloques de cierre de F1
 
@@ -69,25 +69,26 @@ Todo está en commits locales, sin push.
 10. **Copias diarias** (`b7df4c7`, §7.3)
     - Usa `db.backup()` al arrancar y después cada hora si la última copia tiene más de 24 h. Conserva 7.
     - En Ajustes se pueden listar y descargar.
-11. **Suite E2E en el navegador: en curso** (commit de trabajo; ver `docs/E2E.md`)
+11. **Suite E2E en el navegador** (`ea16a88` y arreglos del 2026-11-07; tabla completa en `docs/E2E.md`)
     - `pnpm test:e2e` usa Playwright 1.64.1 con el Edge del sistema y `@axe-core/playwright` 4.14.0.
       - El lanzador `scripts/e2e.mjs` prepara los datos temporales y Surfpool, y es el dueño del proceso de la API.
       - Expone un control local en `127.0.0.1:4390` para «cerrar y abrir la app». Lanzada desde un worker de Playwright, en Windows la API moría a los pocos segundos.
-    - **Última pasada, interrumpida al cerrar la jornada:**
-      - En verde: E2E-01, 02, 03, 06, 08, 11, 17, 21 y 23.
-      - E2E-09 falló por el test (clic en un radio `sr-only`); ya está corregido pero sin volver a ejecutar.
-      - E2E-24 (axe) no llegó a correr con la API viva.
-    - Para cumplir AA, `--text-faint` pasó a `#8088a0` (oscuro) y `#5c637b` (claro).
-    - El setup ahora deriva bien el WS local (puerto + 1).
-    - `scripts/js-budget.mjs` está escrito y sin ejecutar.
+    - **Resultado (2026-11-07):** los 12 tests de interfaz en verde, entre ellos E2E-24, con axe sin violaciones serias ni críticas a 1024 y 1440 px y sin scroll horizontal.
+    - `pnpm test:chain` completo: 109 en verde y 11 omitidos (solo corren con mock).
+    - `pnpm test`: 109/109.
+    - **Arreglos del cierre:**
+      - `bfd177d` · el test de E2E-09 usa texto exacto.
+      - `547a9b6` · accesibilidad: `<dl>` válidos, tabla ARIA en `/wallets`, nombre del campo de archivo, panel de trades enfocable y contraste de la tarjeta de Jito.
+      - `4a9ccb9` · **fallo real**: la huella de la tabla de direcciones cambiaba entre arranques (la cuenta de comisiones aleatoria del SDK se colaba en la lista) y la tabla parecía no existir tras reiniciar. Ahora se intersectan 6 muestras, la tabla guardada vale si contiene las claves y un error del RPC no se trata como «tabla inexistente».
+    - **Presupuesto de JS (§8.6):** el máximo es 216,8 KB comprimidos en `/launch/new`, frente a 300 KB; todas las rutas están dentro.
+    - Antes ya se había hecho:
+      - `--text-faint` pasó a `#8088a0` (oscuro) y `#5c637b` (claro).
+      - El setup deriva el WS de un RPC local en el puerto siguiente.
 
-## Próximo paso (mañana)
+## Próximo paso
 
-1. Ejecutar `pnpm test:e2e` completo y corregir lo que marque axe en E2E-24.
-2. Ejecutar `pnpm test:chain` completo (la última vez fue en el bloque 1; después solo se ejecutaron contra Surfpool los archivos de cada bloque).
-3. Ejecutar `pnpm build && node scripts/js-budget.mjs` (≤ 300 KB).
-4. Actualizar `docs/E2E.md` y la nota del proyecto.
-5. Pasarle a Nicol `docs/SMOKE-MAINNET.md` (Helius y Pinata) para que haga la prueba de humo.
+1. **Nicol:** ejecutar la prueba de humo en mainnet con `docs/SMOKE-MAINNET.md` (Helius Free + Pinata) y devolver las firmas y los costes mostrados. Claude los verificará en solo lectura.
+2. Con la prueba de humo superada se cumple el criterio de salida de F1 (§12) y se puede pasar a F2: Jito, más pads, ladder/trailing y presets.
 
 ## Decisiones pendientes de Nicol
 

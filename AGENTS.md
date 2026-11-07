@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está implementada en el perfil `test` (Surfpool). Faltan cerrar la suite E2E de interfaz (`pnpm test:e2e`) y la prueba de humo en mainnet con Helius (`docs/SMOKE-MAINNET.md`, la ejecuta Nicol). Jito queda para F2. El estado detallado está en `docs/HANDOFF.md` y la trazabilidad E2E en `docs/E2E.md`.
+Nébula es una herramienta **privada, local y de un solo operador** para lanzar y operar tokens de Pump.fun. La especificación está en `REQUERIMIENTOS.md` (`REQ-*`, `E2E-*`). F1 está completa en el perfil `test` (Surfpool): los 24 E2E en verde (`docs/E2E.md`). Falta la prueba de humo en mainnet con Helius (`docs/SMOKE-MAINNET.md`, la ejecuta Nicol). Jito queda para F2. El estado detallado está en `docs/HANDOFF.md` y la trazabilidad E2E en `docs/E2E.md`.
 
 ## Estructura
 - `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
