@@ -13,7 +13,7 @@ const toLamports = (v: string) => {
 
 export function TradeTicket() {
   const [side, setSide] = useState<Side>("buy");
-  const { folders, scope, setScope, includeDev, setIncludeDev, hasDev, selected } = useWalletPicker("nebula.ticket.scope");
+  const { folders, scope, setScope, includeDev, setIncludeDev, hasDev, selected, pickedCount } = useWalletPicker("nebula.ticket.scope");
   const venue = useLive((s) => s.info?.venue ?? "curve");
   const [amount, setAmount] = useState("0,1");
   const [pct, setPct] = useState(25);
@@ -76,6 +76,7 @@ export function TradeTicket() {
       <div className="flex gap-2">
         <select id="ticket-scope" value={scope} onChange={(e) => setScope(e.target.value)} className="field h-9 py-0">
           <option value="all">Todas las wallets</option>
+          <option value="picked">Marcadas en «Mis wallets» ({pickedCount})</option>
           {folders.map((f) => (
             <option key={f.id} value={f.id}>
               Carpeta · {f.name}

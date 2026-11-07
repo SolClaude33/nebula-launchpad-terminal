@@ -89,6 +89,7 @@ export function useWalletPicker(storeKey: string) {
   const wallets = useLive((s) => s.wallets);
   const folders = useLive((s) => s.folders);
   const position = useLive((s) => s.position);
+  const picked = useLive((s) => s.picked);
   const [scope, setScopeState] = useState<string>("all");
   const [includeDev, setIncludeDev] = useState(false);
   useEffect(() => {
@@ -104,12 +105,14 @@ export function useWalletPicker(storeKey: string) {
       localStorage.setItem(storeKey, v);
     } catch {}
   };
-  const validScope = scope === "all" || folders.some((f) => f.id === scope) ? scope : "all";
+  const validScope = scope === "all" || scope === "picked" || folders.some((f) => f.id === scope) ? scope : "all";
   const pos = useMemo(() => new Map((position?.items ?? []).map((p) => [p.walletId, p])), [position]);
   const selected = useMemo(() => {
+    // «Marcadas»: exactamente las marcadas en el panel (incluida la dev si se marcó a mano)
+    if (validScope === "picked") return wallets.filter((w) => picked.includes(w.id)).map((w) => ({ ...w, tokens: BigInt(pos.get(w.id)?.tokens ?? "0"), lamports: BigInt(pos.get(w.id)?.lamports ?? "0") }));
     const base = validScope === "all" ? wallets : wallets.filter((w) => w.folderIds.includes(validScope));
     return base.filter((w) => includeDev || w.role !== "dev").map((w) => ({ ...w, tokens: BigInt(pos.get(w.id)?.tokens ?? "0"), lamports: BigInt(pos.get(w.id)?.lamports ?? "0") }));
-  }, [wallets, validScope, includeDev, pos]);
-  const hasDev = (validScope === "all" ? wallets : wallets.filter((w) => w.folderIds.includes(validScope))).some((w) => w.role === "dev");
-  return { folders: folders.filter((f) => wallets.some((w) => w.folderIds.includes(f.id))), scope: validScope, setScope, includeDev, setIncludeDev, hasDev, selected };
+  }, [wallets, validScope, includeDev, pos, picked]);
+  const hasDev = validScope !== "picked" && (validScope === "all" ? wallets : wallets.filter((w) => w.folderIds.includes(validScope))).some((w) => w.role === "dev");
+  return { folders: folders.filter((f) => wallets.some((w) => w.folderIds.includes(f.id))), scope: validScope, setScope, includeDev, setIncludeDev, hasDev, selected, pickedCount: picked.length };
 }

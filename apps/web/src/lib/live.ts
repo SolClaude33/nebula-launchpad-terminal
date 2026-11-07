@@ -50,6 +50,9 @@ type LiveState = {
   position: { priceLamports: number; items: PosItem[]; total: { tokens: string; costLamports: number; valueLamports: number; realizedLamports: number; lamports: string } } | null;
   wallets: WalletDto[];
   folders: FolderDto[];
+  /** Wallets marcadas en el panel «Mis wallets» (alcance «Marcadas» del ticket y del Instant Trade) */
+  picked: string[];
+  setPicked: (ids: string[]) => void;
   error: { status: number; message: string } | null;
   tick: () => Promise<void>;
   loadSide: () => Promise<void>;
@@ -73,8 +76,10 @@ export const useLive = create<LiveState>((set, get) => ({
   position: null,
   wallets: [],
   folders: [],
+  picked: [],
+  setPicked: (ids) => set({ picked: ids }),
   error: null,
-  reset: (mint) => set({ mint, info: null, token: null, stats: null, feed: null, trades: [], cursor: 0, holders: null, position: null, error: null }),
+  reset: (mint) => set({ mint, info: null, token: null, stats: null, feed: null, trades: [], cursor: 0, holders: null, position: null, picked: [], error: null }),
   tick: async () => {
     const { mint, cursor } = get();
     if (!mint) return;

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Star } from "lucide-react";
 import { Address } from "@/components/address";
 import { fmtMoney, lamToSol, toTokens, useLive } from "@/lib/live";
+import { WalletsPanel } from "@/components/live/wallets-panel";
 import { fmtPct, fmtTokens, timeAgo } from "@/lib/format";
 
 type Tab = "trades" | "holders" | "wallets";
@@ -58,7 +59,7 @@ export function ActivityTabs() {
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} tabIndex={0} className="scroll-thin min-h-0 flex-1 overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent-b">
         {tab === "trades" && <TradesTable onlyOwn={onlyOwn} />}
         {tab === "holders" && <HoldersTable />}
-        {tab === "wallets" && <WalletsTable />}
+        {tab === "wallets" && <WalletsPanel />}
       </div>
     </div>
   );
@@ -206,55 +207,5 @@ function Bar({ pct, tone }: { pct: number; tone: "own" | "ext" | "curve" }) {
       </div>
       <span className="num w-14 text-right text-[11.5px] text-muted">{fmtPct(pct)}</span>
     </div>
-  );
-}
-
-function WalletsTable() {
-  const position = useLive((s) => s.position);
-  const wallets = useLive((s) => s.wallets);
-  const folders = useLive((s) => s.folders);
-  const decimals = useLive((s) => s.info?.decimals ?? 6);
-  if (!position) return <div className="skeleton m-3 h-24" aria-busy="true" />;
-  const byId = new Map(wallets.map((w) => [w.id, w]));
-  const fname = (id: string) => byId.get(id)?.folderIds.map((f) => folders.find((x) => x.id === f)?.name).filter(Boolean).join(", ") || "—";
-  if (position.items.length === 0) return <p className="p-8 text-center text-[13px] text-muted">No tienes wallets activas. Créalas en Wallets.</p>;
-  return (
-    <table className="w-full text-[12.5px]">
-      <thead>
-        <tr>
-          <th className={th}>Wallet</th>
-          <th className={th}>Rol</th>
-          <th className={th}>Carpeta</th>
-          <th className={`${th} text-right`}>SOL</th>
-          <th className={`${th} text-right`}>Tokens</th>
-          <th className={`${th} text-right`}>Valor</th>
-          <th className={`${th} text-right`}>P&L</th>
-        </tr>
-      </thead>
-      <tbody>
-        {position.items.map((w) => {
-          const has = BigInt(w.tokens) > 0n;
-          const pnl = w.valueLamports - w.costLamports;
-          return (
-            <tr key={w.walletId} className="border-t border-line/60 hover:bg-surface-2/60">
-              <td className={td}>
-                <div className="flex flex-col">
-                  <span>{w.label}</span>
-                  <Address value={w.address} className="text-[11px] text-faint" />
-                </div>
-              </td>
-              <td className={td}>
-                <span className={`chip h-5 px-1.5 text-[10.5px] ${w.role === "dev" ? "border-warn/30 text-warn" : ""}`}>{roleLabel(w.role)}</span>
-              </td>
-              <td className={`${td} text-muted`}>{fname(w.walletId)}</td>
-              <td className={`${td} num text-right`}>{lamToSol(w.lamports).toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</td>
-              <td className={`${td} num text-right text-muted`}>{has ? fmtTokens(toTokens(w.tokens, decimals)) : "—"}</td>
-              <td className={`${td} num text-right`}>{has ? lamToSol(w.valueLamports).toLocaleString("es-ES", { maximumFractionDigits: 3 }) : "—"}</td>
-              <td className={`${td} num text-right ${!has ? "text-faint" : pnl >= 0 ? "text-buy" : "text-sell"}`}>{has ? `${pnl >= 0 ? "+" : "−"}${Math.abs(lamToSol(pnl)).toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}` : "—"}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
   );
 }

@@ -26,7 +26,7 @@ export function InstantTrade() {
   const [armed, setArmed] = useState(false);
   const [settings, setSettings] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const { folders, scope, setScope, selected } = useWalletPicker("nebula.instant.scope");
+  const { folders, scope, setScope, selected, pickedCount } = useWalletPicker("nebula.instant.scope");
   const position = useLive((s) => s.position);
   const info = useLive((s) => s.info);
   const ready = !!info && !!position;
@@ -202,6 +202,7 @@ export function InstantTrade() {
           <div className="flex items-center gap-2">
             <select aria-label="Carpeta del Instant Trade" value={scope} onChange={(e) => setScope(e.target.value)} className="field h-8 py-0 text-[12.5px]">
               <option value="all">Todas</option>
+              <option value="picked">Marcadas ({pickedCount})</option>
               {folders.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
