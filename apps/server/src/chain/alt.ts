@@ -5,8 +5,12 @@ import { createHash } from "node:crypto";
 import { AddressLookupTableProgram, Keypair, PublicKey, type AddressLookupTableAccount, type TransactionInstruction } from "@solana/web3.js";
 import type { LaunchpadAdapter } from "./types";
 
-/** Claves no firmantes comunes a dos lanzamientos con mint y creador distintos = cuentas fijas. */
-export async function staticLaunchKeys(adapter: LaunchpadAdapter) {
+/**
+ * Claves no firmantes comunes a varios lanzamientos con mint y creador distintos = cuentas fijas.
+ * El SDK elige al azar una cuenta de comisiones entre varias: con solo dos muestras podía coincidir y
+ * colarse en la lista, y la huella cambiaba de un arranque a otro (la tabla parecía no existir).
+ */
+export async function staticLaunchKeys(adapter: LaunchpadAdapter, samples = 6) {
   const sample = async () => {
     const creator = Keypair.generate().publicKey.toBase58();
     const mint = Keypair.generate().publicKey.toBase58();
@@ -19,8 +23,12 @@ export async function staticLaunchKeys(adapter: LaunchpadAdapter) {
     }
     return keys;
   };
-  const [a, b] = [await sample(), await sample()];
-  return [...a].filter((k) => b.has(k)).sort();
+  let common = await sample();
+  for (let i = 1; i < samples; i++) {
+    const next = await sample();
+    common = new Set([...common].filter((k) => next.has(k)));
+  }
+  return [...common].sort();
 }
 
 export const keysFingerprint = (keys: string[]) => createHash("sha256").update(keys.join(",")).digest("hex").slice(0, 16);

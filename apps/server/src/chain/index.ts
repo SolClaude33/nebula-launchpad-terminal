@@ -247,8 +247,24 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
       const want = await keys();
       const fp = keysFingerprint(want);
       const saved = JSON.parse(kvGet(opts.db(), `launchAlt:${opts.profile}`) ?? "null") as { address: string; fp: string } | null;
-      if (saved && saved.fp === fp) alt = await loadAlt(saved.address, want).catch(() => null);
-      else alt = null;
+      // La tabla guardada sirve si contiene todas las claves que hacen falta ahora (aunque cambie la huella).
+      // Un error del RPC al leerla no significa que falte: se propaga en vez de pedir crear otra (y pagar otro rent).
+      alt = null;
+      if (saved) {
+        let lastErr: unknown = null;
+        for (let i = 0; i < 3 && !alt; i++) {
+          try {
+            alt = await loadAlt(saved.address, want);
+            lastErr = null;
+            if (!alt) break;
+          } catch (e) {
+            lastErr = e;
+            await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+          }
+        }
+        if (lastErr) throw Object.assign(new Error(`No se pudo leer la tabla de direcciones de Nébula (RPC): ${(lastErr as Error).message}`), { statusCode: 503 });
+        if (alt && saved.fp !== fp) kvSet(opts.db(), `launchAlt:${opts.profile}`, JSON.stringify({ address: saved.address, fp }));
+      }
       const rentLamports = BigInt(await pool.run((c) => c.getMinimumBalanceForRentExemption(56 + 32 * want.length)));
       return { ready: !!alt, address: alt ? alt.key.toBase58() : null, keys: want.length, rentLamports };
     },
