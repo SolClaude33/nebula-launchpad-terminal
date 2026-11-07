@@ -79,7 +79,7 @@ Todos los launchpads se integran mediante un **adaptador** común (REQ-CORE-001)
 | Fase | Cadena | Launchpads | Monedas de cotización | Destino tras graduar |
 |---|---|---|---|---|
 | **MVP** | Solana | **Pump.fun** | SOL (USDC como Should si el adaptador lo soporta) | PumpSwap |
-| F2 | Solana | Raydium LaunchLab, LetsBonk, Meteora DBC, Bags | SOL, USD1, USDC | Raydium o Meteora |
+| ~~F2~~ | Solana | ~~Raydium LaunchLab, LetsBonk, Meteora DBC, Bags~~ **Descartado (Nicol, 2026-11-07): Nébula se queda solo con Pump.fun.** | — | — |
 | F3 | BNB Smart Chain | Four.meme, flap.sh | BNB, USDT, USDC | PancakeSwap |
 | F4 | Robinhood Chain, Base | pons, Clanker, Uniswap V2/V3/V4 | ETH, USDG, USDC | Uniswap |
 
@@ -394,7 +394,7 @@ Cada escenario se ejecuta contra el perfil `test`. Cuenta como superado cuando t
 |---|---|---|
 | F0, diseño | Dirección visual, prototipo de la pantalla de desbloqueo, del Live Workspace y del asistente, y especificación del adaptador y de la bóveda | Nicol aprueba el diseño. |
 | **F1, MVP Pump.fun** | VAULT, WAL, FUND, LAUNCH (Quick y Manual), LIVE con Instant Trade, AUTO (DCA y límite), REW, COST, DASH básico, ajustes y logs | Los 24 escenarios E2E en verde en el perfil `test`, y la prueba de humo en mainnet superada. |
-| F2 | Más pads de Solana (LaunchLab, Bonk, Meteora, Bags), ladder y trailing stop, presets, tracker, descubrimiento, bot de Telegram para avisos | Suite de contrato en verde para cada pad nuevo. |
+| F2 | Ladder y trailing stop, presets, tracker, descubrimiento, bot de Telegram para avisos y Jito. **Sin pads nuevos** (decisión de Nicol, 2026-11-07: solo Pump.fun). | Cada bloque con sus tests en verde (mock, Surfpool y E2E si toca la interfaz). |
 | F3 | BSC (Four.meme, flap.sh), con gestor de nonce para EVM | E2E de nonce en un fork con anvil. |
 | F4 | Robinhood Chain, Base, liquidez en Uniswap y bloqueos con Streamflow | — |
 
