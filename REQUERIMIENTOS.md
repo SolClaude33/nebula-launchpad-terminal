@@ -8,8 +8,7 @@
 | Estado | Planificación. No hay código. |
 | Tipo | **Herramienta privada, de un solo operador, que corre entera en local.** Sin registro, sin cuentas y sin servidor remoto propio. |
 | MVP | **Solo Pump.fun en Solana** |
-| Referencia principal | Proxima (docs.proxima.tools) |
-|
+
 
 ### Cambios respecto a la v0.1
 - Se eliminan registro, login, sesiones, multiusuario, colaboración, referidos, cashback, comisiones de plataforma, niveles, suscripción, perfil, API pública y página de estado.
@@ -46,7 +45,7 @@ Nébula es una aplicación de escritorio para uso propio que corre en `localhost
 - Gestión de wallets: crear, importar, exportar, carpetas, roles, archivar y borrar.
 - Funder (wallet de financiación), dispersión simple, recolección y retiro.
 - Asistente de lanzamiento en Pump.fun: metadatos, clonar o importar un token, borradores con autoguardado, presets, lanzamiento programado y dev buy.
-- Compras multi-wallet desde las wallets propias en modo **Quick** o **Manual**.
+- Compras multi-wallet Jito + snipe desde las wallets propias en modo **Quick** o **Manual** o **Pro**.
 - Live Workspace: gráfico, operaciones, holders, panel de Instant Trade con atajos de teclado, enviar y quemar tokens.
 - Automatizaciones de la posición propia: DCA y órdenes límite (ladder y trailing stop como Should).
 - Reclamo de comisiones de creador de Pump.fun.
@@ -56,9 +55,6 @@ Nébula es una aplicación de escritorio para uso propio que corre en `localhost
 
 ### 2.2 Fuera de alcance por ser una herramienta privada
 Registro y login, cuentas y multiusuario, colaboración y permisos, referidos y cashback, comisiones de plataforma, niveles y suscripción, perfil y avatar, API pública, página de estado, emails transaccionales, i18n (la interfaz va solo en español, con textos centralizados por si se traduce más adelante), y acceso desde otros dispositivos o desde Internet.
-
-### 2.3 Fuera de alcance (decisión de producto)
-Las referencias incluyen funciones cuyo propósito es que actividad coordinada o interna parezca orgánica a otros traders. Nébula **no** las implementa, porque eso equivale a herramientas de wash trading y de supply oculto. Son:
 
 
 > Lo que sí se conserva del Sniper Guard es la variante "Complete Early", que solo detiene las compras planificadas restantes (REQ-LAUNCH-014).
