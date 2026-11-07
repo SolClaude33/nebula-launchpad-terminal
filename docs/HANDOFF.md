@@ -67,7 +67,7 @@ Todo está en commits locales, sin push.
    - `ChainReader.tokenMetadata` lee la extensión de Token-2022 o, si no la hay, Metaplex.
    - `clone.ts` solo descarga por https y comprueba que la IP sea pública en cada redirección. Límites: 64 KB para el JSON y 2 MB para la imagen, cuyo tipo se detecta por su firma. Si una pasarela falla, prueba otras.
    - La imagen se vuelve a subir al almacén propio.
-9. **Jito:** **queda para F2** (decisión de Nicol del 2026-11-06). En Ajustes aparece como «próximamente · F2»; no se envía ninguna propina. El P&L ya tiene la línea de propinas Jito (a 0).
+9. **Jito:** **queda para F2** (decisión de Nicol del 2026-11-06). Hecho en el bloque 5 de F2 (ver abajo).
 10. **Copias diarias** (`b7df4c7`, §7.3)
     - Usa `db.backup()` al arrancar y después cada hora si la última copia tiene más de 24 h. Conserva 7.
     - En Ajustes se pueden listar y descargar.
@@ -128,9 +128,25 @@ Nicol lanzó $BOB (mint `BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`, modo Pro
   - E2E: 12/12 a la primera.
   - Revisión visual en Surfpool: lanzamiento Pro con esperas de 0/1500/1500 ms, que salieron en T+357, T+1.884 y T+3.387 ms; venta del 25 % desde el panel; «Creando $SYM…».
 
+### F2 · bloque 5: envío con Helius Developer y Jito (2026-11-07, `7434361`)
+
+- **Preset Helius Developer (40 y 5)** junto al de Free, en Ajustes → RPC (`RPC_PRESETS` en `@nebula/shared`). Límites oficiales comprobados en helius.dev/docs/billing/rate-limits el 2026-11-07: Developer 50 req/s y 5 sendTransaction/s (Free 10 y 1). Con 5 envíos/s, el aviso del paso 3 dice 200 ms.
+- **Jito opcional** (Ajustes → «Enviar por Jito», Block Engine y propina; mínimo 1.000 lamports, 0,001 SOL por defecto; desactivado por defecto):
+  - `chain/jito.ts`: compra, venta y creación llevan una transferencia a una de las 8 cuentas oficiales de propina, **al final de la misma tx** (si falla, no se paga). La cuenta sale de un hash de la idempotency key (sin azar) y siempre va como clave estática, nunca desde la tabla de direcciones (lo exige Jito).
+  - `sender.ts`: `tx.tip_lamports` (migración 12) se registra antes de emitir; los MISMOS bytes firmados salen por el RPC y por `sendTransaction` del Block Engine (base64), con limitador propio de 1/s y los reenvíos solo con cupo sobrante. Un fallo de Jito (p. ej. 429) no cambia el resultado: el RPC manda.
+  - **Creación:** medido el 2026-11-07, create_v2 + dev buy ocupa 922–988 bytes con la tabla de Nébula y la propina suma ~80. Cabe incluso con nombre de 32 y símbolo de 10 (probado en Surfpool). Si alguna vez no cabe (URI muy larga), esa tx sale **sin propina y solo por el RPC**: la creación inicializa la curva, así que nadie puede operar antes que el dev buy y sin Jito solo se pierde latencia. Nunca se parte del dev buy, ni hay bundles ni tx de propina aparte. El dry-run lo dice en la línea de la creación.
+  - **Costes:** la propina aparece en el ticket (fila «Propina Jito» y total), el Instant Trade, el panel «Mis wallets», el resumen y el dry-run del lanzamiento, y en las comprobaciones de saldo y el MAX. El P&L la resta aparte (`jitoLamports`) y ya no la cuenta como rent.
+  - La huella del dry-run incluye la propina: cambiarla obliga a volver a simular. Un programado cuya propina cambió falla con el motivo en vez de lanzarse.
+  - **Perfil `test` y mock:** la propina va en la tx (tamaño, costes y P&L reales), pero el envío al Block Engine se simula; Ajustes lo avisa.
+- **Checks reales:** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 150/150 (11 nuevos en `jito.test.ts`: propina en la tx, cuenta fuera de la tabla, fetch simulado del Block Engine, 429, simulado en `test`, creación al límite, ajustes, preset; y el recorrido lanzamiento → compra → venta → P&L); `pnpm test:chain` 9/9 archivos a la primera (129 + 13 omitidos), con `jito.test.ts` también contra Surfpool; `pnpm test:e2e` 12/12; Ajustes revisado a ojo en una instancia `test` con datos temporales (presets, tarjeta activa «simulado», aviso y validación de la propina; consola limpia).
+- **Queda:**
+  - Probar Jito en mainnet con SOL real (lo hace Nicol): activar Jito, una compra pequeña y comprobar en el explorador la transferencia a la cuenta de propina y que el P&L la muestra.
+  - Jito sale también por el RPC, así que la protección frente a sándwiches es parcial. «Solo Jito» (`bundleOnly=true`) queda como decisión abierta en `docs/F2.md`.
+  - Sin UUID de Jito, el Block Engine admite 1 envío/s por IP: en órdenes de varias wallets, las que no tengan turno salen solo por el RPC (con su propina igual).
+
 ## Próximo paso
 
-F2, por bloques, según `docs/F2.md`. Cuando Nicol contrate Helius Developer: en Ajustes, peticiones/s 40–50 y envíos/s 5 (hay que añadir ese preset).
+F2, por bloques, según `docs/F2.md`: queda el bloque 6 (descubrimiento).
 
 ## Decisiones pendientes de Nicol
 
