@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Globe, Send } from "lucide-react";
+import { Globe, Send, Star } from "lucide-react";
+import { trackToken, untrackToken, useTracked } from "@/lib/tracker";
 import { Address } from "@/components/address";
 import { LiveNumber } from "@/components/live-number";
 import { GraduationOrbit } from "./graduation-orbit";
@@ -37,6 +38,34 @@ const VENUE = {
   migrating: { label: "Curva completa", hint: "Migrando a PumpSwap" },
   pumpswap: { label: "PumpSwap", hint: "Graduado" },
 } as const;
+
+/** REQ-LIVE-006: seguir o dejar de seguir el token en el tracker. */
+function TrackStar({ mint }: { mint: string }) {
+  const items = useTracked((s) => s.items);
+  const refresh = useTracked((s) => s.refresh);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (items === null) void refresh();
+  }, [items, refresh]);
+  const on = !!items?.some((t) => t.mint === mint);
+  return (
+    <button
+      onClick={async () => {
+        setBusy(true);
+        if (on) await untrackToken(mint);
+        else await trackToken(mint);
+        setBusy(false);
+      }}
+      disabled={busy || items === null}
+      aria-pressed={on}
+      aria-label={on ? "Dejar de seguir en el tracker" : "Seguir en el tracker"}
+      title={on ? "En tu tracker · pulsa para quitarlo" : "Seguir en el tracker"}
+      className="btn btn-ghost grid size-7 shrink-0 place-items-center p-0"
+    >
+      <Star className={`size-4 ${on ? "fill-warn text-warn" : "text-muted"}`} aria-hidden />
+    </button>
+  );
+}
 
 export function TokenHeader({ mint }: { mint: string }) {
   const info = useLive((s) => s.info)!;
@@ -79,6 +108,7 @@ export function TokenHeader({ mint }: { mint: string }) {
           <div className="flex items-center gap-2">
             <h1 className="truncate text-[19px] font-semibold tracking-[-0.01em]">{name}</h1>
             {symbol && <span className="num text-[13px] text-muted">${symbol}</span>}
+            <TrackStar mint={mint} />
             <span className="chip hidden h-5 px-1.5 text-[10.5px] xl:inline-flex">{info.mayhem ? "Mayhem" : "Classic"}</span>
             {token?.feeMode && <span className="chip hidden h-5 px-1.5 text-[10.5px] xl:inline-flex">{token.feeMode === "holders" ? "Holder rewards" : "Creator fees"}</span>}
             {token?.own && <span className="chip hidden h-5 border-accent/30 px-1.5 text-[10.5px] text-accent xl:inline-flex">lanzado con Nébula</span>}

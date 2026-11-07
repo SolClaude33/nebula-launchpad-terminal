@@ -47,7 +47,7 @@ const NAV: { group: string; items: Item[] }[] = [
     items: [
       { label: "Automatizaciones", href: "/automations", icon: Bot, ready: true },
       { label: "Actividad", href: "/activity", icon: ScrollText, ready: true },
-      { label: "Tracker", href: "/tracker", icon: Radar },
+      { label: "Tracker", href: "/tracker", icon: Radar, ready: true },
       { label: "Ajustes", href: "/settings", icon: Settings, ready: true },
     ],
   },
@@ -100,7 +100,8 @@ export function Sidebar() {
             {!collapsed && <p className="telemetry px-2.5 pb-1.5">{g.group}</p>}
             <ul className="space-y-0.5">
               {g.items.map((it) => {
-                const active = it.match ? pathname.startsWith(it.match) : pathname === it.href;
+                // por segmento: «/t» marca Live en /t y /t/<mint>, no en /tracker
+                const active = it.match ? pathname === it.match.replace(/\/$/, "") || pathname.startsWith(it.match.endsWith("/") ? it.match : `${it.match}/`) : pathname === it.href;
                 const Icon = it.icon;
                 const inner = (
                   <>

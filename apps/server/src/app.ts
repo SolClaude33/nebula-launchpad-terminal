@@ -29,9 +29,11 @@ import { automationRoutes } from "./routes/automations";
 import { Pnl } from "./pnl";
 import { Drafts } from "./drafts";
 import { Presets } from "./presets";
+import { Tracker } from "./tracker";
 import { TokenOps } from "./token-ops";
 import { tokenRoutes } from "./routes/tokens";
 import { presetRoutes } from "./routes/presets";
+import { trackerRoutes } from "./routes/tracker";
 import { Cloner } from "./clone";
 import { Backups } from "./backups";
 import { storedSettings } from "./settings";
@@ -55,6 +57,7 @@ export type Ctx = {
   pnl: Pnl;
   drafts: Drafts;
   presets: Presets;
+  tracker: Tracker;
   tokenOps: TokenOps;
   cloner: Cloner;
   backups: Backups;
@@ -100,6 +103,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   };
   const vault = new Vault(getDb);
   let chainManager: ChainManager | null = null;
+  let tracker: Tracker | null = null;
   let operations: Operations | null = null;
   let launches: Launches | null = null;
   let live: Live | null = null;
@@ -142,6 +146,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     drafts: new Drafts(getDb),
     presets: new Presets(getDb),
+    get tracker() {
+      return (tracker ??= new Tracker(getDb, chainManager!));
+    },
     get tokenOps() {
       return tokenOps!;
     },
@@ -254,6 +261,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(dashboardRoutes(ctx), { prefix: "/api" });
   await app.register(tokenRoutes(ctx), { prefix: "/api" });
   await app.register(presetRoutes(ctx), { prefix: "/api" });
+  await app.register(trackerRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();

@@ -243,6 +243,10 @@ const MIGRATIONS: string[] = [
   );
   CREATE UNIQUE INDEX preset_kind_name ON preset(kind, name COLLATE NOCASE);
   `,
+  `
+  -- REQ-LIVE-006: tracker (lista de seguimiento de tokens)
+  CREATE TABLE tracked (mint TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
+  `,
 ];
 
 export function openDb(dir: string): DB {

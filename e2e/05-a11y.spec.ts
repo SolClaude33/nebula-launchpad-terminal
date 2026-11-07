@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DATA_ROOT } from "./harness";
 import { shared, unlockUi } from "./helpers";
 
-const ROUTES = ["/", "/wallets", "/funder", "/launches", "/launches/drafts", "/launch/new", "/t/LIVE", "/automations", "/rewards", "/activity", "/settings"];
+const ROUTES = ["/", "/wallets", "/funder", "/launches", "/launches/drafts", "/launch/new", "/t/LIVE", "/automations", "/rewards", "/activity", "/tracker", "/settings"];
 const SIZES = [
   { width: 1024, height: 768 },
   { width: 1440, height: 900 },

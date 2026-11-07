@@ -8,6 +8,7 @@ import { toast } from "@/lib/toast";
 import { forceHeartbeat, useVault } from "@/lib/vault";
 import { useChain, useChainStatusPolling } from "@/lib/chain";
 import { storedTheme, useTheme } from "@/lib/theme";
+import { CommandPalette, useCommandPalette } from "./command-palette";
 
 function titleFor(path: string) {
   if (path.startsWith("/t/")) return ["Live", "Workspace"];
@@ -59,7 +60,7 @@ export function Topbar() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        toast({ tone: "info", title: "Paleta de comandos", body: "Llega más adelante (REQ-CMDK-001)." });
+        useCommandPalette.getState().setOpen(!useCommandPalette.getState().open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -91,7 +92,7 @@ export function Topbar() {
         </div>
 
         <button
-          onClick={() => toast({ tone: "info", title: "Paleta de comandos", body: "Llega en F1 (REQ-CMDK-001)." })}
+          onClick={() => useCommandPalette.getState().setOpen(true)}
           className="mx-auto flex h-9 w-full max-w-[420px] items-center gap-2.5 rounded-[var(--radius-sm)] border border-line bg-surface-1/70 px-3 text-[13px] text-faint transition-colors hover:border-line-strong hover:text-muted"
         >
           <Search className="size-4" aria-hidden />
@@ -127,6 +128,7 @@ export function Topbar() {
           </button>
         </div>
       </header>
+      <CommandPalette />
 
       {autoLock && warn && left > 0 && (
         <div role="alert" className="rise fixed top-16 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-[var(--radius-md)] border border-warn/30 bg-[color-mix(in_oklab,var(--surface-1)_92%,transparent)] px-4 py-2.5 text-[13px] shadow-[var(--shadow-float)] backdrop-blur-xl">
