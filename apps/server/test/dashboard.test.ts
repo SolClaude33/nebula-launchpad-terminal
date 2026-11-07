@@ -120,6 +120,30 @@ describe.each(backends)("Dashboard y P&L · %s", (backend) => {
     expect(BigInt(d.balances.walletsLamports)).toBe(await total());
   }, 300_000);
 
+  it("REQ-WAL-009 · actividad por wallet: cuadra con el Δ SOL real de cada holder y suma lo del dashboard", async () => {
+    const d = (await call("GET", "/api/dashboard?period=all")).json;
+    const acts = await Promise.all([dev, ...holders].map(async (w) => (await call("GET", `/api/wallets/${w.id}/activity`)).json));
+    // la suma por wallet de trades, compras y ventas es lo del dashboard (misma fuente)
+    expect(acts.reduce((a, x) => a + x.trades, 0)).toBe(d.totals.trades);
+    expect(acts.reduce((a, x) => a + x.buysLamports, 0)).toBe(d.totals.buysLamports);
+    expect(acts.reduce((a, x) => a + x.sellsLamports, 0)).toBe(d.totals.sellsLamports);
+    for (const [i, h] of holders.entries()) {
+      const a = acts[i + 1];
+      // vendió todo: realizado = ventas − compras, sin posición abierta
+      expect(a.open).toEqual([]);
+      expect(Math.abs(a.realizedLamports - (a.sellsLamports - a.buysLamports))).toBeLessThanOrEqual(2);
+      // el holder solo operó: Δ SOL en cadena desde su airdrop de 1 SOL = realizado − fees − Jito − rent
+      const now = (await ctx.chain.get().reader.balances([h.address])).get(h.address)!;
+      const delta = Number(now - SOL);
+      const est = a.realizedLamports - a.networkFeesLamports - a.jitoLamports - a.rentLamports;
+      expect(Math.abs(est - delta), `${h.label}: ${est} vs ${delta}`).toBeLessThanOrEqual(Math.max(2, Math.abs(delta) / 100));
+      expect(a.trades).toBe(i === 0 ? 3 : 2);
+      expect(a.inNebulaSince).toBeGreaterThan(0);
+      expect(a.firstActivityAt).toBeGreaterThan(0);
+    }
+    expect((await call("GET", "/api/wallets/no-existe/activity")).status).toBe(404);
+  });
+
   it("REQ-DASH-001 · los períodos filtran por fecha: en 24 H por horas y sin trades fuera de rango", async () => {
     const d = (await call("GET", "/api/dashboard?period=24h")).json;
     expect(d.bucket).toBe("hour");

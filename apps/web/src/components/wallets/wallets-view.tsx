@@ -33,6 +33,7 @@ import { Modal, RevealDialog, StepUpDialog } from "./dialogs";
 import { fmtLamports, useChain } from "@/lib/chain";
 import { CollectDialog, DepositDialog, DisperseDialog, TransferDialog } from "./funds-dialogs";
 import { ReclaimDialog } from "./reclaim-dialog";
+import { WalletActivity } from "./wallet-activity";
 import { useVault } from "@/lib/vault";
 
 type Kind = "wallet" | "funder";
@@ -202,6 +203,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
             </div>
           )}
         </div>
+        {selected.length === 1 && <WalletActivity key={selected[0].id} walletId={selected[0].id} />}
         <div className="panel p-4">
           <p className="telemetry">Movimientos</p>
           <div className="mt-3 grid grid-cols-2 gap-1.5">

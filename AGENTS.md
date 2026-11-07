@@ -17,6 +17,10 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
   - `settings.ts`: secretos, `{key}` en las URL del RPC y `scrub`.
   - `pnl.ts`: fee real y Δ SOL de cada envío propio; P&L.
   - `drafts.ts`, `token-ops.ts` (enviar y quemar), `clone.ts` (descargas acotadas), `diagnostics.ts` y `backups.ts`.
+  - `reclaim.ts`: recuperar rent (cierra cuentas de token con saldo 0; paga la fee el destino propio).
+  - `vanity.ts` + `vanity-worker.mjs`: mint vanity en worker_threads (JS plano para que cargue con tsx y vitest), ligado al borrador por `vanityMint:<borrador>`.
+  - `pnl.ts`: además del dashboard, `calendar()` (REQ-DASH-003) y `activity()` por wallet (REQ-WAL-009), sobre el mismo repaso `core()`.
+  - Tabla de direcciones: `launchAlt.closing/deactivate/close` (desactivar y, ~512 slots después, cerrar; la desactivada pasa a `launchAltClosing:<perfil>`).
 - `packages/shared`: esquemas zod (`automations.ts`: `AutomationConfig`, validación del orden de objetivos y `dcaPlan`, compartidos con la web). Las rutas de datos están en `./node` (`~/.nebula/<perfil>`, con `NEBULA_PROFILE` y `NEBULA_DATA_DIR`).
 - `apps/web/AGENTS.md`: gestionado por Next.js; no se edita.
 

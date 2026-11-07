@@ -155,9 +155,19 @@ Nicol lanzó $BOB (mint `BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`, modo Pro
 - **Decisiones de Nicol (2026-11-07):** borrar automatizaciones sigue permitido sin iniciar, paradas o en estado final (spec ajustada); «solo Jito» no, de momento.
 - **Checks:** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 152/152; `live.test.ts` contra Surfpool 22 + 1 omitido (REQ-REW-003 incluido); `pnpm test:chain` completo 131 + 13 omitidos con un fallo suelto de REQ-AUTO-006 que pasa al repetirlo (Surfpool, sin relación); `pnpm test:e2e` 12/12; `pnpm build` y presupuesto de JS 224,6 KB de 300; `/rewards` revisado a ojo en una instancia `test` con datos temporales (aviso, confirmación con la recarga y resultado verificado).
 
+### Restos «Should» de F1 cerrados (2026-11-07)
+
+- **P3-10** (`10cf085`): enviar y quemar leen programa y decimales del mint (offset 44). Test en Surfpool con un mint de 9 decimales. **P3-13**: se deja como ajuste (ver `docs/REVIEW-F1.md`).
+- **REQ-DASH-003** (`b59bed9`): calendario de P&L en el dashboard (mes por días, año por meses, hora local). `summary()` y `calendar()` comparten `core()`; el test comprueba que el mes suma lo mismo que «Todo». Arreglado en la revisión a ojo: al cambiar a «Año» se pintaba la respuesta del mes con nombres de mes (excepción); ahora la rejilla sigue a los datos.
+- **REQ-WAL-010** (`a5147cf`): /wallets → «Recuperar rent». Cierra cuentas con saldo exactamente 0 (Token y Token-2022), máx. 16 por tx (medido ≤ 1.232 bytes), paga el destino y firma la dueña (una wallet a 0 SOL también cierra). Vista previa simulada; lo recibido coincide al lamport (Surfpool y a ojo: 0,00206133 SOL de una cuenta Token-2022). Omite wallets con algo en curso o en pausa. Migración 15 (`reclaim`). En el P&L, el rent recuperado descuenta del rent en cuentas. Surfpool: la primera simulación con una firmante sin cuenta tarda ~16 s (fork perezoso); el test hace un calentamiento.
+- **Cerrar la tabla de direcciones** (`c6cf704`): Ajustes → «Tabla de direcciones». Desactivar (bloqueado con lanzamientos en curso, en pausa o programados) y cerrar tras ~512 slots, con el rent a una wallet propia. Test en Surfpool con espera real (~130 s): `surfnet_timeTravel` no rellena SlotHashes.
+- **REQ-LAUNCH-006** (`354fdde`): mint vanity en el paso 2 del asistente. Hilos aparte (hasta 8, ~100.000 claves/s medidas; «pump» en 63 s), cancelable; o importar la clave. La clave va a la bóveda y se liga al borrador; el dry-run la usa mientras la creación no se haya enviado. Arreglado en la revisión a ojo: FOUND se informaba antes de ligar el mint y la UI dejaba de sondear sin mostrarlo.
+- **REQ-WAL-009**: /wallets → panel «Actividad» al elegir una wallet (trades, tokens, compras, ventas, P&L realizado por coste medio propio, fees, Jito, rent, entradas y salidas). Solo datos locales. Test: cuadra con el Δ SOL real de cada holder (mock y Surfpool).
+- **Migraciones 14 y 15** comprobadas sobre una copia de la base de mainnet.
+
 ## Próximo paso
 
-F2 cerrada. Quedan los restos «Should» de F1 listados en `docs/F2.md` (REQ-WAL-009/010, REQ-LAUNCH-006, REQ-DASH-003, cerrar la tabla de direcciones, P3-10/P3-13) y las pruebas en mainnet de Nicol (Jito, reclamo con recarga).
+F1 y F2 cerradas, también sus restos «Should». Quedan las pruebas en mainnet de Nicol: Jito, reclamo con recarga, recuperar rent y, si deja de lanzar, cerrar la tabla de direcciones.
 
 ## Decisiones pendientes de Nicol
 

@@ -293,6 +293,85 @@ export class Pnl {
     };
   }
   /**
+   * REQ-WAL-009: actividad de UNA wallet, solo con datos locales (trades indexados, envíos propios y movimientos).
+   * - P&L realizado con coste medio de lo que compró ESTA wallet. Regla: los tokens que recibe de otra wallet (envío
+   *   de tokens) entran a coste 0 y los que envía salen sin realizar; por eso la suma por wallet puede diferir del
+   *   P&L conjunto del dashboard, que cuenta la posición de todas las wallets propias juntas.
+   * - Rent = lo que sus compras, ventas y creaciones dejaron en cuentas (flujo de trades − fee − propina − Δ SOL).
+   */
+  async activity(walletId: string) {
+    await Promise.race([this.indexOwn().catch(() => 0), new Promise((r) => setTimeout(r, 5000))]);
+    const db = this.db();
+    const w = db.prepare("SELECT id, label, address, created_at FROM wallet WHERE id = ?").get(walletId) as { id: string; label: string; address: string; created_at: number } | undefined;
+    if (!w) throw Object.assign(new Error("Wallet no encontrada"), { statusCode: 404 });
+    const trades = db.prepare("SELECT mint, signature, side, lamports, tokens, fee, ts FROM live_trade WHERE user = ? ORDER BY ts, seq").all(w.address) as TradeRow[];
+    const pos = new Map<string, { cost: number; tok: number }>();
+    const net = new Map<string, number>();
+    let buys = 0;
+    let sells = 0;
+    let realized = 0;
+    let padFees = 0;
+    for (const t of trades) {
+      const p = pos.get(t.mint) ?? { cost: 0, tok: 0 };
+      pos.set(t.mint, p);
+      const l = Number(t.lamports);
+      const k = Number(t.tokens);
+      net.set(t.signature, (net.get(t.signature) ?? 0) + (t.side === "sell" ? l : -l));
+      padFees += Number(t.fee);
+      if (t.side === "buy") {
+        p.cost += l;
+        p.tok += k;
+        buys += l;
+      } else {
+        const part = p.tok > 0 ? p.cost * Math.min(1, k / p.tok) : 0;
+        p.cost -= part;
+        p.tok = Math.max(0, p.tok - k);
+        realized += l - part;
+        sells += l;
+      }
+    }
+    const txs = db.prepare("SELECT signature, kind, mint, COALESCE(chain_fee, fee_lamports, 0) AS fee, COALESCE(tip_lamports, 0) AS tip, own_delta, COALESCE(block_time * 1000, created_at) AS at FROM tx WHERE status = 'CONFIRMED' AND signature IS NOT NULL AND payer = ?").all(w.address) as TxRow[];
+    let networkFees = 0;
+    let jito = 0;
+    let rent = 0;
+    for (const x of txs) {
+      networkFees += x.fee;
+      jito += x.tip;
+      if (x.own_delta !== null && ["create", "buy", "sell"].includes(x.kind)) rent += (net.get(x.signature) ?? 0) - x.fee - x.tip - x.own_delta;
+    }
+    // Movimientos de SOL hechos con Nébula (operaciones confirmadas), comisiones cobradas y rent recuperado
+    const ops = db.prepare("SELECT from_addr, to_addr, lamports FROM operation_item WHERE status = 'OK' AND (from_addr = ? OR to_addr = ?)").all(w.address, w.address) as { from_addr: string; to_addr: string; lamports: number }[];
+    const inL = ops.filter((o) => o.to_addr === w.address).reduce((a, o) => a + o.lamports, 0);
+    const outL = ops.filter((o) => o.from_addr === w.address).reduce((a, o) => a + o.lamports, 0);
+    const claims = (db.prepare("SELECT COALESCE(SUM(CAST(received AS INTEGER)), 0) AS s FROM claim_item WHERE status = 'OK' AND wallet_id = ?").get(w.id) as { s: number }).s;
+    const reclaimed = (db.prepare("SELECT COALESCE(SUM(CAST(i.received AS INTEGER)), 0) AS s FROM reclaim_item i JOIN reclaim r ON r.id = i.reclaim_id WHERE i.status = 'OK' AND r.to_wallet_id = ?").get(w.id) as { s: number }).s;
+    const firstAt = Math.min(...trades.map((t) => t.ts), ...txs.map((t) => t.at), Infinity);
+    const open = [...pos].filter(([, p]) => p.tok > 0).map(([mint, p]) => ({ mint, tokens: Math.round(p.tok), costLamports: Math.round(p.cost) }));
+    return {
+      walletId: w.id,
+      label: w.label,
+      address: w.address,
+      inNebulaSince: w.created_at,
+      firstActivityAt: Number.isFinite(firstAt) ? firstAt : null,
+      trades: trades.length,
+      tokens: new Set(trades.map((t) => t.mint)).size,
+      buysLamports: buys,
+      sellsLamports: sells,
+      realizedLamports: Math.round(realized),
+      padFeesLamports: padFees,
+      networkFeesLamports: networkFees,
+      jitoLamports: jito,
+      rentLamports: Math.round(rent),
+      transfersInLamports: inL,
+      transfersOutLamports: outL,
+      claimsLamports: claims,
+      reclaimedLamports: reclaimed,
+      sends: txs.length,
+      open,
+    };
+  }
+
+  /**
    * REQ-DASH-003: calendario de P&L. Con `month` (1–12), una celda por día de ese mes; sin él, una por mes del
    * año. Usa los mismos movimientos que `summary()` (realizado − fees de red − Jito + comisiones), en hora local.
    */
