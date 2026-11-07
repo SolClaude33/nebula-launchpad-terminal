@@ -9,7 +9,7 @@ const SOL = 1_000_000_000n;
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type W = { id: string; label: string };
-type Buy = { ord: number; status: string; delaySec: number; sentAfterMs: number | null };
+type Buy = { ord: number; status: string; delayMs: number; sentAfterMs: number | null };
 
 describe("modo Pro · espera fija por wallet", () => {
   let app: Awaited<ReturnType<typeof buildApp>>["app"];
@@ -32,7 +32,7 @@ describe("modo Pro · espera fija por wallet", () => {
     devWalletId: dev.id,
     devBuyLamports: (SOL / 10n).toString(),
     mode,
-    holders: delays.map((d, i) => ({ walletId: holders[i].id, lamports: (SOL / 20n).toString(), delaySec: d })),
+    holders: delays.map((d, i) => ({ walletId: holders[i].id, lamports: (SOL / 20n).toString(), delayMs: d })),
     slippagePct: 25,
     mayhem: false,
     feeMode: "creator",
@@ -60,12 +60,12 @@ describe("modo Pro · espera fija por wallet", () => {
   });
 
   it("respeta la espera de cada wallet, en el orden del plan, y la vista muestra cuándo salió cada compra", async () => {
-    const id = await launch(cfg("pro", [1, 0, 2]));
+    const id = await launch(cfg("pro", [1000, 0, 2000]));
     const v = await ctx.launches.waitIdle(id, 30_000);
     expect(v.status).toBe("DONE");
     const buys = v.buys as Buy[];
     expect(buys.map((b) => b.status)).toEqual(["OK", "OK", "OK"]);
-    expect(buys.map((b) => b.delaySec)).toEqual([1, 0, 2]);
+    expect(buys.map((b) => b.delayMs)).toEqual([1000, 0, 2000]);
     const t = buys.map((b) => b.sentAfterMs!);
     expect(t.every((x) => typeof x === "number")).toBe(true);
     expect(t[0]).toBeGreaterThanOrEqual(1000); // 1 s tras la creación
@@ -74,16 +74,16 @@ describe("modo Pro · espera fija por wallet", () => {
   }, 40_000);
 
   it("en Quick la espera se ignora", async () => {
-    const id = await launch(cfg("quick", [5, 5]));
+    const id = await launch(cfg("quick", [5000, 5000]));
     const started = Date.now();
     const v = await ctx.launches.waitIdle(id, 30_000);
     expect(v.status).toBe("DONE");
-    expect((v.buys as Buy[]).map((b) => b.delaySec)).toEqual([0, 0]);
+    expect((v.buys as Buy[]).map((b) => b.delayMs)).toEqual([0, 0]);
     expect(Date.now() - started).toBeLessThan(5000);
   }, 40_000);
 
   it("bloquear durante la espera pausa el lanzamiento sin enviar la compra pendiente", async () => {
-    const id = await launch(cfg("pro", [0, 30]));
+    const id = await launch(cfg("pro", [0, 10_000]));
     for (let i = 0; i < 100 && ((ctx.launches.view(id).buys as Buy[])[0]?.status ?? "PENDING") === "PENDING"; i++) await sleep(50);
     await sleep(300);
     await call("POST", "/api/vault/lock");
@@ -93,7 +93,7 @@ describe("modo Pro · espera fija por wallet", () => {
     await call("POST", "/api/vault/unlock", { password: PW });
   }, 40_000);
 
-  it("la espera va de 0 a 600 s, en segundos enteros", async () => {
-    for (const d of [-1, 601, 1.5]) expect((await call("POST", "/api/launches/preflight", cfg("pro", [d]))).status, String(d)).toBe(400);
+  it("la espera va de 0 a 10.000 ms (10 s), en milisegundos enteros", async () => {
+    for (const d of [-1, 10_001, 1.5]) expect((await call("POST", "/api/launches/preflight", cfg("pro", [d]))).status, String(d)).toBe(400);
   });
 });

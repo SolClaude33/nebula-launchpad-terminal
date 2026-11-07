@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CircleDashed, FlaskConical, Loader2, Table2, XCircle } from "lucide-react";
-import { buysAfterCreate, delayTimeline, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { buysAfterCreate, delayTimeline, fmtMs, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports } from "@/lib/chain";
 import { SectionTitle } from "./ui";
@@ -40,7 +40,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
         ["Comisiones", d.feeMode === "creator" ? "Creator Fees" : "Holder Rewards"],
         ["Wallet dev", byId.get(d.devWalletId)?.label ?? "—"],
         ["Dev buy", fmtLamports(toLamports(d.devBuy), 3)],
-        ["Modo", d.launchMode === "quick" ? `Quick · ${d.plan.length} wallets` : d.launchMode === "pro" ? `Pro · ${d.plan.length} wallets · esperas ${delayTimeline(d).at(-1) ?? 0} s` : "Manual"],
+        ["Modo", d.launchMode === "quick" ? `Quick · ${d.plan.length} wallets` : d.launchMode === "pro" ? `Pro · ${d.plan.length} wallets · esperas ${fmtMs(delayTimeline(d).at(-1) ?? 0)}` : "Manual"],
         ["Slippage", `${d.slippage} %`],
       ],
     },

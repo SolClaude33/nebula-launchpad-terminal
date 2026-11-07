@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
 import { Address } from "@/components/address";
 import { api } from "@/lib/api";
-import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
+import { fmtMs, issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports, useChain } from "@/lib/chain";
 import { TokenGlyph } from "@/components/live/token-header";
@@ -254,8 +254,8 @@ function LaunchResult() {
                 {b.status === "OK" ? <CheckCircle2 className="size-3.5 text-buy" aria-label="entró" /> : b.status === "FAILED" ? <XCircle className="size-3.5 text-sell" aria-label="falló" /> : b.status === "SKIPPED" ? <CircleSlash className="size-3.5 text-faint" aria-label="omitida" /> : <Loader2 className="size-3.5 animate-spin text-muted" aria-label="pendiente" />}
                 <span className="w-24 truncate">{b.label}</span>
                 <span className="num text-muted">{fmtLamports(BigInt(b.lamports), 3)}</span>
-                {view.mode === "pro" && <span className="num text-faint">espera {b.delaySec ?? 0} s</span>}
-                {b.sentAfterMs != null && <span className="num text-faint" title="Momento real del envío, desde la confirmación de la creación">T+{(b.sentAfterMs / 1000).toFixed(1).replace(".", ",")} s</span>}
+                {view.mode === "pro" && <span className="num text-faint">espera {fmtMs(b.delayMs ?? 0)}</span>}
+                {b.sentAfterMs != null && <span className="num text-faint" title="Momento real del envío, desde la confirmación de la creación">T+{fmtMs(b.sentAfterMs)}</span>}
                 {b.reason && <span className="truncate text-sell">{b.reason}</span>}
               </li>
             ))}

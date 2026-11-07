@@ -25,10 +25,10 @@ export const LaunchConfig = z.object({
   /** quick: compras seguidas tras la creación · pro: igual, con una espera fija por wallet · manual: solo dev. */
   mode: z.enum(["quick", "pro", "manual"]),
   /**
-   * `delaySec` (solo en Pro): segundos fijos de espera antes de la compra de esa wallet, contados desde que se
+   * `delayMs` (solo en Pro): milisegundos fijos de espera antes de la compra de esa wallet, contados desde que se
    * confirmó la compra anterior (o la creación, para la primera). Sin aleatoriedad.
    */
-  holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/), delaySec: z.number().int().min(0).max(600).default(0) })).max(40).default([]),
+  holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/), delayMs: z.number().int().min(0).max(10_000).default(0) })).max(40).default([]),
   slippagePct: z.number().min(0.1).max(50),
   mayhem: z.boolean().default(false),
   feeMode: z.enum(["creator", "holders"]),
@@ -121,7 +121,7 @@ export class Launches {
       this.db()
         .prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
         .all(id) as { ord: number; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null }[]
-    ).map(({ sentAt, ...b }) => ({ ...b, delaySec: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delaySec ?? 0) : 0, sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null }));
+    ).map(({ sentAt, ...b }) => ({ ...b, delayMs: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0, sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null }));
     const scheduled = r.scheduled_at !== null && (r.schedule_state === "WAITING" || r.schedule_state === "PAUSED" || r.schedule_state === "FAILED") && r.status === "PREPARED";
     return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
   }
@@ -468,9 +468,9 @@ export class Launches {
           await this.testHooks.beforeBuy?.(id, b.ord);
           // Pro: espera fija antes de esta compra. Se corta si el lanzamiento deja de estar en BUYING (pausa,
           // bloqueo); al reanudar, la espera de la wallet en curso empieza de cero.
-          const delaySec = cfg.mode === "pro" ? (cfg.holders[b.ord]?.delaySec ?? 0) : 0;
-          if (delaySec > 0) {
-            const until = Date.now() + delaySec * 1000;
+          const delayMs = cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0;
+          if (delayMs > 0) {
+            const until = Date.now() + delayMs;
             while (Date.now() < until) {
               if (this.row(id)!.status !== "BUYING") return;
               await new Promise((res) => setTimeout(res, Math.min(250, until - Date.now())));

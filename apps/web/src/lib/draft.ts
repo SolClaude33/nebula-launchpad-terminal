@@ -32,8 +32,8 @@ export type Draft = {
   slippage: string;
   /** wallets holder del plan, en orden de compra */
   plan: string[];
-  /** Modo Pro: segundos de espera antes de la compra de cada wallet (por id), desde la compra anterior */
-  delays: Record<string, string>;
+  /** Modo Pro: milisegundos de espera antes de la compra de cada wallet (por id), desde la compra anterior */
+  delaysMs: Record<string, string>;
   /** Monto «Por wallet»: SOL de cada wallet (por id); vacío = el monto fijo por defecto */
   amounts: Record<string, string>;
   /** REQ-LAUNCH-014: Launch Guard (solo modo Quick) */
@@ -64,7 +64,7 @@ export const emptyDraft = (): Draft => ({
   rangeMax: "0,3",
   slippage: "15",
   plan: [],
-  delays: {},
+  delaysMs: {},
   amounts: {},
   guardEnabled: false,
   guardSol: "1",
@@ -85,16 +85,22 @@ export const toLamports = (s: string) => {
 /** Quick y Pro compran con las wallets del plan tras crear el token. */
 export const buysAfterCreate = (d: Pick<Draft, "launchMode">) => d.launchMode !== "manual";
 
-/** Espera (s) antes de la compra de una wallet; solo cuenta en Pro. NaN si el texto no es válido. */
-export function delayOf(d: Pick<Draft, "launchMode" | "delays">, id: string): number {
+/** Espera máxima por wallet: 10 segundos. */
+export const MAX_DELAY_MS = 10_000;
+
+/** Espera (ms) antes de la compra de una wallet; solo cuenta en Pro. NaN si el texto no es válido. */
+export function delayOf(d: Pick<Draft, "launchMode" | "delaysMs">, id: string): number {
   if (d.launchMode !== "pro") return 0;
-  const raw = (d.delays?.[id] ?? "").trim();
+  const raw = (d.delaysMs?.[id] ?? "").trim().replace(/\./g, "");
   if (raw === "") return 0;
-  const v = Number(raw.replace(",", "."));
-  return Number.isInteger(v) && v >= 0 && v <= 600 ? v : NaN;
+  const v = Number(raw);
+  return Number.isInteger(v) && v >= 0 && v <= MAX_DELAY_MS ? v : NaN;
 }
 
-/** Segundos acumulados de espera hasta cada compra del plan (sin contar las confirmaciones). */
+/** Milisegundos con separador de miles (1.500 ms). */
+export const fmtMs = (ms: number) => `${ms.toLocaleString("es-ES", { useGrouping: "always" } as Intl.NumberFormatOptions)} ms`;
+
+/** Milisegundos acumulados de espera hasta cada compra del plan (sin contar las confirmaciones). */
 export const delayTimeline = (d: Draft) => {
   let acc = 0;
   return d.plan.map((id) => (acc += delayOf(d, id) || 0));
@@ -146,7 +152,7 @@ export function fieldErrors(d: Draft) {
   }
   const slip = num(d.slippage);
   if (Number.isNaN(slip) || slip < 0.1 || slip > 50) e.slippage = "Entre 0,1 % y 50 %.";
-  if (d.launchMode === "pro" && d.plan.some((id) => Number.isNaN(delayOf(d, id)))) e.delays = "Espera: segundos enteros entre 0 y 600.";
+  if (d.launchMode === "pro" && d.plan.some((id) => Number.isNaN(delayOf(d, id)))) e.delays = "Espera: milisegundos enteros entre 0 y 10.000 (10 s).";
   if (buysAfterCreate(d)) {
     if (d.amountMode === "fixed") {
       const a = num(d.fixedAmount);
@@ -223,7 +229,7 @@ export function toConfig(d: Draft) {
     devWalletId: d.devWalletId,
     devBuyLamports: toLamports(d.devBuy).toString(),
     mode: d.launchMode,
-    holders: buysAfterCreate(d) ? d.plan.map((id, i) => ({ walletId: id, lamports: amounts[i].toString(), delaySec: delayOf(d, id) || 0 })) : [],
+    holders: buysAfterCreate(d) ? d.plan.map((id, i) => ({ walletId: id, lamports: amounts[i].toString(), delayMs: delayOf(d, id) || 0 })) : [],
     slippagePct: num(d.slippage),
     mayhem: d.mode === "mayhem",
     feeMode: d.feeMode,

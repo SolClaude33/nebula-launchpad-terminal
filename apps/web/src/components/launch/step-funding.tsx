@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
-import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fmtMs, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fmtLamports } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
@@ -69,14 +69,14 @@ function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDr
       </span>
       {cols === COLS_PRO &&
         (dev || !pro ? (
-          <span className="num text-right text-[12px] text-muted">T+0 s</span>
+          <span className="num text-right text-[12px] text-muted">T+0 ms</span>
         ) : (
           <span className="flex flex-col items-end gap-0.5">
             <span className="relative">
-              <input aria-label={`Espera antes de la compra de ${label}`} inputMode="numeric" value={pro.value} placeholder="0" onChange={(e) => pro.onChange(e.target.value)} aria-invalid={pro.invalid} className="field num h-7 w-[64px] pr-5 text-right text-[12px]" />
-              <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[11px] text-faint">s</span>
+              <input aria-label={`Espera antes de la compra de ${label}`} inputMode="numeric" value={pro.value} placeholder="0" onChange={(e) => pro.onChange(e.target.value)} aria-invalid={pro.invalid} className="field num h-7 w-[84px] pr-7 text-right text-[12px]" />
+              <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[10.5px] text-faint">ms</span>
             </span>
-            <span className="num text-[10.5px] text-faint">{pro.invalid ? "0–600 s" : `≈ T+${pro.at} s`}</span>
+            <span className="num text-[10.5px] text-faint">{pro.invalid ? "0–10.000 ms" : `≈ T+${fmtMs(pro.at)}`}</span>
           </span>
         ))}
       {amountEdit ? (
@@ -117,7 +117,7 @@ export function StepFunding() {
   const isPro = d.launchMode === "pro";
   const cols = isPro ? COLS_PRO : COLS;
   const timeline = delayTimeline(d);
-  const [allDelay, setAllDelay] = useState("5");
+  const [allDelay, setAllDelay] = useState("500");
   const fe = fieldErrors(d);
   const delayErr = fe.delays;
   const custom = buysAfterCreate(d) && d.amountMode === "custom";
@@ -150,7 +150,7 @@ export function StepFunding() {
       shortBy: n?.short ?? 0n,
       cols,
       amountEdit: custom && !dev ? { value: amountText(d, id), invalid: !(num(amountText(d, id)) > 0), onChange: (v) => set({ amounts: { ...d.amounts, [id]: v } }) } : undefined,
-      pro: isPro && !dev ? { value: d.delays?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delays: { ...d.delays, [id]: v } }) } : undefined,
+      pro: isPro && !dev ? { value: d.delaysMs?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delaysMs: { ...d.delaysMs, [id]: v } }) } : undefined,
       dragging: dragId === id,
       onDragStart: () => setDragId(id),
       onDrop: () => {
@@ -189,7 +189,7 @@ export function StepFunding() {
         <div className="panel p-4">
           <p className="telemetry">Wallets en el plan</p>
           <p className="num mt-1.5 text-[20px]">{buysAfterCreate(d) ? d.plan.length : 0}</p>
-          <p className="text-[11.5px] text-faint">{isPro ? `compran en este orden; esperas que suman ${timeline.at(-1) ?? 0} s` : buysAfterCreate(d) ? "compran en este orden tras crear el token" : "modo Manual: solo dev"}</p>
+          <p className="text-[11.5px] text-faint">{isPro ? `compran en este orden; esperas que suman ${fmtMs(timeline.at(-1) ?? 0)}` : buysAfterCreate(d) ? "compran en este orden tras crear el token" : "modo Manual: solo dev"}</p>
         </div>
       </div>
 
@@ -202,13 +202,13 @@ export function StepFunding() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                set({ delays: { ...d.delays, ...Object.fromEntries(d.plan.map((id) => [id, allDelay])) } });
+                set({ delaysMs: { ...d.delaysMs, ...Object.fromEntries(d.plan.map((id) => [id, allDelay])) } });
               }}
               className="ml-auto mr-2 flex items-center gap-1.5 text-[12px] text-muted"
             >
               <label htmlFor="all-delay" className="whitespace-nowrap">Espera para todas</label>
-              <input id="all-delay" inputMode="numeric" value={allDelay} onChange={(e) => setAllDelay(e.target.value)} className="field num h-8 w-[56px] text-right text-[12px]" />
-              <span>s</span>
+              <input id="all-delay" inputMode="numeric" value={allDelay} onChange={(e) => setAllDelay(e.target.value)} className="field num h-8 w-[72px] text-right text-[12px]" />
+              <span>ms</span>
               <button type="submit" className="btn h-8 text-[12px]">
                 Aplicar
               </button>
@@ -256,7 +256,7 @@ export function StepFunding() {
         {custom && fe.amounts && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.amounts}</p>}
         {isPro && (
           <p className={`border-b border-line px-4 py-2 text-[11.5px] ${delayErr ? "text-sell" : "text-faint"}`}>
-            {delayErr ?? "La espera de cada wallet cuenta desde que se confirma la compra anterior (la primera, desde la creación). A cada compra súmale ~1–2 s de confirmación."}
+            {delayErr ?? "La espera de cada wallet cuenta desde que se confirma la compra anterior (la primera, desde la creación). A cada compra súmale ~1.000–2.000 ms de confirmación."}
           </p>
         )}
         <div aria-hidden className={`grid ${cols} gap-3 border-b border-line bg-surface-2/40 px-4 py-2`}>

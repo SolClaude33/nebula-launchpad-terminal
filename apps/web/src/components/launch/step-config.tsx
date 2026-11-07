@@ -100,7 +100,7 @@ export function StepConfig() {
         <legend className="mb-2 text-[13px] font-medium">Modo de lanzamiento</legend>
         <div className="grid grid-cols-3 gap-2">
           <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Tras crear el token compran, en orden, las wallets holder del plan (paso 3). Verás la supply que queda en wallets propias." />
-          <RadioCard name="lm" value="pro" checked={d.launchMode === "pro"} onSelect={() => set({ launchMode: "pro" })} title="Pro" body="Como Quick, pero eliges cuántos segundos espera cada wallet antes de comprar (paso 3). Esperas fijas, sin aleatoriedad." />
+          <RadioCard name="lm" value="pro" checked={d.launchMode === "pro"} onSelect={() => set({ launchMode: "pro" })} title="Pro" body="Como Quick, pero eliges cuántos milisegundos espera cada wallet antes de comprar (paso 3). Esperas fijas, sin aleatoriedad." />
           <RadioCard name="lm" value="manual" checked={d.launchMode === "manual"} onSelect={() => set({ launchMode: "manual" })} title="Manual" body="Solo crea el token con el dev buy." />
         </div>
         {buysAfterCreate(d) && (
