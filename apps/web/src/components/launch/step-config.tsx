@@ -40,7 +40,7 @@ export function StepConfig() {
 
       <Field id="devWallet" label="Wallet dev" hint="Crea el token y hace el dev buy. Las comisiones de creador van a esta wallet." error={!d.devWalletId && loaded && candidates.length === 0 ? "No hay wallets: crea una con rol dev en Wallets." : undefined}>
         <div className="flex gap-2">
-          <select id="devWallet" value={d.devWalletId} onChange={(e) => set({ devWalletId: e.target.value, plan: d.plan.filter((p) => p !== e.target.value) })} className="field h-10 py-0">
+          <select id="devWallet" value={d.devWalletId} onChange={(e) => set({ devWalletId: e.target.value, plan: d.plan.filter((p) => p !== e.target.value) })} className={`field h-10 py-0${d.review?.includes("devWallet") ? " ring-2 ring-warn/60 ring-offset-2 ring-offset-[var(--bg)]" : ""}`}>
             <option value="">Elige una wallet…</option>
             {candidates.map((w) => (
               <option key={w.id} value={w.id}>
@@ -71,7 +71,7 @@ export function StepConfig() {
             <RadioCard name="fee" value="creator" checked={d.feeMode === "creator"} onSelect={() => set({ feeMode: "creator", feeAck: false })} title="Creator Fees" body="Las comisiones de creador van a la wallet dev." />
             <RadioCard name="fee" value="holders" checked={d.feeMode === "holders"} onSelect={() => set({ feeMode: "holders", feeAck: false })} title="Holder Rewards" body="Las comisiones se reparten entre holders. No podrás reclamarlas tú." />
           </div>
-          <label id="feeAck" className={`mt-3 flex cursor-pointer items-start gap-2.5 rounded-[var(--radius-sm)] border p-3 text-[12.5px] ${d.feeAck ? "border-line bg-surface-1" : "border-warn/35 bg-[var(--warn-soft)]"}`}>
+          <label id="feeAck" className={`mt-3 flex cursor-pointer items-start gap-2.5 rounded-[var(--radius-sm)] border p-3 text-[12.5px] ${d.feeAck ? "border-line bg-surface-1" : "border-warn/35 bg-[var(--warn-soft)]"}${d.review?.includes("feeAck") ? " ring-2 ring-warn/60 ring-offset-2 ring-offset-[var(--bg)]" : ""}`}>
             <input type="checkbox" checked={d.feeAck} onChange={(e) => set({ feeAck: e.target.checked })} className="mt-0.5 size-4 accent-[var(--warn)]" />
             <span>
               <TriangleAlert className="mr-1 inline size-3.5 -translate-y-px text-warn" aria-hidden />

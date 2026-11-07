@@ -9,6 +9,7 @@ import { Archive, ArchiveRestore, ArrowUpRight, FilePen, Loader2, Play, Plus, Ro
 import { api, ApiError } from "@/lib/api";
 import { fmtSol, shortAddr, timeAgo } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { QuickLaunch } from "@/components/launch/quick-launch";
 
 type LaunchItem = {
   id: string;
@@ -54,9 +55,12 @@ export function LaunchesView({ tab }: { tab: "launches" | "drafts" }) {
           <h1 className="font-display mt-1 text-[30px] tracking-[-0.01em]">Lanzamientos</h1>
           <p className="mt-1 max-w-[620px] text-[13px] text-muted">Lo que ya está en cadena y los borradores que dejaste a medias. Un borrador se guarda solo mientras lo editas y sobrevive a cerrar la app.</p>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+        <QuickLaunch />
         <Link href="/launch/new?new=1" className="cta cta-fill flex h-10 shrink-0 items-center gap-2 px-4 text-[13px] font-semibold">
           <Plus className="size-4" aria-hidden /> Nuevo lanzamiento
         </Link>
+        </div>
       </div>
       <nav aria-label="Secciones" className="mt-5 inline-flex gap-1 rounded-[var(--radius-sm)] border border-line bg-surface-2/60 p-1">
         {(

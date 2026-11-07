@@ -4,13 +4,14 @@
 // La validación es la misma que la del servidor (`AutomationConfig` de @nebula/shared) y el plan del DCA se
 // muestra antes de guardar: rango = rampa fija del mínimo al máximo, sin aleatoriedad.
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Bot, Loader2, Plus, Trash2, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Bookmark, Bot, Loader2, Plus, Trash2, X } from "lucide-react";
 import { AUTO_DEFAULT_MAX_ERRORS, AUTO_DEFAULT_SLIPPAGE, AutomationConfig, dcaPlan, ladderTargets, trailingStopUsd, type DcaConfig } from "@nebula/shared";
 import type { FolderDto, WalletDto } from "@nebula/shared";
 import { api, ApiError } from "@/lib/api";
 import { saveAutomation, fmtDuration, type AutoView } from "@/lib/automations";
 import { fmtNum, fmtSol, fmtTokens, fmtUsd, shortAddr } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { listPresets, savePreset, type Preset } from "@/lib/presets";
 
 const DECIMALS = 6; // Pump.fun
 type Unit = "s" | "min" | "h" | "d";
@@ -29,9 +30,18 @@ const splitSec = (sec: number | null | undefined, fallback: [string, Unit]): [st
 
 type Target = { mc: string; amount: string };
 
-export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: { initial?: AutoView | null; mint?: string | null; onClose: () => void; onSaved: (v: AutoView) => void }) {
+/**
+ * REQ-AUTO-009: cargar un preset vuelve a montar el formulario con sus valores (sin el mint, que se conserva),
+ * reutilizando la misma lógica que rellena el formulario al editar.
+ */
+export function AutomationForm(props: { initial?: AutoView | null; mint?: string | null; onClose: () => void; onSaved: (v: AutoView) => void }) {
+  const [seed, setSeed] = useState<{ key: number; config: AutomationConfig } | null>(null);
+  return <AutomationFormInner key={seed?.key ?? 0} {...props} seed={seed?.config ?? null} onPreset={(config) => setSeed((s) => ({ key: (s?.key ?? 0) + 1, config }))} />;
+}
+
+function AutomationFormInner({ initial, mint: presetMint, onClose, onSaved, seed, onPreset }: { initial?: AutoView | null; mint?: string | null; onClose: () => void; onSaved: (v: AutoView) => void; seed: AutomationConfig | null; onPreset: (c: AutomationConfig) => void }) {
   const editing = !!initial;
-  const c0 = initial?.config;
+  const c0 = initial?.config ?? seed ?? undefined;
   const [type, setType] = useState<"dca" | "limit" | "trailing">(c0?.type ?? "dca");
   const [side, setSide] = useState<"buy" | "sell">(c0?.side ?? "buy");
   const [mint, setMint] = useState(c0?.mint ?? presetMint ?? "");
@@ -72,6 +82,12 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
   const [busy, setBusy] = useState<null | "save" | "start">(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [savingPreset, setSavingPreset] = useState(false);
+  useEffect(() => {
+    listPresets("task").then(setPresets, () => {});
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -138,6 +154,27 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
   const plan = config.success && config.data.type === "dca" ? dcaPlan(config.data as DcaConfig, config.data.walletIds.length) : null;
   const unitFmt = (v: bigint) => (side === "buy" ? fmtSol(Number(v) / 1e9, 4) : `${fmtTokens(Number(v) / 10 ** DECIMALS)} tokens`);
 
+  const loadPreset = (p: Preset) => {
+    // el mint no viaja en el preset: se conserva el del formulario
+    onPreset({ ...(p.data as unknown as AutomationConfig), mint: mint.trim() } as AutomationConfig);
+    toast({ tone: "info", title: `Preset «${p.name}» cargado`, body: "Revisa el token y las wallets antes de guardar." });
+  };
+  const saveAsPreset = async () => {
+    setTouched(true);
+    if (!config.success || !presetName.trim()) return;
+    setSavingPreset(true);
+    try {
+      const same = presets.find((p) => p.name.toLowerCase() === presetName.trim().toLowerCase());
+      await savePreset("task", presetName.trim(), config.data as unknown as Record<string, unknown>, same?.id);
+      setPresets(await listPresets("task"));
+      toast({ tone: "info", title: same ? "Preset actualizado" : "Preset guardado", body: `«${presetName.trim()}» (sin el token: sirve para cualquiera).` });
+      setPresetName("");
+    } catch (e) {
+      toast({ tone: "error", title: "No se pudo guardar el preset", body: (e as ApiError).message });
+    }
+    setSavingPreset(false);
+  };
+
   const submit = async (start: boolean) => {
     setTouched(true);
     if (!config.success) return;
@@ -178,6 +215,24 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
             {editing ? `Editar «${initial!.label}»` : "Nueva automatización"}
           </h3>
           {editing && initial!.status === "PAUSED" && <span className="chip text-warn">edición en pausa</span>}
+          {!editing && presets.length > 0 && (
+            <select
+              aria-label="Cargar un preset de tarea"
+              value=""
+              onChange={(e) => {
+                const p = presets.find((x) => x.id === e.target.value);
+                if (p) loadPreset(p);
+              }}
+              className="field h-8 w-auto py-0 text-[12px]"
+            >
+              <option value="">Cargar preset…</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           <button onClick={onClose} disabled={!!busy} aria-label="Cerrar" className="btn btn-ghost size-8 p-0">
             <X className="size-4" />
           </button>
@@ -486,6 +541,19 @@ export function AutomationForm({ initial, mint: presetMint, onClose, onSaved }: 
             </ul>
           )}
           <div className="flex items-center justify-end gap-2">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveAsPreset();
+              }}
+              className="mr-auto flex items-center gap-1.5"
+            >
+              <Bookmark className="size-3.5 text-muted" aria-hidden />
+              <input aria-label="Nombre del preset de tarea" value={presetName} maxLength={40} onChange={(e) => setPresetName(e.target.value)} placeholder="Guardar como preset…" className="field h-8 w-[170px] py-0 text-[12px]" />
+              <button type="submit" disabled={!presetName.trim() || savingPreset} className="btn h-8 px-2.5 text-[12px]">
+                {savingPreset ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : "Guardar"}
+              </button>
+            </form>
             <button onClick={onClose} disabled={!!busy} className="btn h-9 px-4 text-[13px]">
               Cancelar
             </button>

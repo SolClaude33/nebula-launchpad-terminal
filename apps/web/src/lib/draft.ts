@@ -36,6 +36,8 @@ export type Draft = {
   delaysMs: Record<string, string>;
   /** Monto «Por wallet»: SOL de cada wallet (por id); vacío = el monto fijo por defecto */
   amounts: Record<string, string>;
+  /** Tras cargar un preset: lo que hay que revisar antes de lanzar (se resalta y se borra al tocarlo) */
+  review: ("devWallet" | "feeAck" | "plan")[];
   /** REQ-LAUNCH-014: Launch Guard (solo modo Quick) */
   guardEnabled: boolean;
   guardSol: string;
@@ -66,6 +68,7 @@ export const emptyDraft = (): Draft => ({
   plan: [],
   delaysMs: {},
   amounts: {},
+  review: [],
   guardEnabled: false,
   guardSol: "1",
   guardSec: "30",
@@ -251,6 +254,8 @@ type DraftStore = {
   set: (patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => void;
   /** Descarta el borrador actual en el servidor y empieza uno nuevo. */
   reset: () => Promise<void>;
+  /** Guarda ya (sin esperar al autoguardado), p. ej. antes de cambiar la URL al borrador. */
+  flush: () => Promise<void>;
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -302,7 +307,16 @@ export const useDraft = create<DraftStore>((set, get) => ({
     if (seq === loadSeq) set({ draft: next, hydrated: true, save: "saved" });
   },
   set: (patch) => {
-    const next = { ...get().draft, ...(typeof patch === "function" ? patch(get().draft) : patch) };
+    const p = typeof patch === "function" ? patch(get().draft) : patch;
+    const next = { ...get().draft, ...p };
+    // Tocar un campo resaltado tras cargar un preset lo da por revisado
+    if (!("review" in p) && next.review?.length) {
+      const touched = new Set<string>();
+      if ("devWalletId" in p) touched.add("devWallet");
+      if ("feeAck" in p) touched.add("feeAck");
+      if (["plan", "delaysMs", "amounts", "amountMode", "fixedAmount", "rangeMin", "rangeMax"].some((k) => k in p)) touched.add("plan");
+      if (touched.size) next.review = next.review.filter((r) => !touched.has(r));
+    }
     set({ draft: next, save: "unsaved" });
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
@@ -315,6 +329,17 @@ export const useDraft = create<DraftStore>((set, get) => ({
         set({ save: "error" });
       }
     }, 500);
+  },
+  flush: async () => {
+    clearTimeout(saveTimer);
+    const d = get().draft;
+    set({ save: "saving" });
+    try {
+      await api(`/drafts/${d.draftId}`, { method: "PUT", body: persistable(d) });
+      set((st) => ({ save: st.draft === d ? "saved" : "unsaved" }));
+    } catch {
+      set({ save: "error" });
+    }
   },
   reset: async () => {
     clearTimeout(saveTimer);

@@ -31,6 +31,9 @@ export async function unlockUi(page: Page, path = "/") {
     await page.getByPlaceholder("••••••••••••").fill(PW);
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => !u.pathname.startsWith("/unlock"), { timeout: 30_000 });
+    // Al desbloquear, la app vuelve a donde estaba la pestaña cuando se bloqueó (puede no ser `path`)
+    const u = new URL(page.url());
+    if (`${u.pathname}${u.search}` !== path) await page.goto(path);
   }
 }
 

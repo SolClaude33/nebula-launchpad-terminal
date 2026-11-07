@@ -197,7 +197,7 @@ export function StepFunding() {
         </div>
       </div>
 
-      <div className="panel overflow-hidden">
+      <div className={`panel overflow-hidden${d.review?.includes("plan") ? " ring-2 ring-warn/60 ring-offset-2 ring-offset-[var(--bg)]" : ""}`}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <p className="text-[13px] font-medium">
             Orden de compra <span className={`ml-1 text-[12px] font-normal text-faint ${isPro ? "hidden xl:inline" : ""}`}>arrastra o usa las flechas</span>

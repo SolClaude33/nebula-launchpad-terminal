@@ -231,6 +231,18 @@ const MIGRATIONS: string[] = [
   ALTER TABLE launch ADD COLUMN schedule_state TEXT CHECK (schedule_state IN ('WAITING','PAUSED','FIRED','FAILED'));
   ALTER TABLE launch ADD COLUMN schedule_error TEXT;
   `,
+  `
+  -- REQ-LAUNCH-018 / REQ-AUTO-009: presets de lanzamiento y de tareas (sin identidad del token ni mint)
+  CREATE TABLE preset (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('launch','task')),
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX preset_kind_name ON preset(kind, name COLLATE NOCASE);
+  `,
 ];
 
 export function openDb(dir: string): DB {

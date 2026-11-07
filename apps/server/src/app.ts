@@ -28,8 +28,10 @@ import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
 import { Pnl } from "./pnl";
 import { Drafts } from "./drafts";
+import { Presets } from "./presets";
 import { TokenOps } from "./token-ops";
 import { tokenRoutes } from "./routes/tokens";
+import { presetRoutes } from "./routes/presets";
 import { Cloner } from "./clone";
 import { Backups } from "./backups";
 import { storedSettings } from "./settings";
@@ -52,6 +54,7 @@ export type Ctx = {
   automations: Automations;
   pnl: Pnl;
   drafts: Drafts;
+  presets: Presets;
   tokenOps: TokenOps;
   cloner: Cloner;
   backups: Backups;
@@ -138,6 +141,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
       return pnl!;
     },
     drafts: new Drafts(getDb),
+    presets: new Presets(getDb),
     get tokenOps() {
       return tokenOps!;
     },
@@ -249,6 +253,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   await app.register(automationRoutes(ctx), { prefix: "/api" });
   await app.register(dashboardRoutes(ctx), { prefix: "/api" });
   await app.register(tokenRoutes(ctx), { prefix: "/api" });
+  await app.register(presetRoutes(ctx), { prefix: "/api" });
 
   app.addHook("onClose", async () => {
     vault.stop();
