@@ -138,3 +138,34 @@ describe("REVIEW-F1 P1-4 · límites del proveedor (Helius Free) y 429", () => {
     s.srv.close();
   });
 });
+
+describe("REVIEW-F1 P2-7 · holders en mainnet", () => {
+  it("si getTokenLargestAccounts falla (429), no se recurre a getProgramAccounts", async () => {
+    const methods: string[] = [];
+    const srv = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const m = JSON.parse(body);
+        methods.push(m.method);
+        res.setHeader("content-type", "application/json");
+        if (m.method === "getTokenLargestAccounts") {
+          res.statusCode = 429;
+          return res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32005, message: "Too many requests" }, id: m.id }));
+        }
+        if (m.method === "getAccountInfo")
+          return res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { context: { slot: 1 }, value: { data: ["", "base64"], executable: false, lamports: 1, owner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", rentEpoch: 0, space: 0 } } }));
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: 1 }));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const { createChain } = await import("../src/chain");
+    const chain = createChain({ profile: "mainnet", mode: "rpc", endpoints: [{ http: `http://127.0.0.1:${(srv.address() as { port: number }).port}` }], db: () => null as never, sign: () => new Uint8Array(), priorityMicroLamports: () => 1 });
+    const h = await chain.reader.holders("So11111111111111111111111111111111111111112");
+    chain.stop();
+    srv.close();
+    expect(h).toEqual({ complete: false, items: [] });
+    expect(methods).toContain("getTokenLargestAccounts");
+    expect(methods).not.toContain("getProgramAccounts");
+  });
+});

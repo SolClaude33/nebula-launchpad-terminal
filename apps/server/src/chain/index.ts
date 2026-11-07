@@ -86,6 +86,10 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
         const infos = await pool.run((c) => c.getMultipleAccountsInfo(accs.map((a) => a.address), "confirmed"));
         return { complete: false, items: accs.map((a, i) => ({ owner: infos[i] ? new PublicKey(infos[i]!.data.subarray(32, 64)).toBase58() : a.address.toBase58(), amount: BigInt(a.amount) })) };
       }
+      // REVIEW-F1 P2-7: fuera de pruebas nunca se recurre a getProgramAccounts (10 créditos y 5/s en Helius
+      // Free, respuesta enorme en tokens con muchos holders): sin el top 20, la lista queda incompleta (las
+      // wallets propias se leen aparte) y se reintenta en la siguiente lectura
+      if (profile !== "test") return { complete: false, items: [] };
       const all = await pool.run((c) => c.getProgramAccounts(program, { commitment: "confirmed", filters: [{ memcmp: { offset: 0, bytes: mint } }] }));
       const items = all.map((a) => ({ owner: new PublicKey(a.account.data.subarray(32, 64)).toBase58(), amount: a.account.data.readBigUInt64LE(64) })).filter((h) => h.amount > 0n);
       return { complete: true, items };
