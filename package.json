@@ -2,7 +2,7 @@
   "name": "nebula",
   "private": true,
   "scripts": {
-    "dev": "pnpm -r --parallel --filter server --filter web dev",
+    "dev": "node scripts/dev.mjs",
     "start": "pnpm -r --parallel --filter server --filter web start",
     "mainnet": "node scripts/mainnet.mjs",
     "build": "pnpm --filter web build",
