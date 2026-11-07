@@ -394,7 +394,7 @@ Cada escenario se ejecuta contra el perfil `test`. Cuenta como superado cuando t
 |---|---|---|
 | F0, diseño | Dirección visual, prototipo de la pantalla de desbloqueo, del Live Workspace y del asistente, y especificación del adaptador y de la bóveda | Nicol aprueba el diseño. |
 | **F1, MVP Pump.fun** | VAULT, WAL, FUND, LAUNCH (Quick y Manual), LIVE con Instant Trade, AUTO (DCA y límite), REW, COST, DASH básico, ajustes y logs | Los 24 escenarios E2E en verde en el perfil `test`, y la prueba de humo en mainnet superada. |
-| F2 | Ladder y trailing stop, presets, tracker, descubrimiento y Jito. **Sin pads nuevos ni bot de Telegram** (decisión de Nicol, 2026-11-07: solo Pump.fun). | Cada bloque con sus tests en verde (mock, Surfpool y E2E si toca la interfaz). |
+| F2 | Ladder y trailing stop, presets, tracker, Ctrl+K y Jito. **Sin pads nuevos, bot de Telegram ni descubrimiento** (decisión de Nicol, 2026-11-07: solo Pump.fun). | Cada bloque con sus tests en verde (mock, Surfpool y E2E si toca la interfaz). |
 | F3 | BSC (Four.meme, flap.sh), con gestor de nonce para EVM | E2E de nonce en un fork con anvil. |
 | F4 | Robinhood Chain, Base, liquidez en Uniswap y bloqueos con Streamflow | — |
 

@@ -2,7 +2,7 @@
 
 Documento para retomar el trabajo en otra sesión. El contexto general está en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
 
-## Estado: F1 cerrada (2026-11-07, decisión de Nicol). En curso: F2 (`docs/F2.md`).
+## Estado: F1 y F2 cerradas (2026-11-07). F2 en `docs/F2.md`: ladder y trailing, presets, tracker y Ctrl+K, Helius Developer y Jito; Telegram, descubrimiento y otros launchpads descartados por Nicol.
 
 F1: los 24 E2E en verde en el perfil `test` y prueba de humo en mainnet con $BOB (lanzamiento Pro, compras y reclamo verificados en cadena; no hubo venta desde Nébula). Jito pasa a F2. Nicol piensa contratar Helius Developer (5 envíos/s y conexiones con stake).
 
