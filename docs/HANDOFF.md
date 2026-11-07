@@ -125,7 +125,8 @@ P3, también el 2026-11-07:
 ## Conocido / límites
 
 - **IPFS público:**
-  - Clonar un token ajeno depende de las pasarelas públicas. El 2026-11-06, ipfs.io y dweb.link devolvían 429 a esta IP; se rellenan nombre y símbolo desde la cadena y se avisa.
+  - Clonar un token ajeno depende de las pasarelas públicas. ipfs.io, dweb.link, w3s.link y nftstorage.link devuelven 429 a peticiones automáticas. Desde el 2026-11-07 (`5999411`) se prueban de respaldo pump.mypinata.cloud, ipfs.filebase.io, 4everland.io y gateway.pinata.cloud; con 4 tokens reales, JSON e imagen llegaron en ~1 s.
+  - Desde el 2026-11-07 (`d26df99`) las transacciones se piden con `maxSupportedTransactionVersion: 1`: en mainnet muchas de Pump.fun ya son v1 y, pidiendo hasta v0, el RPC las rechazaba y el Live/P&L perdían el lote entero.
   - Los tokens antiguos que migraron a Raydium (antes de PumpSwap) aparecen como «migrating» en el Live, porque no tienen pool canónico.
 - **`pnpm dev` en Windows:** resuelto en `0bf526c` (ver arriba). Si alguna vez vuelve a colgarse, las dos apps se pueden arrancar por separado con `pnpm --filter server dev` y `pnpm --filter web dev`.
 - **Arranque de producción comprobado (2026-11-07):** `pnpm build` y `pnpm start` con `NEBULA_PROFILE=mainnet` y `NEBULA_DATA_DIR` temporal. La API escucha en 4318 y la web en 4317, y `/setup` carga con la CSP con nonce y sin errores de consola. El aviso `bigint: Failed to load bindings` es inocuo.
