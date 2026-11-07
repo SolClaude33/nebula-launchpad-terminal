@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import { toConfig, type Draft } from "@/lib/draft";
 
-export type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; units?: number; action?: "create-alt" };
+export type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; note?: string; units?: number; action?: "create-alt" };
 export type LaunchView = {
   id: string;
   status: "PREPARED" | "CREATING" | "CREATED" | "BUYING" | "DONE" | "FAILED" | "PAUSED";

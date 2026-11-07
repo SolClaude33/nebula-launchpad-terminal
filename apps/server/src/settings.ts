@@ -14,6 +14,7 @@ export const SETTINGS_DEFAULTS: Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "
   rpcPrimaryWs: "ws://127.0.0.1:8900",
   rpcBackupHttp: "",
   rpcBackupWs: "",
+  jitoEnabled: false,
   jitoEndpoint: "",
   jitoTipSol: 0.001,
   slippageBuyPct: 15,
@@ -22,7 +23,7 @@ export const SETTINGS_DEFAULTS: Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "
   keyboardLayout: "qwerty",
   theme: "dark",
   ipfsGateway: "https://ipfs.io/ipfs/",
-  // REVIEW-F1 P1-4: límites del proveedor de RPC (0 = sin límite). Preset Helius Free: 8 y 1.
+  // REVIEW-F1 P1-4: límites del proveedor de RPC (0 = sin límite). Presets en RPC_PRESETS: Helius Free 8 y 1, Developer 40 y 5.
   rpcMaxRps: 0,
   rpcSendPerSec: 0,
 };

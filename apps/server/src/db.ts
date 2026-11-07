@@ -247,6 +247,10 @@ const MIGRATIONS: string[] = [
   -- REQ-LIVE-006: tracker (lista de seguimiento de tokens)
   CREATE TABLE tracked (mint TEXT PRIMARY KEY, added_at INTEGER NOT NULL);
   `,
+  `
+  -- F2 · bloque 5: propina de Jito de cada envío propio (0 sin Jito), para el P&L (REQ-DASH-001)
+  ALTER TABLE tx ADD COLUMN tip_lamports INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(dir: string): DB {

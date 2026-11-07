@@ -7,6 +7,7 @@ import type { DB } from "../db";
 import type { ChainEnv, ChainEvent, ChainReader, CurveQuote, LaunchQuote, LaunchpadAdapter, MessageSigner, PreparedTx, RawTx, SendErrorCode, SendResult, TokenInfo, TransferBuilder, TxSender } from "./types";
 import { RENT_EXEMPT_MIN_DEFAULT, transferCuLimit, txFee } from "./fees";
 import { chunkTransfers } from "./transfers";
+import { JITO_OFF, tipAccountFor, tipFor, type JitoConfig } from "./jito";
 
 const INIT = { vSol: 30_000_000_000n, vTok: 1_073_000_000_000_000n, realTok: 793_100_000_000_000n, supply: 1_000_000_000_000_000n };
 const FEE_BPS = 100n; // total; de ello CREATOR_BPS va a la bóveda del creador
@@ -274,7 +275,7 @@ function quoteOf(c: Curve, pool: Pool | undefined, side: "buy" | "sell", amount:
 
 const migratingError = () => Object.assign(new Error("La curva está completa y la migración a PumpSwap aún no ha ocurrido. Espera a que exista el pool."), { code: "MIGRATING" });
 
-export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0, db?: () => DB): ChainEnv & { ledger: MockLedger } {
+export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), priority: () => number = () => 0, db?: () => DB, jito: () => JitoConfig = () => JITO_OFF): ChainEnv & { ledger: MockLedger } {
   const feeOf = (tx: PreparedTx) => txFee(tx.signers.length, tx.cuLimit ?? 400_000, priority());
   const fresh = (): Curve => ({ vSol: INIT.vSol, vTok: INIT.vTok, realSol: 0n, realTok: INIT.realTok, complete: false, creator: "", creatorVault: 0n, name: "", symbol: "", mayhem: false });
   const curve = (mint: string) => {
@@ -394,27 +395,44 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       if (f === "BLOCKHASH_EXPIRED") f = ledger.failures.shift(); // el sender re-firma con un blockhash nuevo y reintenta
       if (f === "RPC_DOWN") return { status: "pending", message: "Fallo inyectado: RPC caído (no se envió nada)" };
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
-      if (simulateOnly) {
-        const snapshot = structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools, burned: ledger.burned });
+      // Jito (F2 · bloque 5): la propina va en la misma «tx» que la operación: o entran las dos o ninguna
+      const tip = tipFor(tx.kind, jito());
+      const snap = () => structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools, burned: ledger.burned });
+      const applyWithTip = (): ReturnType<MockLedger["apply"]> => {
+        const before = tip > 0n ? snap() : null;
         const r = ledger.apply(tx.payload as Op, feeOf(tx));
+        if (!r.ok || tip === 0n) return r;
+        if (ledger.balance(tx.payer) < tip) {
+          Object.assign(ledger, before);
+          ledger.discardEvents();
+          return { ok: false, code: "INSUFFICIENT_FUNDS", message: "Saldo insuficiente para el monto, las fees y la propina de Jito." };
+        }
+        const to = tipAccountFor(idempotencyKey).toBase58();
+        ledger.sol.set(tx.payer, ledger.balance(tx.payer) - tip);
+        ledger.sol.set(to, ledger.balance(to) + tip);
+        return r;
+      };
+      if (simulateOnly) {
+        const snapshot = snap();
+        const r = applyWithTip();
         const post = watch ? ledger.balance(watch) : undefined;
         Object.assign(ledger, snapshot);
         ledger.discardEvents(); // una simulación no emite nada
-        return r.ok ? { status: "simulated", ...(post !== undefined ? { postLamports: post } : {}) } : { status: "failed", code: r.code, message: r.message };
+        return r.ok ? { status: "simulated", tipLamports: tip, ...(post !== undefined ? { postLamports: post } : {}) } : { status: "failed", code: r.code, message: r.message };
       }
       const pre = new Map(ledger.sol);
-      const r = ledger.apply(tx.payload as Op, feeOf(tx));
-      const res: SendResult = r.ok ? { status: "confirmed", signature: `mock${++ledger.seq}`, feeLamports: r.fee } : { status: "failed", code: r.code, message: r.message };
+      const r = applyWithTip();
+      const res: SendResult = r.ok ? { status: "confirmed", signature: `mock${++ledger.seq}`, feeLamports: r.fee, tipLamports: tip } : { status: "failed", code: r.code, message: r.message };
       if (res.status === "confirmed") {
         ledger.record(res.signature, tx.payer, { fee: r.ok ? r.fee : undefined, pre });
         // Igual que el sender real: cada envío propio confirmado queda en la tabla tx (P&L, conciliación)
         const now = Date.now();
         db?.()
           .prepare(
-            `INSERT INTO tx(idempotency_key, kind, signature, status, fee_lamports, payer, mint, created_at, updated_at) VALUES(?, ?, ?, 'CONFIRMED', ?, ?, ?, ?, ?)
-             ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, status = 'CONFIRMED', fee_lamports = excluded.fee_lamports, updated_at = excluded.updated_at`,
+            `INSERT INTO tx(idempotency_key, kind, signature, status, fee_lamports, tip_lamports, payer, mint, created_at, updated_at) VALUES(?, ?, ?, 'CONFIRMED', ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, status = 'CONFIRMED', fee_lamports = excluded.fee_lamports, tip_lamports = excluded.tip_lamports, updated_at = excluded.updated_at`,
           )
-          .run(idempotencyKey, tx.kind, res.signature, Number(res.feeLamports ?? 0n), tx.payer, tx.mint ?? null, now, now);
+          .run(idempotencyKey, tx.kind, res.signature, Number(res.feeLamports ?? 0n), Number(tip), tx.payer, tx.mint ?? null, now, now);
       }
       ledger.sent.set(idempotencyKey, res);
       return res;

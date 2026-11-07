@@ -84,6 +84,11 @@ export const SettingsDto = z.object({
   rpcPrimaryWs: z.string(),
   rpcBackupHttp: z.string(),
   rpcBackupWs: z.string(),
+  /**
+   * F2 · bloque 5: Jito como vía de envío opcional. Con `jitoEnabled`, cada compra, venta y creación lleva una
+   * propina (`jitoTipSol`) a una cuenta oficial de Jito y sale también por el Block Engine (`jitoEndpoint`).
+   */
+  jitoEnabled: z.boolean(),
   jitoEndpoint: z.string(),
   jitoTipSol: z.number().min(0).max(1),
   slippageBuyPct: z.number().min(0.1).max(50),
@@ -94,7 +99,7 @@ export const SettingsDto = z.object({
   theme: z.enum(["dark", "light"]),
   /** Pasarela pública con la que se forman las URI de metadatos (Pinata solo sube). */
   ipfsGateway: z.string().max(200),
-  /** Límites del proveedor de RPC (0 = sin límite). Helius Free: 10 peticiones/s y 1 envío/s. */
+  /** Límites del proveedor de RPC (0 = sin límite). Helius Free: 10 peticiones/s y 1 envío/s; Developer: 50 y 5. */
   rpcMaxRps: z.number().int().min(0).max(1000),
   rpcSendPerSec: z.number().min(0).max(100),
   /** Secretos: el GET solo devuelve si están configurados, nunca el valor. */
@@ -122,10 +127,26 @@ export const PutSettingsBody = SettingsDto.omit({ ipfsKeySet: true, rpcKeySet: t
       .max(200)
       .refine((v) => /^https:\/\/[^\s]+\/$/.test(v), "Pasarela: URL https:// que acabe en / (p. ej. https://ipfs.io/ipfs/)")
       .optional(),
+    jitoEndpoint: z
+      .string()
+      .trim()
+      .max(200)
+      .refine((v) => v === "" || /^https:\/\/[^\s/]+(\/[^\s]*)?$/.test(v), "Block Engine: URL https:// (p. ej. https://mainnet.block-engine.jito.wtf)")
+      .optional(),
     ipfsKey: z.string().max(2000).optional(),
     rpcKey: z.string().max(500).optional(),
     rpcBackupKey: z.string().max(500).optional(),
   });
+
+/** Jito: Block Engine global por defecto y propina mínima que acepta (1.000 lamports, docs.jito.wtf). */
+export const JITO_DEFAULT_ENDPOINT = "https://mainnet.block-engine.jito.wtf";
+export const JITO_MIN_TIP_SOL = 0.000001;
+
+/** Presets de límites del proveedor de RPC. Helius (helius.dev/docs/billing/rate-limits, 2026-11-07): Free 10 req/s y 1 envío/s; Developer 50 req/s y 5 envíos/s. Se deja margen en las peticiones. */
+export const RPC_PRESETS = {
+  heliusFree: { label: "Helius Free", rpcMaxRps: 8, rpcSendPerSec: 1 },
+  heliusDeveloper: { label: "Helius Developer", rpcMaxRps: 40, rpcSendPerSec: 5 },
+} as const;
 
 /** Marcador de la clave del RPC dentro de la URL: la clave real vive cifrada en la bóveda. */
 export const RPC_KEY_PLACEHOLDER = "{key}";

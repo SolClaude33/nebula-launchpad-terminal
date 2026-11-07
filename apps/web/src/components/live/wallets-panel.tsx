@@ -8,8 +8,8 @@ import { Loader2 } from "lucide-react";
 import { Address } from "@/components/address";
 import { lamToSol, toTokens, useLive, type PosItem } from "@/lib/live";
 import { runOrder } from "@/lib/trade";
-import { useChain } from "@/lib/chain";
-import { fmtPct, fmtTokens } from "@/lib/format";
+import { useChain, useJitoTip } from "@/lib/chain";
+import { fmtPct, fmtSol, fmtTokens } from "@/lib/format";
 import { num } from "@/lib/draft";
 
 const SELL_PCTS = [25, 50, 100] as const;
@@ -27,6 +27,7 @@ export function WalletsPanel() {
   const picked = useLive((s) => s.picked);
   const setPicked = useLive((s) => s.setPicked);
   const sendPerSec = useChain((s) => s.status?.sendPerSec ?? 0);
+  const tip = useJitoTip();
   const [amount, setAmount] = useState("0,05");
   const [busy, setBusy] = useState<Record<string, string>>({});
   if (!position) return <div className="skeleton m-3 h-24" aria-busy="true" />;
@@ -68,6 +69,11 @@ export function WalletsPanel() {
             {p} %
           </button>
         ))}
+        {tip > 0n && (
+          <span className="text-[11px] text-faint">
+            + propina Jito de <span className="num">{fmtSol(lamToSol(tip), 6)}</span> por wallet
+          </span>
+        )}
         {sendPerSec > 0 && chosen.length > 1 && (
           <span className="text-[11px] text-faint">
             salen de {sendPerSec} en {sendPerSec} por segundo

@@ -34,13 +34,16 @@ export class TokenBucket {
   constructor(private rate: number) {
     this.tokens = rate;
   }
-  async take(cost = 1) {
-    if (!this.rate || this.rate <= 0) return;
+  /** Devuelve true si tuvo que esperar. */
+  async take(cost = 1): Promise<boolean> {
+    if (!this.rate || this.rate <= 0) return false;
     const now = Date.now();
     this.tokens = Math.min(this.rate, this.tokens + ((now - this.last) / 1000) * this.rate);
     this.last = now;
     this.tokens -= cost;
-    if (this.tokens < 0) await new Promise((r) => setTimeout(r, Math.ceil((-this.tokens / this.rate) * 1000)));
+    if (this.tokens >= 0) return false;
+    await new Promise((r) => setTimeout(r, Math.ceil((-this.tokens / this.rate) * 1000)));
+    return true;
   }
   /** Sin esperar: toma una ficha solo si sobra (para trabajo de baja prioridad, como reenviar). */
   tryTake(cost = 1) {

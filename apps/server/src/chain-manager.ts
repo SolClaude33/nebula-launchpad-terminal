@@ -1,10 +1,13 @@
 // Crea (y recrea al cambiar los ajustes) la conexión a la cadena según el perfil y el RPC configurado.
-import { RPC_KEY_PLACEHOLDER, type Profile } from "@nebula/shared";
+import { JITO_DEFAULT_ENDPOINT, RPC_KEY_PLACEHOLDER, type Profile } from "@nebula/shared";
 import { kvGet, type DB } from "./db";
 import { readSecret, resolveRpcUrl, scrub, storedSettings } from "./settings";
 import type { Vault } from "./signer";
 import { ChainConfigError, createChain, type Chain } from "./chain";
 import type { Endpoint } from "./chain/rpc";
+import { JITO_MIN_TIP_LAMPORTS, tipFor, type JitoConfig } from "./chain/jito";
+import type { PreparedTx } from "./chain/types";
+import { solToLamports } from "./chain/types";
 
 export type ChainState = { mode: "rpc" | "mock" | "off"; healthy: boolean; host: string | null; latencyMs: number | null; usingBackup: boolean; error: string | null };
 
@@ -13,7 +16,7 @@ export class ChainManager {
   private error: string | null = null;
 
   constructor(
-    private opts: { profile: Profile; mode: "rpc" | "mock"; db: () => DB; vault: Vault; log: (msg: string) => void },
+    private opts: { profile: Profile; mode: "rpc" | "mock"; db: () => DB; vault: Vault; log: (msg: string) => void; fetch?: typeof fetch },
   ) {}
 
   /** Endpoints con la clave del RPC ya sustituida; si una URL necesita su clave y la bóveda está cerrada, error claro. */
@@ -45,6 +48,27 @@ export class ChainManager {
     return Math.max(1, Math.round((sol * 1e9 * 1e6) / 400_000));
   }
 
+  /**
+   * F2 · bloque 5: configuración de Jito leída de Ajustes en cada envío y en cada vista previa (sin reconectar).
+   * En el perfil `test` y con el mock, el envío al Block Engine se simula: la propina va en la tx, pero nunca se
+   * llama a Jito (no existe en Surfpool y una tx del fork jamás debe salir hacia mainnet).
+   */
+  jito(): JitoConfig {
+    const s = storedSettings(this.opts.db());
+    const tipLamports = solToLamports(s.jitoTipSol ?? 0);
+    return {
+      enabled: !!s.jitoEnabled && tipLamports >= JITO_MIN_TIP_LAMPORTS,
+      tipLamports,
+      endpoint: s.jitoEndpoint || JITO_DEFAULT_ENDPOINT,
+      simulated: this.opts.profile === "test" || this.opts.mode === "mock",
+    };
+  }
+
+  /** Propina de Jito de una operación (0 si no lleva): la misma que pone el sender. */
+  tipFor(kind: PreparedTx["kind"]) {
+    return tipFor(kind, this.jito());
+  }
+
   /** (Re)conecta. Si la configuración no es válida para el perfil, la cadena queda desactivada con el motivo. */
   reload() {
     this.chain?.stop();
@@ -59,6 +83,8 @@ export class ChainManager {
         sign: (a, m) => this.opts.vault.signMessage(a, m),
         priorityMicroLamports: () => this.priority(),
         limits: { rps: storedSettings(this.opts.db()).rpcMaxRps, sendRps: storedSettings(this.opts.db()).rpcSendPerSec },
+        jito: () => this.jito(),
+        fetch: this.opts.fetch,
       });
       // NFR-TX-005: conciliar lo que quedó en SENT de una ejecución anterior
       this.chain.reconcile().then(

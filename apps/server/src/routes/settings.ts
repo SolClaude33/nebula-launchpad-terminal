@@ -1,10 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { PutSettingsBody, type ActivityDto, type SettingsDto } from "@nebula/shared";
+import { JITO_MIN_TIP_SOL, PutSettingsBody, type ActivityDto, type SettingsDto } from "@nebula/shared";
 import type { Ctx } from "../app";
 import { kvSet, logActivity } from "../db";
 import { VaultError } from "../signer";
 import { hasSecret, remember, splitRpcKey, storedSettings, type SecretName } from "../settings";
+import { JITO_MIN_TIP_LAMPORTS } from "../chain/jito";
+import { solToLamports } from "../chain/types";
 import { testIpfsKey } from "../ipfs";
 import { diagnostics } from "../diagnostics";
 
@@ -52,7 +54,10 @@ export const settingsRoutes =
         }
       }
       const stored = storedSettings(db);
-      kvSet(db, "settings", JSON.stringify({ ...stored, ...plain }));
+      // F2 · bloque 5: con Jito activo, la propina tiene que llegar al mínimo que acepta Jito (1.000 lamports)
+      const next = { ...stored, ...plain };
+      if (next.jitoEnabled && !(solToLamports(next.jitoTipSol) >= JITO_MIN_TIP_LAMPORTS)) throw Object.assign(new Error(`La propina de Jito tiene que ser al menos ${JITO_MIN_TIP_SOL.toLocaleString("es-ES", { maximumFractionDigits: 9 })} SOL (1.000 lamports).`), { statusCode: 400 });
+      kvSet(db, "settings", JSON.stringify(next));
       if (autoLockMin !== undefined) kvSet(db, "autoLockMin", String(autoLockMin));
       const changedSecrets: string[] = [];
       for (const [name, value] of secrets) {

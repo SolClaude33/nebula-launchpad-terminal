@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
 import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fmtMs, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
-import { fmtLamports, useChain } from "@/lib/chain";
+import { fmtLamports, useChain, useJitoTip } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
 import { useLaunchData } from "./use-launch-data";
@@ -103,12 +103,13 @@ export function StepFunding() {
   const d = useDraft((s) => s.draft);
   const set = useDraft((s) => s.set);
   const { wallets, byId, addressOf, balances, refresh } = useLaunchData();
+  const jitoTip = useJitoTip();
   const [dragId, setDragId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("role:holder");
   const [funding, setFunding] = useState(false);
 
-  const needs = fundingNeeds(d, { balances, addressOf });
+  const needs = fundingNeeds(d, { balances, addressOf, tipLamports: jitoTip });
   const byNeed = new Map(needs.map((n) => [n.walletId, n]));
   const amounts = planAmounts(d);
   const shortList = needs.filter((n) => n.short > 0n);

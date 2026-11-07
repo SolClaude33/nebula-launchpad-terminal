@@ -178,7 +178,7 @@ export const HOLDER_BUFFER = 3_500_000n;
 /** La wallet dev paga la creación: cuentas del mint y de la curva (estimado) + fees. */
 export const DEV_BUFFER = 30_000_000n;
 
-export function issues(d: Draft, ctx: { balances: Record<string, bigint>; addressOf: (id: string) => string | undefined }): Issue[] {
+export function issues(d: Draft, ctx: FundingCtx): Issue[] {
   const out: Issue[] = [];
   const fe = fieldErrors(d);
   if (!d.name.trim()) out.push({ id: "name", step: 1, field: "name", message: "Falta el nombre del token." });
@@ -199,18 +199,22 @@ export function issues(d: Draft, ctx: { balances: Record<string, bigint>; addres
   return out;
 }
 
-export function fundingNeeds(d: Draft, ctx: { balances: Record<string, bigint>; addressOf: (id: string) => string | undefined }) {
+/** `tipLamports`: propina de Jito por transacción (0 sin Jito): la creación y cada compra llevan una. */
+export type FundingCtx = { balances: Record<string, bigint>; addressOf: (id: string) => string | undefined; tipLamports?: bigint };
+
+export function fundingNeeds(d: Draft, ctx: FundingCtx) {
+  const tip = ctx.tipLamports ?? 0n;
   const out: { walletId: string; need: bigint; have: bigint; short: bigint; dev: boolean }[] = [];
   if (d.devWalletId) {
     const a = ctx.addressOf(d.devWalletId);
-    const need = toLamports(d.devBuy) + DEV_BUFFER;
+    const need = toLamports(d.devBuy) + DEV_BUFFER + tip;
     const have = a ? (ctx.balances[a] ?? 0n) : 0n;
     out.push({ walletId: d.devWalletId, need, have, short: need > have ? need - have : 0n, dev: true });
   }
   planAmounts(d).forEach((l, i) => {
     const id = d.plan[i];
     const a = ctx.addressOf(id);
-    const need = l + HOLDER_BUFFER;
+    const need = l + HOLDER_BUFFER + tip;
     const have = a ? (ctx.balances[a] ?? 0n) : 0n;
     out.push({ walletId: id, need, have, short: need > have ? need - have : 0n, dev: false });
   });

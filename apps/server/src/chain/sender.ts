@@ -10,9 +10,13 @@ import type { RpcPool } from "./rpc";
 import { isNetworkError, isRateLimited } from "./rpc";
 import type { MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
 import type { PumpPayload } from "./pumpfun";
+import { JITO_OFF, JitoClient, MAX_TX_BYTES, tipFor, tipInstruction, type JitoConfig } from "./jito";
 
-/** `rebroadcastMs`: cada cuánto se reenvía la MISMA transacción firmada mientras se espera la confirmación (0 = nunca). */
-export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number; rebroadcastMs?: number };
+/**
+ * `rebroadcastMs`: cada cuánto se reenvía la MISMA transacción firmada mientras se espera la confirmación (0 = nunca).
+ * `jito`: configuración de Jito, leída en cada envío (Ajustes la cambia sin reconectar). `fetch`: el del Block Engine (tests).
+ */
+export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number; rebroadcastMs?: number; jito?: () => JitoConfig; fetch?: typeof fetch };
 
 /** Por defecto, un reenvío cada 2 s: con Helius Free (1 envío/s) deja cupo a los envíos nuevos. */
 export const REBROADCAST_MS = 2000;
@@ -30,7 +34,7 @@ export function classify(logs: string[] | null | undefined, err: unknown): { cod
   return { code: "SIMULATION_FAILED", message: (logs ?? []).filter((l) => /Error|failed/i.test(l)).slice(-2).join(" · ") || "La simulación falló." };
 }
 
-type Row = { idempotency_key: string; status: string; signature: string | null; last_valid_block_height: number | null; error_code: string | null; error: string | null; fee_lamports: number | null };
+type Row = { idempotency_key: string; status: string; signature: string | null; last_valid_block_height: number | null; error_code: string | null; error: string | null; fee_lamports: number | null; tip_lamports: number | null };
 
 export class SolanaSender implements TxSender {
   constructor(
@@ -45,31 +49,61 @@ export class SolanaSender implements TxSender {
   }
 
   private price = 0;
+  private jitoClient: JitoClient | null = null;
+  /** Envíos al Block Engine simulados (perfil `test`): la propina va en la tx, pero no sale nada hacia Jito. */
+  readonly jitoSimulated = { count: 0 };
 
   /** Fee exacta de una tx: la misma que se muestra en la vista previa. */
   feeOf(tx: PreparedTx) {
     return txFee(tx.signers.length, tx.cuLimit ?? this.opts.computeUnitLimit, this.opts.priorityMicroLamports());
   }
 
-  private async build(tx: PreparedTx) {
+  jitoConfig(): JitoConfig {
+    return this.opts.jito?.() ?? JITO_OFF;
+  }
+
+  /** Cliente del Block Engine; null si Jito está apagado o simulado (en `test` nunca se llama a Jito). */
+  jito(): JitoClient | null {
+    const cfg = this.jitoConfig();
+    if (!cfg.enabled || cfg.simulated || !cfg.endpoint) return null;
+    if (this.jitoClient?.endpoint !== cfg.endpoint) this.jitoClient = new JitoClient(cfg.endpoint, this.opts.fetch ?? fetch);
+    return this.jitoClient;
+  }
+
+  private async build(tx: PreparedTx, key: string) {
     this.price = this.opts.priorityMicroLamports();
     const { instructions } = tx.payload as PumpPayload;
     const { blockhash, lastValidBlockHeight } = await this.pool.run((c) => c.getLatestBlockhash("confirmed"));
-    const msg = new TransactionMessage({
-      payerKey: new PublicKey(tx.payer),
-      recentBlockhash: blockhash,
-      instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: tx.cuLimit ?? this.opts.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.price }), ...instructions],
-    }).compileToV0Message(tx.lookupTables);
-    const vtx = new VersionedTransaction(msg);
+    const compile = (tip: bigint) =>
+      new TransactionMessage({
+        payerKey: new PublicKey(tx.payer),
+        recentBlockhash: blockhash,
+        instructions: [
+          ComputeBudgetProgram.setComputeUnitLimit({ units: tx.cuLimit ?? this.opts.computeUnitLimit }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.price }),
+          ...instructions,
+          // Propina al final de la MISMA tx: si la operación falla, no se paga (lo que recomienda Jito)
+          ...(tip > 0n ? [tipInstruction(tx.payer, tip, key)] : []),
+        ],
+      }).compileToV0Message(tx.lookupTables);
+    let tipLamports = tipFor(tx.kind, this.jitoConfig());
+    let vtx = new VersionedTransaction(compile(tipLamports));
+    // La creación con dev buy va justa: si la propina no cabe en 1.232 bytes, esa tx sale sin propina y solo por el
+    // RPC normal. Nunca se parte la creación del dev buy ni se paga una propina en una tx aparte. Es determinista:
+    // con la misma configuración, el dry-run y el envío deciden lo mismo.
+    if (tipLamports > 0n && vtx.serialize().length > MAX_TX_BYTES) {
+      tipLamports = 0n;
+      vtx = new VersionedTransaction(compile(0n));
+    }
     const bytes = vtx.message.serialize();
     for (const s of tx.signers) vtx.addSignature(new PublicKey(s), this.sign(s, bytes));
     const signature = firstSignature(vtx);
-    return { vtx, blockhash, lastValidBlockHeight, signature };
+    return { vtx, blockhash, lastValidBlockHeight, signature, tipLamports };
   }
 
   async send(tx: PreparedTx, { idempotencyKey, simulateOnly, watch }: { idempotencyKey: string; simulateOnly?: boolean; watch?: string }): Promise<SendResult> {
     const prev = this.row(idempotencyKey);
-    if (prev?.status === "CONFIRMED") return { status: "confirmed", signature: prev.signature!, reused: true, feeLamports: prev.fee_lamports != null ? BigInt(prev.fee_lamports) : undefined };
+    if (prev?.status === "CONFIRMED") return { status: "confirmed", signature: prev.signature!, reused: true, feeLamports: prev.fee_lamports != null ? BigInt(prev.fee_lamports) : undefined, tipLamports: BigInt(prev.tip_lamports ?? 0) };
     if (prev?.status === "FAILED" && prev.signature && (await this.statusOf(prev.signature).catch(() => "unknown" as const)) === "confirmed") {
       return this.markConfirmed(idempotencyKey, prev.signature);
     }
@@ -85,7 +119,7 @@ export class SolanaSender implements TxSender {
     for (let attempt = 0; attempt < 2; attempt++) {
       let built: Awaited<ReturnType<SolanaSender["build"]>>;
       try {
-        built = await this.build(tx);
+        built = await this.build(tx, idempotencyKey);
       } catch (e) {
         // Bóveda bloqueada o clave ausente: no se ha emitido nada; quien llama decide (pausar)
         if (e instanceof VaultError) throw e;
@@ -105,21 +139,27 @@ export class SolanaSender implements TxSender {
       }
       if (simulateOnly) {
         const acc = sim.value.accounts?.[0];
-        return { status: "simulated", unitsConsumed: sim.value.unitsConsumed ?? undefined, logs: sim.value.logs ?? undefined, ...(watch ? { postLamports: BigInt(acc?.lamports ?? 0) } : {}) };
+        return { status: "simulated", unitsConsumed: sim.value.unitsConsumed ?? undefined, logs: sim.value.logs ?? undefined, tipLamports: built.tipLamports, ...(watch ? { postLamports: BigInt(acc?.lamports ?? 0) } : {}) };
       }
 
       // Registrar antes de emitir: si el proceso muere aquí, la conciliación sabrá qué firma buscar
       const now = Date.now();
       this.db()
         .prepare(
-          `INSERT INTO tx(idempotency_key, kind, signature, last_valid_block_height, status, payer, mint, created_at, updated_at) VALUES(?, ?, ?, ?, 'SENT', ?, ?, ?, ?)
-           ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, last_valid_block_height = excluded.last_valid_block_height, status = 'SENT', updated_at = excluded.updated_at`,
+          `INSERT INTO tx(idempotency_key, kind, signature, last_valid_block_height, status, payer, mint, tip_lamports, created_at, updated_at) VALUES(?, ?, ?, ?, 'SENT', ?, ?, ?, ?, ?)
+           ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, last_valid_block_height = excluded.last_valid_block_height, status = 'SENT', tip_lamports = excluded.tip_lamports, updated_at = excluded.updated_at`,
         )
-        .run(idempotencyKey, tx.kind, built.signature, built.lastValidBlockHeight, tx.payer, tx.mint ?? null, now, now);
+        .run(idempotencyKey, tx.kind, built.signature, built.lastValidBlockHeight, tx.payer, tx.mint ?? null, Number(built.tipLamports), now, now);
+
+      // Jito: los MISMOS bytes firmados (misma firma) salen también por el Block Engine, sin esperar ni tocar el resultado
+      const live = { done: false };
+      const jito = built.tipLamports > 0n ? this.jito() : null;
+      if (jito) void jito.send(built.vtx.serialize(), { wait: true, alive: () => !live.done });
+      else if (built.tipLamports > 0n) this.jitoSimulated.count++;
 
       try {
         await this.broadcast(built.vtx);
-        const stopRebroadcast = this.rebroadcast(built.vtx);
+        const stopRebroadcast = this.rebroadcast(built.vtx, jito, () => (live.done = true));
         let conf: Awaited<ReturnType<import("@solana/web3.js").Connection["confirmTransaction"]>>;
         try {
           conf = await this.pool.run((c) => c.confirmTransaction({ signature: built.signature, blockhash: built.blockhash, lastValidBlockHeight: built.lastValidBlockHeight }, "confirmed"));
@@ -130,7 +170,7 @@ export class SolanaSender implements TxSender {
           const c = classify(null, conf.value.err);
           return this.markFailed(idempotencyKey, c.code, c.message, built.signature);
         }
-        return this.markConfirmed(idempotencyKey, built.signature, txFee(tx.signers.length, tx.cuLimit ?? this.opts.computeUnitLimit, this.price), sim.value.unitsConsumed ?? undefined);
+        return this.markConfirmed(idempotencyKey, built.signature, txFee(tx.signers.length, tx.cuLimit ?? this.opts.computeUnitLimit, this.price), sim.value.unitsConsumed ?? undefined, built.tipLamports);
       } catch (e) {
         // Ya se emitió (o pudo emitirse): un timeout o un corte del WebSocket no dicen si aterrizó.
         // Se pregunta a la cadena antes de decidir, para que un reintento nunca duplique el efecto.
@@ -156,18 +196,21 @@ export class SolanaSender implements TxSender {
    * Reenvía los MISMOS bytes firmados (misma firma: nunca duplica) cada `rebroadcastMs` hasta que se llame a la
    * función devuelta. Solo usa cupo sobrante del limitador, así que nunca retrasa un envío nuevo.
    */
-  private rebroadcast(vtx: VersionedTransaction) {
+  private rebroadcast(vtx: VersionedTransaction, jito: JitoClient | null = null, onStop: () => void = () => {}) {
     const every = this.opts.rebroadcastMs ?? REBROADCAST_MS;
-    if (every <= 0 || typeof this.pool.tryRun !== "function") return () => {};
+    if (every <= 0 || typeof this.pool.tryRun !== "function") return onStop;
     const raw = vtx.serialize();
     let done = false;
     const timer = setInterval(() => {
       if (done) return;
       void this.pool.tryRun((c) => c.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }), { send: true }).catch(() => {});
+      // también al Block Engine, solo con cupo sobrante de su propio limitador
+      if (jito) void jito.send(raw, { wait: false, alive: () => !done });
     }, every);
     timer.unref?.();
     return () => {
       done = true;
+      onStop();
       clearInterval(timer);
     };
   }
@@ -201,9 +244,9 @@ export class SolanaSender implements TxSender {
     return s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized" ? "confirmed" : "unknown";
   }
 
-  private markConfirmed(key: string, signature: string, fee?: bigint, units?: number): SendResult {
+  private markConfirmed(key: string, signature: string, fee?: bigint, units?: number, tip?: bigint): SendResult {
     this.db().prepare("UPDATE tx SET status = 'CONFIRMED', signature = ?, fee_lamports = COALESCE(?, fee_lamports), updated_at = ? WHERE idempotency_key = ?").run(signature, fee != null ? Number(fee) : null, Date.now(), key);
-    return { status: "confirmed", signature, feeLamports: fee, unitsConsumed: units };
+    return { status: "confirmed", signature, feeLamports: fee, unitsConsumed: units, ...(tip !== undefined ? { tipLamports: tip } : {}) };
   }
 
   private markFailed(key: string, code: SendErrorCode, message: string, signature?: string): SendResult {

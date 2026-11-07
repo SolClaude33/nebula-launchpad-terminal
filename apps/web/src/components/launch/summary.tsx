@@ -8,7 +8,7 @@ import { Address } from "@/components/address";
 import { api } from "@/lib/api";
 import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
-import { fmtLamports, useChain } from "@/lib/chain";
+import { fmtLamports, useChain, useJitoTip } from "@/lib/chain";
 import { TokenGlyph } from "@/components/live/token-header";
 import { useLaunchData } from "./use-launch-data";
 import { LaunchBuys } from "./launch-buys";
@@ -69,8 +69,9 @@ function useQuote(devBuy: bigint, buys: bigint[]) {
 export function LaunchSummary({ goto }: { goto: (step: number, field?: string) => void }) {
   const d = useDraft((s) => s.draft);
   const { balances, addressOf } = useLaunchData();
+  const jitoTip = useJitoTip();
   const chainOff = useChain((s) => s.status?.mode === "off");
-  const list = issues(d, { balances, addressOf });
+  const list = issues(d, { balances, addressOf, tipLamports: jitoTip });
   const view = useLaunchRun((s) => s.view);
   const fp = useLaunchRun((s) => s.fp);
   const busy = useLaunchRun((s) => s.busy);
@@ -110,6 +111,8 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
     { k: "Compras de holders", v: holdersSol, tip: "Suma de los montos del plan (paso 3)." },
     { k: `Firmas (${2 + amounts.length})`, v: fee5k * BigInt(2 + amounts.length), tip: "5.000 lamports por firma: creador + mint en la creación, y una por compra." },
     { k: "Cuentas de token de holders", v: (HOLDER_BUFFER - 500_000n) * BigInt(amounts.length), tip: "Estimado: rent de la cuenta de token de cada holder (recuperable al cerrarla) + priority fee." },
+    // F2 · bloque 5: la creación y cada compra llevan su propina dentro de la misma tx (el dry-run dice si cabe en la creación)
+    ...(jitoTip > 0n ? [{ k: `Propinas Jito (${1 + amounts.length})`, v: jitoTip * BigInt(1 + amounts.length), tip: "Una por transacción: la creación con el dev buy y cada compra. Va dentro de la misma tx y solo se paga si entra. Si en la creación no cabe (1.232 bytes), el dry-run lo indica y esa sale sin propina." }] : []),
   ];
   const total = costs.reduce((a, c) => a + c.v, 0n);
 

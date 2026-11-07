@@ -5,7 +5,7 @@
 // nunca los devuelve, solo dice si están configurados. Una URL de RPC pegada con su clave se parte sola.
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Lock, Moon, Plug, Save, ShieldCheck, Sun, TriangleAlert, XCircle } from "lucide-react";
-import { MIN_PASSWORD, RPC_KEY_PLACEHOLDER, type SettingsDto } from "@nebula/shared";
+import { JITO_DEFAULT_ENDPOINT, JITO_MIN_TIP_SOL, MIN_PASSWORD, RPC_KEY_PLACEHOLDER, RPC_PRESETS, type SettingsDto } from "@nebula/shared";
 import { api, ApiError } from "@/lib/api";
 import { useChain } from "@/lib/chain";
 import { useTheme } from "@/lib/theme";
@@ -66,7 +66,7 @@ export function SettingsView() {
           <RpcSection s={s} save={save} />
           <IpfsSection s={s} save={save} profile={profile} />
           <TradingSection s={s} save={save} />
-          <JitoSection />
+          <JitoSection s={s} save={save} profile={profile} />
           <SecuritySection s={s} save={save} />
           <BackupsPanel />
           <PasswordSection />
@@ -226,7 +226,24 @@ function RpcSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: string
         <Field id="rpc-rps" label="Límite de peticiones por segundo" error={errs.rps} hint="0 = sin límite. Evita los 429 de los planes gratuitos.">
           <input id="rpc-rps" inputMode="numeric" value={f.rps} onChange={(e) => setF({ ...f, rps: e.target.value.trim() })} className="field num h-9 text-[12.5px]" aria-invalid={!!errs.rps} />
         </Field>
-        <Field id="rpc-send" label="Envíos de transacciones por segundo" error={errs.send} hint={<>0 = sin límite. Las órdenes multi-wallet se espacian solas.{" "}<button type="button" onClick={() => setF({ ...f, rps: "8", send: "1" })} className="text-accent-b underline-offset-2 hover:underline">Usar el preset Helius Free (8 y 1)</button></>}>
+        <Field
+          id="rpc-send"
+          label="Envíos de transacciones por segundo"
+          error={errs.send}
+          hint={
+            <>
+              0 = sin límite. Las órdenes multi-wallet se espacian solas.{" "}
+              {Object.values(RPC_PRESETS).map((p, i) => (
+                <span key={p.label}>
+                  {i > 0 && " · "}
+                  <button type="button" onClick={() => setF({ ...f, rps: String(p.rpcMaxRps), send: String(p.rpcSendPerSec) })} className="text-accent-b underline-offset-2 hover:underline">
+                    Usar el preset {p.label} ({p.rpcMaxRps} y {p.rpcSendPerSec})
+                  </button>
+                </span>
+              ))}
+            </>
+          }
+        >
           <input id="rpc-send" inputMode="decimal" value={f.send} onChange={(e) => setF({ ...f, send: e.target.value.trim() })} className="field num h-9 text-[12.5px]" aria-invalid={!!errs.send} />
         </Field>
       </div>
@@ -332,23 +349,61 @@ function TradingSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: st
   );
 }
 
-/** REQ-SET-001 · Jito: decidido el 2026-11-06 que queda para F2. Hoy no se envía ninguna propina. */
-function JitoSection() {
+/**
+ * REQ-SET-001 · F2 bloque 5: Jito como vía de envío opcional. Cada compra, venta y creación lleva una propina dentro de
+ * la MISMA transacción y los mismos bytes salen por el RPC y por el Block Engine. Sin bundles (§2.3).
+ */
+function JitoSection({ s, save, profile }: { s: SettingsDto; save: (p: Patch, what: string) => Promise<boolean>; profile?: string }) {
+  const [f, setF] = useState({ on: s.jitoEnabled, ep: s.jitoEndpoint || JITO_DEFAULT_ENDPOINT, tip: String(s.jitoTipSol).replace(".", ",") });
+  const [busy, setBusy] = useState(false);
+  const tip = numOf(f.tip);
+  const errs = {
+    ep: f.on && !/^https:\/\/[^\s/]+(\/\S*)?$/.test(f.ep) ? "URL https:// del Block Engine" : null,
+    tip: !(tip >= (f.on ? JITO_MIN_TIP_SOL : 0) && tip <= 1) ? `Entre ${JITO_MIN_TIP_SOL.toLocaleString("es-ES", { maximumFractionDigits: 9 })} SOL (mínimo de Jito) y 1 SOL` : null,
+  };
+  const dirty = f.on !== s.jitoEnabled || f.ep !== (s.jitoEndpoint || JITO_DEFAULT_ENDPOINT) || tip !== s.jitoTipSol;
+  const high = f.on && tip > 0.01;
   return (
-    <section aria-labelledby="jito-t" className="panel p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="telemetry">Envíos</p>
-          <h2 id="jito-t" className="mt-0.5 text-[16px] font-semibold">
-            Jito · bundles y propina
-          </h2>
-        </div>
-        <span className="chip h-6 text-[11px]">próximamente · F2</span>
-      </div>
-      <p className="mt-3 max-w-[640px] text-[12.5px] text-muted">
-        Endpoint de Jito y propina configurables, con su desglose en los costes y en el P&L. Por ahora no se envía ninguna propina: la creación y el dev buy ya van juntos en una sola transacción y los envíos usan la priority fee de arriba.
+    <Section
+      id="jito"
+      kicker="Envíos"
+      title="Jito · vía de envío y propina"
+      aside={<span className={`chip h-6 text-[11px] ${s.jitoEnabled ? "border-buy/25 text-buy" : ""}`}>{s.jitoEnabled ? (profile === "test" ? "activo · simulado" : "activo") : "desactivado"}</span>}
+    >
+      <p className="mb-3.5 max-w-[680px] text-[12.5px] text-muted">
+        Con Jito, cada compra, venta y creación lleva una propina dentro de la misma transacción (si la operación falla, no se paga) y la transacción sale a la vez por el RPC y por el Block Engine de Jito. Ayuda a que entre antes en los slots de validadores con Jito. Como también sale por el RPC, la protección frente a sándwiches es parcial. Nunca se agrupan compras propias con la creación en un bundle.
       </p>
-    </section>
+      <label htmlFor="jito-on" className="mb-3.5 flex w-fit cursor-pointer items-center gap-2.5 text-[12.5px] font-medium">
+        <input id="jito-on" type="checkbox" checked={f.on} onChange={(e) => setF({ ...f, on: e.target.checked })} className="size-4 accent-[var(--accent-a)]" />
+        Enviar por Jito
+      </label>
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+        <Field id="jito-ep" label="Block Engine" error={errs.ep} hint="El global reparte por región. También sirven los regionales (amsterdam., frankfurt., ny., tokyo.…).">
+          <input id="jito-ep" value={f.ep} onChange={(e) => setF({ ...f, ep: e.target.value.trim() })} spellCheck={false} disabled={!f.on} className="field num h-9 text-[12.5px] disabled:opacity-60" aria-invalid={!!errs.ep} />
+        </Field>
+        <Field id="jito-tip" label="Propina (SOL por transacción)" error={errs.tip} hint={high ? "Más de 0,01 SOL por transacción: revisa que sea lo que quieres." : "Se suma en cada vista previa, en el dry-run y en el P&L."}>
+          <input id="jito-tip" inputMode="decimal" value={f.tip} onChange={(e) => setF({ ...f, tip: e.target.value })} disabled={!f.on} className="field num h-9 disabled:opacity-60" aria-invalid={!!errs.tip} />
+        </Field>
+      </div>
+      {f.on && profile === "test" && (
+        <p role="note" className="mt-3 rounded-[var(--radius-sm)] border border-warn/30 bg-[var(--warn-soft)] p-2.5 text-[12px] text-warn">
+          Perfil de pruebas: Jito no existe en Surfpool. La propina va en la transacción (así se ven el tamaño, los costes y el P&L reales), pero el envío al Block Engine se simula: no sale nada hacia Jito.
+        </p>
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <p className="text-[11.5px] text-faint">Se aplica desde el siguiente envío. Un lanzamiento ya simulado pide repetir el dry-run si cambia la propina.</p>
+        <SaveBtn
+          busy={busy}
+          disabled={!dirty || Object.values(errs).some(Boolean)}
+          onClick={async () => {
+            setBusy(true);
+            await save({ jitoEnabled: f.on, jitoEndpoint: f.ep, jitoTipSol: tip }, "Jito");
+            await useChain.getState().refreshStatus();
+            setBusy(false);
+          }}
+        />
+      </div>
+    </Section>
   );
 }
 

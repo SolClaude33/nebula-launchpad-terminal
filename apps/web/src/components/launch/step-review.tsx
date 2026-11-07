@@ -103,6 +103,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
                 <span className="flex-1">{c.label}</span>
                 <span className="chip h-5 px-1.5 text-[10.5px]">{c.kind === "simulated" ? "simulada" : c.kind === "checked" ? "comprobada" : "preparación"}</span>
                 {c.units ? <span className="num text-faint">{c.units.toLocaleString("es-ES")} CU</span> : null}
+                {c.note && <span className="basis-full pl-7 text-faint">{c.note}</span>}
                 {c.reason && (
                   <span className={`basis-full pl-7 ${c.kind === "setup" ? "text-warn" : "text-sell"}`}>
                     {c.reason}{" "}

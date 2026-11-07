@@ -15,10 +15,11 @@ export type TradeQuote = {
   venue: "curve" | "migrating" | "pumpswap";
   padFeeBps: number;
   items: { walletId: string; label: string; ok: boolean; reason?: string; amountIn: string; expectedOut: string; limit: string }[];
-  costs: { volume: string; network: string; priority: string; rent: string; padFee: string; total: string };
+  costs: { volume: string; network: string; priority: string; rent: string; padFee: string; jito: string; total: string };
   maxBuyPerWallet: string;
   rentPerAccount: string;
   feePerTx: string;
+  tipPerTx: string;
 };
 export type OrderRequest = { side: Side; walletIds: string[]; lamportsEach?: string; pct?: number; slippagePct: number; mode?: "parallel" | "staggered" };
 

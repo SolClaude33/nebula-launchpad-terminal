@@ -11,7 +11,12 @@ export const chainRoutes =
   async (app) => {
     // Estado del RPC para la topbar: no expone nada sensible y no cuenta como actividad
     // sendPerSec: límite de envíos por segundo de Ajustes (p. ej. 1 en Helius Free); 0 = sin límite
-    app.get("/chain/status", async () => ({ profile: ctx.profile, ...ctx.chain.state(), sendPerSec: storedSettings(ctx.db()).rpcSendPerSec ?? 0 }));
+    // jito: propina por compra, venta y creación (0 si está apagado) para las vistas previas de la web; `simulated` en
+    // el perfil de pruebas (la propina va en la tx, pero no se envía nada al Block Engine)
+    app.get("/chain/status", async () => {
+      const j = ctx.chain.jito();
+      return { profile: ctx.profile, ...ctx.chain.state(), sendPerSec: storedSettings(ctx.db()).rpcSendPerSec ?? 0, jito: { enabled: j.enabled, tipLamports: (j.enabled ? j.tipLamports : 0n).toString(), simulated: j.simulated } };
+    });
 
     // Saldos de todas las wallets activas (lecturas en lotes de 100)
     app.get("/wallets/balances", async () => {

@@ -157,6 +157,7 @@ export function TradeTicket() {
         <Row label={buy ? `Compras (${okCount} × ${fmtSol(lamToSol(lamports), 3)})` : `Recibes aprox. (${okCount} wallets)`} value={c ? fmtSol(lamToSol(c.volume), 4) : "—"} strong />
         <Row label="Fee de red" value={c ? fmtSol(lamToSol(c.network), 6) : "—"} />
         <Row label="Priority fee" value={c ? fmtSol(lamToSol(c.priority), 5) : "—"} />
+        {c && BigInt(c.jito) > 0n && <Row label="Propina Jito" value={fmtSol(lamToSol(c.jito), 6)} hint="Una por transacción, dentro de la misma tx (si falla, no se paga). Sale también por el Block Engine de Jito. Se configura en Ajustes." />}
         {c && BigInt(c.rent) > 0n && <Row label="Rent de cuentas nuevas" value={fmtSol(lamToSol(c.rent), 5)} hint="Cuenta de token y cuentas del programa que crea la primera compra. La de token se recupera al cerrarla vacía." />}
         <Row label={`Fee del pad${quote ? ` (${(quote.padFeeBps / 100).toLocaleString("es-ES")} %)` : ""}`} value={c ? fmtSol(lamToSol(c.padFee), 5) : "—"} hint="La informa el adaptador con las fees reales del programa; ya va incluida en el precio." />
       </dl>

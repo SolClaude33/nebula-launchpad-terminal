@@ -6,6 +6,7 @@ import { lamToSol, toTokens, useLive } from "@/lib/live";
 import { runOrder, useWalletPicker } from "@/lib/trade";
 import { fmtSol, fmtTokens } from "@/lib/format";
 import { LiveNumber } from "@/components/live-number";
+import { useJitoTip } from "@/lib/chain";
 
 type Layout = "qwerty" | "azerty" | "qwertz";
 const KEYS: Record<Layout, { buy: string[]; sell: string[] }> = {
@@ -35,6 +36,7 @@ export function InstantTrade() {
   const rows = (position?.items ?? []).filter((p) => ids.has(p.walletId));
   const pos = { tokens: rows.reduce((a, p) => a + Number(p.tokens), 0), pnl: lamToSol(rows.reduce((a, p) => a + p.valueLamports - p.costLamports, 0)) };
   const blocked = info?.venue === "migrating";
+  const tip = useJitoTip();
 
   // Cargar preferencias guardadas en local
   useEffect(() => {
@@ -254,6 +256,7 @@ export function InstantTrade() {
               </>
             )}
           </p>
+          {tip > 0n && <p className="mt-1 text-center text-[11px] text-faint">Cada compra y venta lleva una propina de Jito de <span className="num">{fmtSol(lamToSol(tip), 6)}</span> por wallet, además de las fees de red.</p>}
         </div>
       )}
     </div>

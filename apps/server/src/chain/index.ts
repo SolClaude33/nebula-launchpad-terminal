@@ -16,6 +16,7 @@ import { chunkTransfers, transferInstructions } from "./transfers";
 import { altCreateInstructions, keysFingerprint, staticLaunchKeys } from "./alt";
 import { kvGet, kvSet } from "../db";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
+import type { JitoConfig } from "./jito";
 
 export type Chain = ChainEnv & { status: () => RpcStatus; stop: () => void; reconcile: () => Promise<number>; kind: "rpc" | "mock"; ledger?: MockLedger };
 
@@ -232,15 +233,15 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
   };
 }
 
-export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number; limits?: import("./rpc").RpcLimits }): Chain {
+export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number; limits?: import("./rpc").RpcLimits; jito?: () => JitoConfig; fetch?: typeof fetch }): Chain {
   if (opts.mode === "mock") {
-    const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports, opts.db);
+    const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports, opts.db, opts.jito);
     return { ...env, kind: "mock", status: () => ({ healthy: true, host: "mock", latencyMs: 0, usingBackup: false, endpoints: 1 }), stop: () => {}, reconcile: async () => 0 };
   }
   assertProfileRpc(opts.profile, opts.endpoints);
   const pool = new RpcPool(opts.endpoints, undefined, opts.limits);
   pool.start();
-  const sender = new SolanaSender(pool, opts.db, opts.sign, { computeUnitLimit: 400_000, priorityMicroLamports: opts.priorityMicroLamports });
+  const sender = new SolanaSender(pool, opts.db, opts.sign, { computeUnitLimit: 400_000, priorityMicroLamports: opts.priorityMicroLamports, jito: opts.jito, fetch: opts.fetch });
   let rentMin: bigint | null = null;
   let alt: AddressLookupTableAccount | null = null;
   let staticKeys: string[] | null = null;

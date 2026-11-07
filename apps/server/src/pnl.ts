@@ -4,8 +4,9 @@
 //   indexan con el decodificador del Live aunque nunca se haya abierto su Live Workspace.
 // - `summary()` calcula el P&L con coste medio sobre la posición conjunta de las wallets propias:
 //   realizado (ventas − coste base de lo vendido) − fees de red − propinas Jito + comisiones reclamadas.
-//   Las fees de Pump.fun y PumpSwap ya van dentro de cada compra y venta. El rent de las cuentas que
-//   crean las compras y la creación del token se informa aparte (rent = flujo de trades − fee − Δ SOL).
+//   Las fees de Pump.fun y PumpSwap ya van dentro de cada compra y venta. La propina de Jito de cada envío se guarda
+//   en tx.tip_lamports (F2 · bloque 5) y se resta aparte. El rent de las cuentas que
+//   crean las compras y la creación del token se informa aparte (rent = flujo de trades − fee − propina − Δ SOL).
 //   La posición abierta se valora al precio actual y no entra en el P&L del período.
 import type { DB } from "./db";
 import type { ChainManager } from "./chain-manager";
@@ -19,7 +20,7 @@ const PERIOD_MS: Record<Period, number> = { "24h": 24 * 3600_000, "7d": 7 * 86_4
 const HOUR = 3600_000;
 const DAY = 86_400_000;
 
-type TxRow = { signature: string; kind: string; mint: string | null; fee: number; own_delta: number | null; at: number };
+type TxRow = { signature: string; kind: string; mint: string | null; fee: number; tip: number; own_delta: number | null; at: number };
 type TradeRow = { mint: string; signature: string; side: "buy" | "sell"; lamports: string; tokens: string; fee: string; ts: number };
 
 export class Pnl {
@@ -134,7 +135,7 @@ export class Pnl {
     const trades: TradeRow[] = ownList.length
       ? (db.prepare(`SELECT mint, signature, side, lamports, tokens, fee, ts FROM live_trade WHERE user IN (${ownList.map(() => "?").join(",")}) ORDER BY ts, seq`).all(...ownList) as TradeRow[])
       : [];
-    const txs = db.prepare("SELECT signature, kind, mint, COALESCE(chain_fee, fee_lamports, 0) AS fee, own_delta, COALESCE(block_time * 1000, created_at) AS at FROM tx WHERE status = 'CONFIRMED' AND signature IS NOT NULL").all() as TxRow[];
+    const txs = db.prepare("SELECT signature, kind, mint, COALESCE(chain_fee, fee_lamports, 0) AS fee, COALESCE(tip_lamports, 0) AS tip, own_delta, COALESCE(block_time * 1000, created_at) AS at FROM tx WHERE status = 'CONFIRMED' AND signature IS NOT NULL").all() as TxRow[];
 
     const buckets = new Map<number, number>();
     const addB = (ts: number, v: number) => {
@@ -183,24 +184,27 @@ export class Pnl {
     }
 
     let networkFees = 0;
+    let jito = 0; // REQ-DASH-001 · F2 bloque 5: propinas de Jito de los envíos propios (tabla tx)
     let claims = 0;
     let rent = 0;
     for (const x of txs) {
       const inP = x.at >= start;
       if (x.mint) {
         const p = P(x.mint);
-        p.feesAll += x.fee;
-        if (inP) p.feesP += x.fee;
+        p.feesAll += x.fee + x.tip;
+        if (inP) p.feesP += x.fee + x.tip;
       }
       if (!inP) continue;
       networkFees += x.fee;
-      addB(x.at, -x.fee);
+      jito += x.tip;
+      addB(x.at, -x.fee - x.tip);
       if (x.kind === "claim" && x.own_delta !== null) {
         const gross = x.own_delta + x.fee;
         claims += gross;
         addB(x.at, gross);
       } else if (x.mint && x.own_delta !== null && ["create", "buy", "sell"].includes(x.kind)) {
-        rent += (tradeNet.get(x.signature) ?? 0) - x.fee - x.own_delta;
+        // la propina sale de la wallet (está en own_delta): no es rent
+        rent += (tradeNet.get(x.signature) ?? 0) - x.fee - x.tip - x.own_delta;
       }
     }
 
@@ -220,7 +224,6 @@ export class Pnl {
     });
 
     const realized = [...pos.values()].reduce((a, p) => a + p.realizedP, 0);
-    const jito = 0; // REQ-DASH-001: las propinas Jito se sumarán cuando los envíos las lleven
     const pnl = realized - networkFees - jito + claims;
 
     // Serie: intervalos sin huecos desde el inicio del período (o el primer movimiento en «Todo»)

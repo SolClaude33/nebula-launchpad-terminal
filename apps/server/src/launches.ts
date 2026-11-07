@@ -61,11 +61,16 @@ export const SCHEDULE_CANCEL_CUTOFF_MS = 10_000;
 const SCHEDULE_MAX_LEAD_MS = 30 * 86_400_000;
 /** REVIEW-F1 P1-2: pasado este retraso (app cerrada o suspendida, RPC caído) no se lanza sin confirmar. */
 export const SCHEDULE_GRACE_MS = 2 * 60_000;
-type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; units?: number; action?: "create-alt" };
+/** `note`: dato informativo que no bloquea (p. ej. la propina de Jito de la creación). */
+type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; note?: string; units?: number; action?: "create-alt" };
 type Stored = LaunchConfig & { uri: string; preflight?: { ok: boolean; checks: Check[]; at: number } };
 
 const ATA_BUFFER = 3_000_000n; // cuenta de token (Token-2022) + margen
-const fp = (c: LaunchConfig, mint: string) => createHash("sha256").update(JSON.stringify({ ...c, draftId: undefined }) + mint).digest("hex");
+/**
+ * Huella del dry-run: configuración + mint + la propina de Jito vigente. Si Nicol activa Jito o cambia la propina tras
+ * un dry-run en verde, el lanzamiento exige volver a simular (nunca se envían costes que no se vieron).
+ */
+const fp = (c: LaunchConfig, mint: string, tipLamports: bigint) => createHash("sha256").update(JSON.stringify({ ...c, draftId: undefined }) + mint + (tipLamports > 0n ? `|jito:${tipLamports}` : "")).digest("hex");
 
 export class Launches {
   private running = new Set<string>();
@@ -213,18 +218,29 @@ export class Launches {
     }
     const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: meta.uri, creator: dev.address, mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
     const sim = alt.ready ? await chain.sender.send(tx, { idempotencyKey: `launch:${cfg.draftId}:preflight:${Date.now()}`, simulateOnly: true }) : { status: "failed" as const, code: "SIMULATION_FAILED" as const, message: "Se simulará cuando exista la tabla de direcciones." };
+    // F2 · bloque 5: la propina de Jito va dentro de la creación si cabe en 1.232 bytes; si no, la creación sale sin
+    // propina y solo por el RPC (nunca se parte del dev buy). La creación inicializa la curva, así que nadie puede
+    // operar antes que el dev buy: sin Jito solo se pierde latencia, no protección.
+    const wantTip = this.chain.tipFor("create");
+    const tipNote =
+      wantTip === 0n || sim.status !== "simulated"
+        ? undefined
+        : (sim.tipLamports ?? 0n) > 0n
+          ? `Lleva la propina de Jito (${(Number(sim.tipLamports) / 1e9).toLocaleString("es-ES", { maximumFractionDigits: 9 })} SOL) y sale también por el Block Engine.`
+          : "La propina de Jito no cabe en esta transacción (1.232 bytes): la creación sale sin propina y solo por el RPC. Las compras sí la llevan.";
     checks.push(
       sim.status === "simulated"
-        ? { label: "Crear token + dev buy (una sola transacción)", kind: "simulated", ok: true, units: sim.unitsConsumed }
+        ? { label: "Crear token + dev buy (una sola transacción)", kind: "simulated", ok: true, units: sim.unitsConsumed, ...(tipNote ? { note: tipNote } : {}) }
         : { label: "Crear token + dev buy (una sola transacción)", kind: "simulated", ok: false, reason: sim.status === "failed" || sim.status === "pending" ? sim.message : "La simulación no devolvió resultado" },
     );
     if (holders.length) {
       const bal = await chain.reader.balances(holders.map((h) => h.w.address));
       const fee = txFee(1, 400_000, this.priority());
+      const tip = this.chain.tipFor("buy");
       for (const h of holders) {
-        const need = BigInt(h.lamports) + fee + ATA_BUFFER;
+        const need = BigInt(h.lamports) + fee + tip + ATA_BUFFER;
         const have = bal.get(h.w.address) ?? 0n;
-        checks.push(have >= need ? { label: `Compra · ${h.w.label}`, kind: "checked", ok: true } : { label: `Compra · ${h.w.label}`, kind: "checked", ok: false, reason: `Saldo insuficiente: tiene ${(Number(have) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (compra + fees + cuenta de token)` });
+        checks.push(have >= need ? { label: `Compra · ${h.w.label}`, kind: "checked", ok: true } : { label: `Compra · ${h.w.label}`, kind: "checked", ok: false, reason: `Saldo insuficiente: tiene ${(Number(have) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (compra + fees${tip ? " + propina Jito" : ""} + cuenta de token)` });
       }
     }
     const ok = checks.every((c) => c.ok);
@@ -237,7 +253,7 @@ export class Launches {
            scheduled_at = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.scheduled_at ELSE NULL END,
            schedule_state = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.schedule_state ELSE NULL END`,
       )
-      .run(cfg.draftId, JSON.stringify(stored), ok ? fp(cfg, mint) : null, mint, now, now);
+      .run(cfg.draftId, JSON.stringify(stored), ok ? fp(cfg, mint, this.chain.tipFor("create")) : null, mint, now, now);
     return this.view(cfg.draftId);
   }
 
@@ -248,7 +264,7 @@ export class Launches {
     if (!r) throw Object.assign(new Error("Primero haz el dry-run."), { statusCode: 400 });
     if (r.status !== "PREPARED") return this.view(id);
     const cfg = JSON.parse(r.config) as Stored;
-    if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint)) throw Object.assign(new Error("El dry-run no está en verde para esta configuración. Vuelve a simular."), { statusCode: 409 });
+    if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint, this.chain.tipFor("create"))) throw Object.assign(new Error("El dry-run no está en verde para esta configuración (o cambió la propina de Jito). Vuelve a simular."), { statusCode: 409 });
     assertUriForProfile(this.profile, cfg.uri);
     const db = this.db();
     db.transaction(() => {
@@ -310,7 +326,7 @@ export class Launches {
     if (!r) throw Object.assign(new Error("Primero haz el dry-run."), { statusCode: 400 });
     if (r.status !== "PREPARED") throw Object.assign(new Error("Este lanzamiento ya no se puede programar."), { statusCode: 409 });
     const cfg = JSON.parse(r.config) as Stored;
-    if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint)) throw Object.assign(new Error("El dry-run no está en verde para esta configuración. Vuelve a simular."), { statusCode: 409 });
+    if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint, this.chain.tipFor("create"))) throw Object.assign(new Error("El dry-run no está en verde para esta configuración (o cambió la propina de Jito). Vuelve a simular."), { statusCode: 409 });
     const now = this.clock();
     if (at < now + SCHEDULE_MIN_LEAD_MS) throw Object.assign(new Error("Programa con al menos 20 s de margen (se puede cancelar hasta 10 s antes)."), { statusCode: 400 });
     if (at > now + SCHEDULE_MAX_LEAD_MS) throw Object.assign(new Error("Como mucho, 30 días vista."), { statusCode: 400 });
@@ -397,6 +413,11 @@ export class Launches {
       if (!v.preflight?.ok) {
         const why = (v.preflight?.checks ?? []).filter((c) => !c.ok).map((c) => `${c.label}: ${c.reason ?? "falló"}`).join(" · ");
         return this.failSchedule(id, cfg.symbol, `El dry-run a la hora programada no está en verde: ${why}`, r.scheduled_at);
+      }
+      // F2 · bloque 5: misma configuración y mint, pero otra huella = cambió la propina de Jito desde que se programó.
+      // No se lanza con costes que no se vieron.
+      if (r.preflight_fp && this.row(id)?.preflight_fp !== r.preflight_fp) {
+        return this.failSchedule(id, cfg.symbol, "La propina de Jito cambió en Ajustes desde que se programó. Revisa los costes, vuelve a simular y programa de nuevo.", r.scheduled_at);
       }
       this.db().prepare("UPDATE launch SET schedule_state = 'FIRED', updated_at = ? WHERE id = ?").run(this.clock(), id);
       logActivity(this.db(), "launch.schedule.fire", `Lanzamiento programado de $${cfg.symbol}${confirmed ? " (confirmado tras la pausa)" : ""}`);

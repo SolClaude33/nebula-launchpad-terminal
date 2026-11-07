@@ -4,7 +4,7 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
 
 ## Estructura
 - `apps/server`: Fastify en `127.0.0.1:4318` con SQLite (`better-sqlite3`, migraciones en `src/db.ts`). `src/signer.ts` es el único módulo con la bóveda abierta: Argon2id → KEK que envuelve una DEK, y AES-256-GCM con AAD por fila. Firma los bytes del mensaje, así que las claves nunca entran en web3.js.
-- `apps/server/src/chain`: el contrato del adaptador (`types.ts`), `pumpfun.ts` (SDK oficial, curva y PumpSwap; web3.js v1 en lugar de `@solana/kit` porque el SDK lo exige), `events.ts` (`parseEvents` por discriminador), `mock.ts`, `sender.ts` (registra cada envío en la tabla `tx` antes de emitirlo; `simulateOnly` + `watch` da el saldo posterior) y `rpc.ts` (failover).
+- `apps/server/src/chain`: el contrato del adaptador (`types.ts`), `pumpfun.ts` (SDK oficial, curva y PumpSwap; web3.js v1 en lugar de `@solana/kit` porque el SDK lo exige), `events.ts` (`parseEvents` por discriminador), `mock.ts`, `sender.ts` (registra cada envío en la tabla `tx` antes de emitirlo; `simulateOnly` + `watch` da el saldo posterior), `jito.ts` (propina opcional dentro de la misma tx de compra, venta y creación, y envío también por el Block Engine; simulado en `test`) y `rpc.ts` (failover).
 - `apps/server/src/live.ts` (indexer por mint: WS de logs + sondeo de firmas, SQLite con cursor), `trading.ts` (órdenes multi-wallet, `trade:<orden>:<wallet>`), `rewards.ts` (vista previa simulada, reclamo y verificación en cadena) y `automations.ts` (motor de DCA y límites sobre la tabla `task`; cada ejecución es una orden hija `auto-<tarea>-<generación>-<n>` de `trading.ts`; reloj inyectable con `buildApp({ clock })`).
 - `apps/web`: Next.js 16 con Tailwind v4.
   - `/api/*` se reescribe hacia la API.
@@ -53,5 +53,6 @@ Nébula es una herramienta **privada, local y de un solo operador** para lanzar 
   - El Launch Guard solo omite compras propias: nunca vende.
   - Modos: Quick (compras seguidas tras crear), **Pro** (igual, con una espera fija de 0–10.000 ms (10 s) por wallet (`delayMs`), contada desde que SALE la compra anterior (la primera, desde la creación confirmada); las confirmaciones corren a la vez y no frenan la siguiente; sin aleatoriedad; pausar o bloquear corta la espera y al reanudar empieza de cero) y Manual (solo dev). La vista de cada compra da `sentAfterMs` (envío real desde la creación).
 - **Descargas de terceros (clonar):** solo https y solo IP pública, con límites de tamaño.
+- **Jito:** solo como vía de envío (propina en la misma tx, cuenta de propina fuera de la tabla de direcciones, elegida sin azar). Nada de bundles ni de tx de propina aparte. Si la propina no cabe en la creación (1.232 bytes), esa tx sale sin propina por el RPC; nunca se parte del dev buy.
 - **Exclusiones:** no se implementa nada que haga pasar actividad coordinada por orgánica, como volumen o wash trading, MEV de bloque 0, evasión de bubble maps, wallets envejecidas, financiación vía mixer o saltos por CEX, o el «Nuke» del Sniper Guard (§2.3 de la spec).
 - **Publicación:** nada de push, remoto ni despliegue hasta que Nicol lo pida.

@@ -121,9 +121,10 @@ export type ChainEvent = TradeEvent | { kind: "complete"; index: number; mint: s
 export type SendErrorCode = "MIGRATING" | "SLIPPAGE" | "INSUFFICIENT_FUNDS" | "RENT" | "BLOCKHASH_EXPIRED" | "RPC_DOWN" | "BUNDLE_REJECTED" | "CURVE_COMPLETE" | "SIMULATION_FAILED" | "UNKNOWN";
 
 export type SendResult =
-  | { status: "confirmed"; signature: string; unitsConsumed?: number; feeLamports?: bigint; reused?: boolean }
+  /** `tipLamports`: propina de Jito que lleva la tx (0 si Jito está apagado o si no cabía en la creación) */
+  | { status: "confirmed"; signature: string; unitsConsumed?: number; feeLamports?: bigint; reused?: boolean; tipLamports?: bigint }
   /** `postLamports`: saldo de `watch` tras la simulación (para mostrar el neto exacto) */
-  | { status: "simulated"; unitsConsumed?: number; logs?: string[]; postLamports?: bigint }
+  | { status: "simulated"; unitsConsumed?: number; logs?: string[]; postLamports?: bigint; tipLamports?: bigint }
   /** no se sabe si aterrizó (o no se pudo ni enviar por un RPC caído): reintentar con la misma key es seguro */
   | { status: "pending"; signature?: string; message: string }
   | { status: "failed"; signature?: string; code: SendErrorCode; message: string };

@@ -89,6 +89,8 @@ export class Trading {
     if (tradable) for (const w of wallets) extra.set(w.address, await chain.adapter.tradeAccountsRent({ mint: input.mint, user: w.address, side: input.side }));
     const fee = this.fee();
     const network = 5_000n;
+    // F2 · bloque 5: propina de Jito por tx (0 sin Jito); el sender pone exactamente esta
+    const tip = this.chain.tipFor(input.side);
     // En PumpSwap el coste fijo de la primera compra (cuentas nuevas, ampliación del pool tras migrar…)
     // depende del estado del programa: se mide simulando una compra mínima y leyendo el saldo posterior.
     // La WSOL temporal se cierra en la misma tx, así que su rent no aparece en la diferencia y se suma aparte.
@@ -103,7 +105,8 @@ export class Trading {
       }
     }
     // fee incluida en lo medido; si no se pudo medir, la estimación de cuentas nuevas
-    const reserveOf = (w: W) => (measured.has(w.address) ? measured.get(w.address)! : fee + (extra.get(w.address) ?? 0n)) + MAX_BUFFER;
+    // (la simulación de la compra mínima ya lleva la propina)
+    const reserveOf = (w: W) => (measured.has(w.address) ? measured.get(w.address)! : fee + tip + (extra.get(w.address) ?? 0n)) + MAX_BUFFER;
     // MAX: lo que cabe en la wallet más justa tras reservar fees, rent de cuentas nuevas y un margen;
     // en PumpSwap, además, el margen de slippage que se envuelve en WSOL durante la tx
     const toMax = (room: bigint) => (info.venue === "pumpswap" ? (room * 10_000n) / (10_000n + bps(input.slippagePct)) - 1n : room);
@@ -118,13 +121,13 @@ export class Trading {
       let reason: string | undefined;
       if (input.side === "buy") {
         amount = BigInt(input.lamportsEach ?? "0");
-        const need = heldForBuy(amount, info.venue, input.slippagePct) + fee + (extra.get(w.address) ?? 0n);
+        const need = heldForBuy(amount, info.venue, input.slippagePct) + fee + tip + (extra.get(w.address) ?? 0n);
         if (amount <= 0n) reason = "Monto 0.";
-        else if (s < need) reason = `Saldo insuficiente: tiene ${(Number(s) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (monto + fees + rent).`;
+        else if (s < need) reason = `Saldo insuficiente: tiene ${(Number(s) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (monto + fees${tip ? " + propina Jito" : ""} + rent).`;
       } else {
         amount = (t * BigInt(Math.round((input.pct ?? 100) * 100))) / 10_000n;
         if (amount <= 0n) reason = "Sin tokens de este token.";
-        else if (s < fee + (extra.get(w.address) ?? 0n)) reason = "Sin SOL para la fee de red y el rent de la operación.";
+        else if (s < fee + tip + (extra.get(w.address) ?? 0n)) reason = tip ? "Sin SOL para la fee de red, la propina de Jito y el rent de la operación." : "Sin SOL para la fee de red y el rent de la operación.";
       }
       let expectedOut = 0n;
       let limit = 0n;
@@ -149,12 +152,14 @@ export class Trading {
         priority: ((fee - network) * n).toString(),
         rent: rentTotal.toString(),
         padFee: padFee.toString(),
+        jito: (tip * n).toString(),
         // compra: lo que sale de las wallets; venta: solo el coste de la operación
-        total: (input.side === "buy" ? volume + fee * n + rentTotal : fee * n).toString(),
+        total: (input.side === "buy" ? volume + (fee + tip) * n + rentTotal : (fee + tip) * n).toString(),
       },
       maxBuyPerWallet: (maxBuy > 0n ? maxBuy : 0n).toString(),
       rentPerAccount: rent.toString(),
       feePerTx: fee.toString(),
+      tipPerTx: tip.toString(),
     };
   }
 
@@ -266,7 +271,7 @@ export class Trading {
         // Comprobación previa solo si aún no se envió nada con esta key (tras un pending, el saldo ya bajó)
         if (!sent) {
           const venue = (await chain.adapter.tokenInfo(mint)).venue;
-          const need = heldForBuy(amount, venue, cfg.slippagePct) + this.fee() + (await chain.adapter.tradeAccountsRent({ mint, user: w.address, side: "buy" }));
+          const need = heldForBuy(amount, venue, cfg.slippagePct) + this.fee() + this.chain.tipFor("buy") + (await chain.adapter.tradeAccountsRent({ mint, user: w.address, side: "buy" }));
           if (s < need) return void upd.run("SKIPPED", null, null, null, `Saldo insuficiente: tiene ${(Number(s) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (monto + fees + rent).`, id, it.ord), null;
         }
       } else {
@@ -275,7 +280,7 @@ export class Trading {
         amount = it.amount ? BigInt(it.amount) : cfg.tokensEach ? (BigInt(cfg.tokensEach) < tok ? BigInt(cfg.tokensEach) : tok) : (tok * BigInt(Math.round((cfg.pct ?? 100) * 100))) / 10_000n;
         if (!it.amount) {
           if (amount <= 0n) return void upd.run("SKIPPED", null, null, null, "Sin tokens de este token.", id, it.ord), null;
-          if (s < this.fee() + (await chain.adapter.tradeAccountsRent({ mint, user: w.address, side: "sell" }))) return void upd.run("SKIPPED", null, null, null, "Sin SOL para la fee de red y el rent de la operación.", id, it.ord), null;
+          if (s < this.fee() + this.chain.tipFor("sell") + (await chain.adapter.tradeAccountsRent({ mint, user: w.address, side: "sell" }))) return void upd.run("SKIPPED", null, null, null, this.chain.tipFor("sell") ? "Sin SOL para la fee de red, la propina de Jito y el rent de la operación." : "Sin SOL para la fee de red y el rent de la operación.", id, it.ord), null;
           this.db().prepare("UPDATE trade_order_item SET amount = ? WHERE order_id = ? AND ord = ?").run(amount.toString(), id, it.ord);
         }
       }
