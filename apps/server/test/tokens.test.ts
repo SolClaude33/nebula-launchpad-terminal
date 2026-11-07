@@ -2,7 +2,8 @@
 // dirección externa con reconfirmación) y quemar supply confirmando con el símbolo.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { createMint, getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
 import { buildApp } from "../src/app";
 import { HOST, ORIGIN, PW, tmpDir } from "./helpers";
 
@@ -116,5 +117,24 @@ describe.each(backends)("Enviar y quemar tokens · %s", (backend) => {
     // repetir (mismo id) no quema dos veces: la wallet ya no tiene tokens y se omite
     const again = (await call("POST", "/api/tokens/burn", { ...body, confirmSymbol: "BURN" })).json;
     expect(again.items[0].status).toBe("SKIPPED");
+  }, 120_000);
+
+  // P3-10 (REVIEW-F1): transferChecked y burnChecked con los decimales del mint, no fijos a 6
+  it.runIf(backend === "surfpool")("un mint con 9 decimales se envía y se quema con sus decimales", async () => {
+    const conn = new Connection("http://127.0.0.1:8899", "confirmed");
+    const auth = Keypair.generate();
+    await conn.confirmTransaction(await conn.requestAirdrop(auth.publicKey, 1_000_000_000), "confirmed");
+    const m9 = await createMint(conn, auth, auth.publicKey, null, 9);
+    const ata = await getOrCreateAssociatedTokenAccount(conn, auth, m9, new PublicKey(dev.address));
+    await mintTo(conn, auth, m9, ata.address, auth, 5_000_000_000n);
+    const chain = ctx.chain.get();
+    const t = await chain.adapter.buildTokenTransferTx({ mint: m9.toBase58(), from: dev.address, to: holder.address, tokens: 2_000_000_000n });
+    const ixs = (t.payload as { instructions: { data: Buffer }[] }).instructions;
+    expect(ixs.at(-1)!.data[9]).toBe(9);
+    expect((await chain.sender.send(t, { idempotencyKey: `t9-${randomUUID()}` })).status).toBe("confirmed");
+    expect(await chain.reader.tokenBalance(m9.toBase58(), holder.address)).toBe(2_000_000_000n);
+    const b = await chain.adapter.buildBurnTx({ mint: m9.toBase58(), owner: dev.address, tokens: 1_000_000_000n });
+    expect((await chain.sender.send(b, { idempotencyKey: `b9-${randomUUID()}` })).status).toBe("confirmed");
+    expect(await chain.reader.tokenBalance(m9.toBase58(), dev.address)).toBe(2_000_000_000n);
   }, 120_000);
 });

@@ -2,7 +2,7 @@
 
 - **Fecha:** 2026-11-07.
 - **Alcance:** `git diff 99a2d0a..HEAD` (bloques 1–11; 24 archivos del servidor, más web y E2E).
-- **Modo:** la revisión se hizo en solo lectura. **Los 5 P1 y los 3 P2 están resueltos el 2026-11-07**, con un commit y un test por arreglo (marcados ✅ abajo). De los P3 se resolvieron el mismo día el 9, el 11, el 12 y el 14; el 10 (decimales) y el 13 (pasarela IPFS) siguen abiertos como mejoras.
+- **Modo:** la revisión se hizo en solo lectura. **Los 5 P1 y los 3 P2 están resueltos el 2026-11-07**, con un commit y un test por arreglo (marcados ✅ abajo). De los P3 se resolvieron el mismo día el 9, el 11, el 12 y el 14; el 10 (decimales) se resolvió después y el 13 (pasarela IPFS) se deja como ajuste, sin código.
 - **Foco:** fallos que puedan perder dinero o filtrar secretos con SOL real, en el contexto de la prueba de humo con **Helius Free**:
   - 10 peticiones/s;
   - `sendTransaction` a 1/s;
@@ -148,7 +148,9 @@ Las líneas son las de `HEAD` (`c29c054`).
 > **Resuelto en `26aaf16`** (2026-11-07), con un test que reproduce el fallo. El destino PDA se rechaza antes de gastar la reconfirmación; el mismo token sirve para el envío correcto.
 `apps/server/src/token-ops.ts:102-103`. El token de reconfirmación se consume antes de rechazar un destino PDA. No hay riesgo de fondos: solo obliga a reconfirmar otra vez. Conviene mover la comprobación de PDA antes de consumirlo.
 
-### 10. Los decimales del token van fijos a 6
+### ✅ 10. Los decimales del token van fijos a 6
+
+> **Resuelto** (2026-11-07). Programa y decimales se leen del mint (offset 44) y se cachean; test en Surfpool con un mint de 9 decimales (enviar y quemar).
 `apps/server/src/chain/pumpfun.ts:377,386`. `transferChecked` y `burnChecked` usan siempre 6 decimales. Con un token de otro launchpad (otros decimales), la instrucción falla de forma segura: no se envía nada mal. Conviene leer los decimales del mint.
 
 ### ✅ 11. La clave de «Probar» de Pinata no pasa por la redacción
@@ -162,6 +164,8 @@ Las líneas son las de `HEAD` (`c29c054`).
 `apps/server/src/diagnostics.ts`. Redacta las claves de 64 bytes (base58 y arrays), pero no las semillas de 32 bytes, que no se distinguen de una dirección. Hoy nunca se registran semillas, así que no hay fuga conocida.
 
 ### 13. La pasarela ipfs.io limita las peticiones
+
+> **Se deja como está, sin código** (2026-11-07). La pasarela ya es un ajuste. El 429 era para peticiones automáticas desde esta IP; Pump.fun y los exploradores leen el metadata por su cuenta ($BOB se vio bien). Cambiar el valor por defecto tiene dos costes: la URI queda en cadena para siempre y una pasarela dedicada (`<sub>.mypinata.cloud/ipfs/`) es más larga, lo que resta bytes a la creación con dev buy (922–988 de 1.232) y puede dejar la propina de Jito fuera de la tx. Si Nicol la quiere, basta con cambiarla en Ajustes.
 `apps/server/src/settings.ts` (`ipfsGateway` por defecto). El 2026-11-06, ipfs.io devolvía 429 desde esta IP, y la URI en cadena no se puede cambiar. Coincide con el formato de los tokens de Pump.fun, pero conviene valorar una pasarela dedicada de Pinata (`<sub>.mypinata.cloud/ipfs/`), que sirve sin límite lo que fija la propia cuenta.
 
 ### ✅ 14. Las salidas por `stderr` no pasan por `scrub`

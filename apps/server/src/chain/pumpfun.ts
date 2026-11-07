@@ -81,10 +81,18 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
     return (cachedGlobal = { at: Date.now(), global, feeConfig });
   };
   /** Programa de token del mint: los coins v2 son Token-2022, pero se lee del propietario de la cuenta. */
-  const tokenProgramOf = async (mint: PublicKey) => {
-    const info = await pool.run((c) => c.getAccountInfo(mint));
-    if (!info) throw new Error("El mint no existe en la cadena");
-    return info.owner;
+  const tokenProgramOf = async (mint: PublicKey) => (await mintMetaOf(mint)).program;
+  /** P3-10 (REVIEW-F1): programa y decimales leídos del mint (offset 44 en Token y Token-2022); no cambian */
+  const mintMetas = new Map<string, { program: PublicKey; decimals: number }>();
+  const mintMetaOf = async (mint: PublicKey) => {
+    let meta = mintMetas.get(mint.toBase58());
+    if (!meta) {
+      const info = await pool.run((c) => c.getAccountInfo(mint));
+      if (!info) throw new Error("El mint no existe en la cadena");
+      if (info.data.length < 45) throw new Error("La cuenta no es un mint de token");
+      mintMetas.set(mint.toBase58(), (meta = { program: info.owner, decimals: info.data[44] }));
+    }
+    return meta;
   };
 
   const describe = (global: Global, before: BondingCurve, after: { vQuote: bigint; vTok: bigint; realTok: bigint }, side: "buy" | "sell", amountIn: bigint, amountOut: bigint, limit: bigint, slippagePct: number): CurveQuote => {
@@ -378,7 +386,7 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
     // REQ-LIVE-005: transferencia con decimales comprobados; la cuenta de destino se crea idempotente
     buildTokenTransferTx: async ({ mint, from, to, tokens }) => {
       const m = new PublicKey(mint);
-      const tp = await tokenProgramOf(m);
+      const { program: tp, decimals } = await mintMetaOf(m);
       const f = new PublicKey(from);
       const t = new PublicKey(to);
       const src = getAssociatedTokenAddressSync(m, f, true, tp);
@@ -387,16 +395,16 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
       const rentLamports = exists ? 0n : await rentFor(await ataLenOf(m));
       const instructions = [
         ...(exists ? [] : [createAssociatedTokenAccountIdempotentInstruction(f, dst, t, m, tp)]),
-        createTransferCheckedInstruction(src, m, dst, f, tokens, 6, [], tp),
+        createTransferCheckedInstruction(src, m, dst, f, tokens, decimals, [], tp),
       ];
       return { kind: "token-transfer", payer: from, signers: [from], mint, cuLimit: 60_000, payload: { instructions } satisfies PumpPayload, rentLamports };
     },
 
     buildBurnTx: async ({ mint, owner, tokens }) => {
       const m = new PublicKey(mint);
-      const tp = await tokenProgramOf(m);
+      const { program: tp, decimals } = await mintMetaOf(m);
       const o = new PublicKey(owner);
-      const ix = createBurnCheckedInstruction(getAssociatedTokenAddressSync(m, o, true, tp), m, o, tokens, 6, [], tp);
+      const ix = createBurnCheckedInstruction(getAssociatedTokenAddressSync(m, o, true, tp), m, o, tokens, decimals, [], tp);
       return { kind: "burn", payer: owner, signers: [owner], mint, cuLimit: 30_000, payload: { instructions: [ix] } satisfies PumpPayload };
     },
 
