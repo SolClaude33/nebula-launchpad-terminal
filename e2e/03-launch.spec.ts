@@ -94,7 +94,7 @@ test("E2E-09 · programado a su hora: se cierra y abre la app, se desbloquea y s
 
   await restartApi(); // reinicio antes de la hora
   await unlockUi(page, "/launches");
-  await expect(page.getByRole("listitem").filter({ hasText: "$CLOCK" }).getByText("Programado")).toBeVisible();
+  await expect(page.getByRole("listitem").filter({ hasText: "$CLOCK" }).getByText("Programado", { exact: true })).toBeVisible();
   // cancelar el otro desde su borrador en el asistente
   await page.goto(`/launch/new?draft=${other}`);
   await step(page, "Revisar y lanzar");
@@ -102,7 +102,7 @@ test("E2E-09 · programado a su hora: se cierra y abre la app, se desbloquea y s
   await expect(page.getByRole("button", { name: "Programar para más tarde" })).toBeVisible();
   // a su hora se lanza solo (sin tocar nada)
   await page.goto("/launches");
-  await expect(page.getByRole("listitem").filter({ hasText: "$CLOCK" }).getByText("Lanzado")).toBeVisible({ timeout: Math.max(60_000, at.getTime() - Date.now() + 120_000) });
+  await expect(page.getByRole("listitem").filter({ hasText: "$CLOCK" }).getByText("Lanzado", { exact: true })).toBeVisible({ timeout: Math.max(60_000, at.getTime() - Date.now() + 120_000) });
   await expect(page.getByRole("listitem").filter({ hasText: "$NOPE" })).toHaveCount(0);
   const drafts = (await json(await unlockApi(), "GET", "/drafts")).items.map((d: { id: string }) => d.id);
   expect(drafts).toContain(other);
