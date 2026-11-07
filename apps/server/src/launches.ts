@@ -244,8 +244,11 @@ export class Launches {
     if (new Set(holders.map((h) => h.walletId)).size !== holders.length) throw Object.assign(new Error("Hay wallets repetidas en el plan."), { statusCode: 400 });
     if (holders.some((h) => h.walletId === dev.id)) throw Object.assign(new Error("La wallet dev no puede estar también como holder."), { statusCode: 400 });
 
-    // Mint: se genera una sola vez por borrador y se sella antes de enviar nada (REQ-LAUNCH-006)
-    const mint = existing?.mint ?? (await this.vault.createMintKey());
+    // Mint: se genera una sola vez por borrador y se sella antes de enviar nada (REQ-LAUNCH-006). Un mint vanity
+    // ligado al borrador (vanity.ts) manda mientras la creación no se haya enviado nunca.
+    const vanity = (JSON.parse(kvGet(this.db(), `vanityMint:${cfg.draftId}`) ?? "null") as { address: string } | null)?.address ?? null;
+    const neverSent = !this.db().prepare("SELECT 1 FROM tx WHERE idempotency_key = ?").get(`launch:${cfg.draftId}:create`) && (!existing || existing.status === "PREPARED");
+    const mint = vanity && neverSent ? vanity : (existing?.mint ?? (await this.vault.createMintKey()));
     // URI pública de la imagen ya subida: local en pruebas, pasarela + CID en mainnet
     const image = this.store.mediaUri(cfg.imageCid);
     const meta = await this.store.putJson({ name: cfg.name, symbol: cfg.symbol, description: cfg.description, image, showName: true, createdOn: "nebula", twitter: cfg.links.x || undefined, telegram: cfg.links.telegram || undefined, website: cfg.links.web || undefined });
@@ -255,7 +258,7 @@ export class Launches {
     // create_v2 + dev buy con una URI normal no cabe en 1.232 bytes sin la tabla de direcciones
     const alt = await chain.launchAlt.status();
     if (!alt.ready) {
-      checks.push({ label: "Tabla de direcciones de Nébula (una sola vez)", kind: "setup", ok: false, action: "create-alt", reason: `Falta crearla. Cuesta ~${(Number(alt.rentLamports) / 1e9).toFixed(4)} SOL de rent y la paga la wallet dev; solo se recuperaría cerrando la tabla (aún no implementado).` });
+      checks.push({ label: "Tabla de direcciones de Nébula (una sola vez)", kind: "setup", ok: false, action: "create-alt", reason: `Falta crearla. Cuesta ~${(Number(alt.rentLamports) / 1e9).toFixed(4)} SOL de rent y la paga la wallet dev; se recupera cerrándola en Ajustes cuando ya no vayas a lanzar más.` });
     }
     const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: meta.uri, creator: dev.address, mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
     const sim = alt.ready ? await chain.sender.send(tx, { idempotencyKey: `launch:${cfg.draftId}:preflight:${Date.now()}`, simulateOnly: true }) : { status: "failed" as const, code: "SIMULATION_FAILED" as const, message: "Se simulará cuando exista la tabla de direcciones." };
@@ -291,6 +294,7 @@ export class Launches {
       .prepare(
         `INSERT INTO launch(id, status, config, preflight_fp, mint, created_at, updated_at) VALUES(?, 'PREPARED', ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET status = 'PREPARED', config = excluded.config, preflight_fp = excluded.preflight_fp, error = NULL, updated_at = excluded.updated_at,
+           mint = CASE WHEN launch.status = 'PREPARED' AND launch.create_sig IS NULL THEN excluded.mint ELSE launch.mint END,
            scheduled_at = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.scheduled_at ELSE NULL END,
            schedule_state = CASE WHEN launch.preflight_fp IS excluded.preflight_fp THEN launch.schedule_state ELSE NULL END`,
       )

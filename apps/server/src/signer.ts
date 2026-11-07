@@ -259,6 +259,26 @@ export class Vault {
     return address;
   }
 
+  /** REQ-LAUNCH-006: sella una clave de mint vanity (64 bytes: semilla + pública, comprobada). Limpia `sk`. */
+  async importMintKey(sk: Buffer) {
+    await sodiumReady();
+    try {
+      if (sk.length !== 64) throw Object.assign(new Error("La clave del mint debe tener 64 bytes."), { statusCode: 400 });
+      const kp = sodium.crypto_sign_seed_keypair(sk.subarray(0, 32));
+      if (!Buffer.from(kp.publicKey).equals(sk.subarray(32))) throw Object.assign(new Error("La clave pública no corresponde a la privada."), { statusCode: 400 });
+      const address = b58encode(kp.publicKey);
+      const have = this.db.prepare("SELECT 1 FROM mint_key WHERE address = ?").get(address);
+      if (!have) {
+        const id = randomUUID();
+        this.db.prepare("INSERT INTO mint_key(id, address, encrypted_key, created_at) VALUES(?, ?, ?, ?)").run(id, address, seal(this.requireDek(), `mint:${id}`, Buffer.from(kp.privateKey)), Date.now());
+      }
+      kp.privateKey.fill(0);
+      return address;
+    } finally {
+      sk.fill(0);
+    }
+  }
+
   /**
    * Firma los bytes de un mensaje de transacción con la clave de `address` (wallet propia o mint).
    * Solo lo llama el tx-sender; ninguna ruta de la API firma bytes arbitrarios.

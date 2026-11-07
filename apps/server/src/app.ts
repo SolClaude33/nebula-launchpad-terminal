@@ -24,6 +24,7 @@ import { Live } from "./live";
 import { Trading } from "./trading";
 import { Rewards } from "./rewards";
 import { Reclaim } from "./reclaim";
+import { Vanity } from "./vanity";
 import { liveRoutes } from "./routes/live";
 import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
@@ -55,6 +56,7 @@ export type Ctx = {
   trading: Trading;
   rewards: Rewards;
   reclaim: Reclaim;
+  vanity: Vanity;
   automations: Automations;
   pnl: Pnl;
   drafts: Drafts;
@@ -76,6 +78,8 @@ export const REDACT_PATHS = [
   "*.newPassword",
   "secretKey",
   "*.secretKey",
+  "secret",
+  "*.secret",
   "keys",
   "*.keys",
   "ipfsKey",
@@ -112,6 +116,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let trading: Trading | null = null;
   let rewards: Rewards | null = null;
   let reclaim: Reclaim | null = null;
+  let vanity: Vanity | null = null;
   let automations: Automations | null = null;
   let pnl: Pnl | null = null;
   let tokenOps: TokenOps | null = null;
@@ -143,6 +148,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get reclaim() {
       return reclaim!;
+    },
+    get vanity() {
+      return vanity!;
     },
     get automations() {
       return automations!;
@@ -215,6 +223,8 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   reclaim = new Reclaim(getDb, chainManager, vault, (m) => logger.info(m));
   reclaim.pauseAllRunning();
   vault.onLock(() => reclaim?.pauseAllRunning());
+  vanity = new Vanity(getDb, vault, chainManager, (m) => logger.info(m));
+  vault.onLock(() => vanity?.cancelAll());
   // REQ-AUTO: el motor solo trabaja con la bóveda abierta; al bloquear, pauseRunningTasks deja lo RUNNING en PAUSED
   automations = new Automations(getDb, vault, trading, live, opts.clock ?? Date.now, (m) => logger.info(m));
   automations.start();

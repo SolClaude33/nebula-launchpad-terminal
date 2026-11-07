@@ -6,6 +6,7 @@ import { buysAfterCreate, fieldErrors, useDraft } from "@/lib/draft";
 import { fmtLamports } from "@/lib/chain";
 import { Field, RadioCard, SectionTitle, Suffix } from "./ui";
 import { useLaunchData } from "./use-launch-data";
+import { VanityMint } from "./vanity-mint";
 
 const PADS = [
   { id: "pumpfun", name: "Pump.fun", chain: "Solana", ready: true },
@@ -37,6 +38,8 @@ export function StepConfig() {
           ))}
         </div>
       </fieldset>
+
+      <VanityMint draftId={d.draftId} />
 
       <Field id="devWallet" label="Wallet dev" hint="Crea el token y hace el dev buy. Las comisiones de creador van a esta wallet." error={!d.devWalletId && loaded && candidates.length === 0 ? "No hay wallets: crea una con rol dev en Wallets." : undefined}>
         <div className="flex gap-2">

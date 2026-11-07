@@ -42,6 +42,17 @@ export const launchRoutes =
       const { payerWalletId } = z.object({ payerWalletId: z.string() }).parse(req.body);
       return ctx.launches.ensureAlt(payerWalletId);
     });
+    // REQ-LAUNCH-006: mint vanity del borrador (generar en local con hilos aparte, o importar la clave)
+    const Draft = z.object({ draftId: z.string().regex(/^[a-zA-Z0-9_-]{8,64}$/) });
+    app.get("/launches/:draftId/vanity", async (req) => ctx.vanity.status(Draft.parse(req.params).draftId));
+    app.post("/launches/:draftId/vanity/generate", async (req) => {
+      const b = z.object({ prefix: z.string().max(8).default(""), suffix: z.string().max(8).default(""), ci: z.boolean().default(false) }).parse(req.body);
+      return ctx.vanity.start(Draft.parse(req.params).draftId, b);
+    });
+    app.post("/launches/:draftId/vanity/cancel", async (req) => ctx.vanity.cancel(Draft.parse(req.params).draftId));
+    app.post("/launches/:draftId/vanity/import", async (req) => ctx.vanity.importKey(Draft.parse(req.params).draftId, z.object({ secret: z.string().min(32).max(1024) }).parse(req.body).secret));
+    app.post("/launches/:draftId/vanity/clear", async (req) => ctx.vanity.unbind(Draft.parse(req.params).draftId));
+
     // Recuperar el rent de la tabla de direcciones: desactivar y, ~512 slots después, cerrar
     app.get("/launches/alt", async () => ctx.launches.altInfo());
     app.post("/launches/alt/deactivate", async () => ctx.launches.deactivateAlt());
