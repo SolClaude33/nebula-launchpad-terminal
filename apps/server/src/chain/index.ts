@@ -100,11 +100,13 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
     },
     transactions: async (sigs) => {
       if (sigs.length === 0) return [];
-      // Lotes de 10 como máximo: un lote JSON-RPC cuenta como N peticiones para el proveedor (REVIEW-F1 P1-4)
+      // Lotes de 10 como máximo: un lote JSON-RPC cuenta como N peticiones para el proveedor (REVIEW-F1 P1-4).
+      // Versión 1: en mainnet muchas transacciones de Pump.fun ya son v1 (medido el 2026-11-07) y, pidiendo
+      // solo hasta v0, el RPC las rechaza y web3.js tira el lote entero.
       const txs: Awaited<ReturnType<import("@solana/web3.js").Connection["getTransactions"]>> = [];
       for (let i = 0; i < sigs.length; i += 10) {
         const part = sigs.slice(i, i + 10);
-        txs.push(...(await pool.run((c) => c.getTransactions(part, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }), { cost: part.length })));
+        txs.push(...(await pool.run((c) => c.getTransactions(part, { maxSupportedTransactionVersion: 1, commitment: "confirmed" }), { cost: part.length })));
       }
       const out: RawTx[] = [];
       txs.forEach((t, i) => {
