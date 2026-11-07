@@ -33,7 +33,10 @@ export const liveRoutes =
 
     // REQ-REW-001/002: comisiones de creador
     app.get("/rewards", async () => ctx.rewards.scan());
-    app.post("/rewards/preview", async (req) => ctx.rewards.preview(z.object({ walletIds: z.array(z.string()).min(1).max(200) }).parse(req.body).walletIds));
+    app.post("/rewards/preview", async (req) => {
+      const b = z.object({ walletIds: z.array(z.string()).min(1).max(200), fund: z.boolean().optional() }).parse(req.body);
+      return ctx.rewards.preview(b.walletIds, { fund: b.fund ?? false });
+    });
     app.post("/rewards/:id/execute", async (req) => ctx.rewards.execute(z.object({ id: z.string() }).parse(req.params).id));
     app.post("/rewards/:id/resume", async (req) => ctx.rewards.resume(z.object({ id: z.string() }).parse(req.params).id));
     app.get("/rewards/:id", async (req) => ctx.rewards.view(z.object({ id: z.string() }).parse(req.params).id));

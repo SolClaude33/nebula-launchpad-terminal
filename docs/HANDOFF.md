@@ -145,14 +145,24 @@ Nicol lanzó $BOB (mint `BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`, modo Pro
   - Jito sale también por el RPC, así que la protección frente a sándwiches es parcial. «Solo Jito» (`bundleOnly=true`) queda como decisión abierta en `docs/F2.md`.
   - Sin UUID de Jito, el Block Engine admite 1 envío/s por IP: en órdenes de varias wallets, las que no tengan turno salen solo por el RPC (con su propina igual).
 
+### Pendientes de F1/F2: financiar fees de reclamo (REQ-REW-003, 2026-11-07)
+
+- **Qué hace:** en `/rewards`, si alguna wallet con comisiones no tiene SOL para el reclamo, aparece «Recargar desde <funder> la fee…» (apagado por defecto). Con él, la vista previa (`POST /rewards/preview` con `fund: true`) calcula para cada una la recarga justa: fee del reclamo + rent que adelanta (`claimRent`) y, si está vacía, hasta el mínimo exento. La tx del SDK crea, pagando el creador, las cuentas WSOL que falten: la del vault de PumpSwap (de una PDA; su rent se queda allí y es coste, «cuentas nuevas») y la del creador (se cierra en la misma tx y el rent vuelve). El funder predeterminado tiene que acabar en 0 o por encima del mínimo exento; si no, esas wallets se omiten con el motivo.
+- **Ejecución:** recarga con su propia idempotency key (`claim-fund:<reclamo>:<n>`) y, solo con ella confirmada, el reclamo. Lo recibido se mide después de la recarga. Si al ejecutar la wallet ya tiene saldo, no se recarga. Un `pending` pausa; un fallo determinista marca esa wallet FAILED. `execute` vuelve a comprobar el saldo del funder (409 `PREVIEW_CHANGED`).
+- **Neto:** sin saldo no se puede simular, así que el de esas wallets es una estimación (≈ en la confirmación): reclamable − fee de red − rent que no vuelve − fee de la recarga. Comprobado al lamport en Surfpool en los dos casos: token solo en curva (vault sin cuenta WSOL: recarga 0,00418 SOL, recibido 8.226.091 = previsto) y token migrado (`live.test.ts`). El monto recargado no es un coste (se queda en la wallet) y se muestra aparte.
+- **Migración 14:** `claim.funder_id`, `claim_item.topup`, `topup_fee` y `topup_signature`. Comprobada sobre una copia de la base de mainnet.
+- **Mock:** el reclamo exige ya la fee con el saldo previo (como la cadena).
+- **Decisiones de Nicol (2026-11-07):** borrar automatizaciones sigue permitido sin iniciar, paradas o en estado final (spec ajustada); «solo Jito» no, de momento.
+- **Checks:** `pnpm typecheck` y `pnpm lint` limpios; `pnpm test` 152/152; `live.test.ts` contra Surfpool 22 + 1 omitido (REQ-REW-003 incluido); `pnpm test:chain` completo 131 + 13 omitidos con un fallo suelto de REQ-AUTO-006 que pasa al repetirlo (Surfpool, sin relación); `pnpm test:e2e` 12/12; `pnpm build` y presupuesto de JS 224,6 KB de 300; `/rewards` revisado a ojo en una instancia `test` con datos temporales (aviso, confirmación con la recarga y resultado verificado).
+
 ## Próximo paso
 
-F2, por bloques, según `docs/F2.md`: queda el bloque 6 (descubrimiento).
+F2 cerrada. Quedan los restos «Should» de F1 listados en `docs/F2.md` (REQ-WAL-009/010, REQ-LAUNCH-006, REQ-DASH-003, cerrar la tabla de direcciones, P3-10/P3-13) y las pruebas en mainnet de Nicol (Jito, reclamo con recarga).
 
 ## Decisiones pendientes de Nicol
 
 - ~~Jito~~ y ~~Q-05~~: **resueltas el 2026-11-06**. Jito queda para F2, y el RPC de mainnet es **Helius** (la checklist está adaptada al plan Free y sus límites).
-- **Borrar automatizaciones en estados finales:** la spec dice «solo si está parada». Hoy se permite también en IDLE y en los estados finales.
+- ~~Borrar automatizaciones en estados finales~~ y ~~«solo Jito»~~: **resueltas el 2026-11-07** (se mantiene lo actual; sin «solo Jito» de momento).
 - **Q-01** (nombre) y **Q-06** (USDC): no bloquean.
 
 ## Conocido / límites
@@ -164,7 +174,7 @@ F2, por bloques, según `docs/F2.md`: queda el bloque 6 (descubrimiento).
 - **`pnpm dev` en Windows:** resuelto en `0bf526c` (ver arriba). Si alguna vez vuelve a colgarse, las dos apps se pueden arrancar por separado con `pnpm --filter server dev` y `pnpm --filter web dev`.
 - **Arranque de producción comprobado (2026-11-07):** `pnpm build` y `pnpm start` con `NEBULA_PROFILE=mainnet` y `NEBULA_DATA_DIR` temporal. La API escucha en 4318 y la web en 4317, y `/setup` carga con la CSP con nonce y sin errores de consola. El aviso `bigint: Failed to load bindings` es inocuo.
 - **Surfpool** a veces falla al traer cuentas de mainnet. Un envío queda pendiente y la orden o la tarea se pausa, que es el comportamiento correcto. Puede tumbar algún test de cadena suelto; en ese caso se repite.
-- **Pendientes del Should:** ladder, trailing stop y presets (REQ-AUTO-003/004/009); «financiar fees de reclamo» (REQ-REW-003); tracker; paleta Ctrl+K.
+- **Pendientes del Should:** ver «Restos «Should» de F1» en `docs/F2.md`.
 
 ## Cómo trabajar
 

@@ -148,6 +148,9 @@ export interface LaunchpadAdapter {
   buildBurnTx(p: { mint: string; owner: string; tokens: bigint }): Promise<PreparedTx>;
   claimableFees(creators: string[]): Promise<Map<string, bigint>>;
   buildClaimTx(p: { creator: string }): Promise<PreparedTx>;
+  /** rent de las cuentas que crea el reclamo: `upfront` = lo que la wallet necesita además de la fee de red;
+   *  `kept` = la parte que no vuelve (coste) */
+  claimRent(creator: string): Promise<{ upfront: bigint; kept: bigint }>;
   /** curva, PumpSwap o en migración; market cap, progreso y reservas reales */
   tokenInfo(mint: string): Promise<TokenInfo>;
   /** trades, graduación y migración de una transacción ya confirmada (las fallidas no emiten nada) */

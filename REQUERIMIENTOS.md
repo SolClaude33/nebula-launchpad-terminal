@@ -209,7 +209,7 @@ Siguen el modelo de tareas de Vortex: estados `IDLE`, `RUNNING`, `PAUSED`, `COMP
 | REQ-AUTO-003 | S | **Ladder** de venta por tramos (porcentaje de la posición a cada market cap) | — | Vortex |
 | REQ-AUTO-004 | S | **Trailing stop** (porcentaje desde el máximo) | — | Vortex |
 | REQ-AUTO-005 | M | Opciones comunes: rango de market cap, wallets, retardo de inicio, slippage máximo (por defecto 5 % también en ventas) y "parar tras N errores seguidos" | La venta nunca queda sin protección de precio por defecto (Proxima sí lo permite). | Proxima + nuevo |
-| REQ-AUTO-006 | M | Ciclo de vida: Iniciar, Pausar, Reanudar, Editar (en caliente si está pausada), Parar, Ejecutar de nuevo, Duplicar y Borrar (solo si está parada) | Parar o pausar nunca vende nada. | Vortex |
+| REQ-AUTO-006 | M | Ciclo de vida: Iniciar, Pausar, Reanudar, Editar (en caliente si está pausada), Parar, Ejecutar de nuevo, Duplicar y Borrar (sin iniciar, parada o en un estado final; nunca en marcha ni en pausa; decisión de Nicol, 2026-11-07) | Parar o pausar nunca vende nada. | Vortex |
 | REQ-AUTO-007 | M | Registro por tarea: ejecuciones (hora, wallet, lado, monto, firma, estado), resultados y reintentos agrupados por intento | Paginación con "Cargar anteriores". | Vortex |
 | REQ-AUTO-008 | M | Al reiniciar la app, las tareas que estaban `RUNNING` pasan a `PAUSED` y piden confirmación para reanudar | Nunca se reanuda sola una tarea que mueve fondos. | nuevo |
 | REQ-AUTO-009 | S | Presets de tareas | — | Vortex |
@@ -220,7 +220,7 @@ Siguen el modelo de tareas de Vortex: estados `IDLE`, `RUNNING`, `PAUSED`, `COMP
 |---|---|---|---|---|
 | REQ-REW-001 | M | Escanear las wallets propias en busca de comisiones de creador reclamables en Pump.fun y PumpSwap | Lista por token y por wallet con el monto en SOL y en USD. | Block X/Fees |
 | REQ-REW-002 | M | Reclamar uno o todos, con **pantalla de confirmación** (Proxima no la tiene) | Muestra el neto después de las fees de red. | Proxima, Block X |
-| REQ-REW-003 | S | "Financiar fees de reclamo": recargar gas a las wallets que no tienen suficiente | — | Block X |
+| REQ-REW-003 | S | "Financiar fees de reclamo": recargar gas a las wallets que no tienen suficiente | Opcional en la vista previa: el funder predeterminado transfiere lo justo antes del reclamo (se queda en la wallet); el coste extra es solo la fee de esa transferencia. El funder no puede quedar por debajo del mínimo exento. | Block X |
 
 ### 6.8 DASH: dashboard y P&L
 | ID | P | Requerimiento | Criterios de aceptación | ref |

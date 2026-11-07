@@ -251,6 +251,14 @@ const MIGRATIONS: string[] = [
   -- F2 · bloque 5: propina de Jito de cada envío propio (0 sin Jito), para el P&L (REQ-DASH-001)
   ALTER TABLE tx ADD COLUMN tip_lamports INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- REQ-REW-003: recargar desde el funder predeterminado la fee del reclamo a las wallets sin SOL.
+  -- topup = lo que se transfiere (se queda en la wallet), topup_fee = la fee de esa transferencia (la paga el funder)
+  ALTER TABLE claim ADD COLUMN funder_id TEXT;
+  ALTER TABLE claim_item ADD COLUMN topup TEXT;
+  ALTER TABLE claim_item ADD COLUMN topup_fee TEXT;
+  ALTER TABLE claim_item ADD COLUMN topup_signature TEXT;
+  `,
 ];
 
 export function openDb(dir: string): DB {

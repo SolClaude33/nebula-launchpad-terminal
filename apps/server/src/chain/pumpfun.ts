@@ -18,7 +18,7 @@ import {
   type BondingCurve,
   type Global,
 } from "@pump-fun/pump-sdk";
-import { OnlinePumpAmmSdk, POOL_ACCOUNT_NEW_SIZE, PUMP_AMM_SDK, userVolumeAccumulatorPda as ammVolumeAccumulatorPda, buyQuoteInput as ammBuyQuote, computeFeesBps as ammFeesBps, poolMarketCap, sellBaseInput as ammSellQuote, type SwapSolanaState } from "@pump-fun/pump-sdk/swap";
+import { OnlinePumpAmmSdk, POOL_ACCOUNT_NEW_SIZE, PUMP_AMM_SDK, coinCreatorVaultAtaPda, coinCreatorVaultAuthorityPda, userVolumeAccumulatorPda as ammVolumeAccumulatorPda, buyQuoteInput as ammBuyQuote, computeFeesBps as ammFeesBps, poolMarketCap, sellBaseInput as ammSellQuote, type SwapSolanaState } from "@pump-fun/pump-sdk/swap";
 import type { CurveQuote, LaunchpadAdapter, PreparedTx, TokenInfo } from "./types";
 import type { RpcPool } from "./rpc";
 import { parsePumpEvents } from "./events";
@@ -267,6 +267,19 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
     buildClaimTx: async ({ creator }) => {
       const instructions = await pool.run(() => online().collectCoinCreatorFeeInstructions(new PublicKey(creator)));
       return { kind: "claim", payer: creator, signers: [creator], payload: { instructions } satisfies PumpPayload } satisfies PreparedTx;
+    },
+
+    // REQ-REW-003: la tx de reclamo (SDK `collectCoinCreatorFee`) crea, pagando el creador, las cuentas WSOL que
+    // falten: la del vault de PumpSwap (de una PDA: su rent se queda allí, es coste) y la del creador (se cierra
+    // en la misma tx y el rent vuelve). Las dos hay que adelantarlas. Comprobado en Surfpool el 2026-11-07.
+    claimRent: async (creator) => {
+      const owner = new PublicKey(creator);
+      const vaultAta = coinCreatorVaultAtaPda(coinCreatorVaultAuthorityPda(owner), NATIVE_MINT, TOKEN_PROGRAM_ID);
+      const ownAta = getAssociatedTokenAddressSync(NATIVE_MINT, owner, true, TOKEN_PROGRAM_ID);
+      const [vault, own] = await pool.run((c) => c.getMultipleAccountsInfo([vaultAta, ownAta], "confirmed"));
+      const rent = await rentFor(165);
+      const kept = vault ? 0n : rent;
+      return { upfront: kept + (own ? 0n : rent), kept };
     },
 
     tokenInfo: async (mint) => {

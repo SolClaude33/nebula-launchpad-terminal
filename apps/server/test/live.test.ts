@@ -258,4 +258,46 @@ describe.each(backends)("Live Workspace real · %s", (backend) => {
     expect(BigInt(done.received!)).toBe(expected - fee);
     expect(done.leftAfter).toBe("0");
   });
+
+  it("REQ-REW-003 · financiar fees de reclamo: la wallet sin SOL recibe del funder lo justo y reclama", async () => {
+    const funder = (await call("POST", "/api/wallets", { count: 1, kind: "funder" })).json.wallets.find((w: { kind: string }) => w.kind === "funder") as W;
+    await call("POST", "/api/dev/airdrop", { walletIds: [funder.id], sol: 1 });
+    // la dev se queda en 0 SOL (recolectar con MAX) y una compra de la ballena le genera comisiones nuevas
+    const col = (await call("POST", "/api/operations/preview", { kind: "collect", fromIds: [dev.id], toId: funder.id })).json;
+    await call("POST", `/api/operations/${col.id}/execute`, {});
+    let op = col;
+    for (let i = 0; i < 600 && (op.status === "PREVIEW" || op.status === "RUNNING"); i++) (await sleep(100), (op = (await call("GET", `/api/operations/${col.id}`)).json));
+    expect(op.status, JSON.stringify(op.items)).toBe("COMPLETED");
+    expect(await sol(dev.address)).toBe(0n);
+    await order({ side: "buy", walletIds: [whale.id], lamportsEach: (SOL * 2n).toString() });
+    const scan = (await call("GET", "/api/rewards")).json;
+    const it0 = scan.items.find((i: { walletId: string }) => i.walletId === dev.id);
+    expect(BigInt(it0.claimable)).toBeGreaterThan(0n);
+    expect(it0.canPayFee).toBe(false);
+    expect(scan.funder).toMatchObject({ id: funder.id });
+    // sin `fund` se omite con el motivo
+    const off = (await call("POST", "/api/rewards/preview", { walletIds: [dev.id] })).json;
+    expect(off.items[0]).toMatchObject({ status: "SKIPPED", topup: null });
+    expect(off.items[0].reason).toContain("Recargar desde el funder");
+    // con `fund`: recarga ≥ mínimo exento (la wallet está vacía) y el coste solo suma la fee de la transferencia
+    const pv = (await call("POST", "/api/rewards/preview", { walletIds: [dev.id], fund: true })).json;
+    const item = pv.items[0];
+    expect(item.status, item.reason).toBe("PENDING");
+    expect(pv.funder).toMatchObject({ id: funder.id });
+    expect(BigInt(item.topup)).toBeGreaterThanOrEqual(890_880n);
+    // coste = fee de red + rent de cuentas nuevas (0 si la WSOL ya existe) + fee de la recarga
+    expect(BigInt(item.fee)).toBeGreaterThanOrEqual(BigInt(item.networkFee) + BigInt(item.topupFee));
+    expect(pv.totals.topup).toBe(item.topup);
+    const funderBefore = await sol(funder.address);
+    await call("POST", `/api/rewards/${pv.id}/execute`);
+    const v = await ctx.rewards.waitIdle(pv.id);
+    expect(v.status, JSON.stringify(v.items)).toBe("COMPLETED");
+    const done = v.items[0];
+    expect(done.topupSignature).toBeTruthy();
+    // el funder baja exactamente la recarga + su fee; lo recibido se mide después de la recarga
+    expect(funderBefore - (await sol(funder.address))).toBe(BigInt(item.topup) + BigInt(item.topupFee));
+    expect(BigInt(done.received!)).toBe(BigInt(item.expected) - (BigInt(item.fee) - BigInt(item.topupFee)));
+    expect(done.leftAfter).toBe("0");
+    expect(await sol(dev.address)).toBe(BigInt(item.topup) + BigInt(done.received!));
+  });
 });

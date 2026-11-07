@@ -166,7 +166,8 @@ export class MockLedger {
       let total = 0n;
       for (const c of this.curves.values()) if (c.creator === o.creator) (total += c.creatorVault), (c.creatorVault = 0n);
       if (total === 0n) return fail("SIMULATION_FAILED", "No hay comisiones que reclamar");
-      if (this.balance(o.creator) + total < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
+      // como en la cadena: la fee se cobra antes de ejecutar, con el saldo previo
+      if (this.balance(o.creator) < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
       this.sol.set(o.creator, this.balance(o.creator) + total - TX_FEE);
       return { ok: true, fee: TX_FEE };
     }
@@ -343,6 +344,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       return { kind: "burn", payer: owner, signers: [owner], mint, cuLimit: 30_000, payload: { op: "burn", mint, owner, tokens } satisfies Op };
     },
     buildClaimTx: async ({ creator }) => ({ kind: "claim", payer: creator, signers: [creator], payload: { op: "claim", creator } satisfies Op }),
+    claimRent: async () => ({ upfront: 0n, kept: 0n }),
     tokenInfo: async (mint): Promise<TokenInfo> => {
       const c = curve(mint);
       const pool = ledger.pools.get(mint);

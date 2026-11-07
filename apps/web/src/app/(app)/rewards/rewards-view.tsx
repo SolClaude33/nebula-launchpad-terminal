@@ -13,9 +13,10 @@ import { lamToSol } from "@/lib/live";
 import { toast } from "@/lib/toast";
 
 type ScanItem = { walletId: string; label: string; address: string; role: string | null; claimable: string; fee: string; net: string; lamports: string; canPayFee: boolean; tokens: { mint: string; symbol: string }[] };
-type Scan = { items: ScanItem[]; solUsd: { usd: number; publishedAt: number } | null; at: number };
-type ClaimItem = { ord: number; walletId: string; label: string; address: string; expected: string; fee: string; networkFee: string; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; received: string | null; leftAfter: string | null; signature: string | null; reason: string | null };
-type Claim = { id: string; status: "PREVIEW" | "RUNNING" | "PAUSED" | "COMPLETED" | "PARTIAL" | "FAILED"; items: ClaimItem[]; totals: { gross: string; fees: string; net: string } };
+type Funder = { id: string; label: string; address: string; lamports: string };
+type Scan = { items: ScanItem[]; funder: Funder | null; solUsd: { usd: number; publishedAt: number } | null; at: number };
+type ClaimItem = { ord: number; walletId: string; label: string; address: string; expected: string; fee: string; networkFee: string; topup: string | null; topupFee: string | null; topupSignature: string | null; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; received: string | null; leftAfter: string | null; signature: string | null; reason: string | null };
+type Claim = { id: string; status: "PREVIEW" | "RUNNING" | "PAUSED" | "COMPLETED" | "PARTIAL" | "FAILED"; funder: { id: string; label: string | null; address: string | null } | null; items: ClaimItem[]; totals: { gross: string; fees: string; net: string; topup: string } };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -26,6 +27,8 @@ export function RewardsView() {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [claim, setClaim] = useState<Claim | null>(null);
   const [busy, setBusy] = useState<"preview" | "claim" | null>(null);
+  // REQ-REW-003: recargar desde el funder predeterminado la fee de las wallets sin SOL (apagado por defecto)
+  const [fund, setFund] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,12 +62,13 @@ export function RewardsView() {
   );
   const claimable = (scan?.items ?? []).filter((i) => BigInt(i.claimable) > 0n);
   const total = claimable.reduce((a, i) => a + BigInt(i.claimable), 0n);
+  const unfunded = claimable.filter((i) => !i.canPayFee).length;
   const toggle = (id: string) => setSel((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
 
   const preview = async (ids: string[]) => {
     setBusy("preview");
     try {
-      setClaim(await api<Claim>("/rewards/preview", { method: "POST", body: { walletIds: ids } }));
+      setClaim(await api<Claim>("/rewards/preview", { method: "POST", body: { walletIds: ids, fund: fund && !!scan?.funder } }));
     } catch (e) {
       toast({ tone: "error", title: "No se pudo preparar el reclamo", body: (e as ApiError).message });
     }
@@ -123,6 +127,32 @@ export function RewardsView() {
         </div>
       </div>
 
+      {scan && unfunded > 0 && (
+        <div className="panel mt-3 flex items-center gap-3 px-4 py-3 text-[12.5px]">
+          {scan.funder ? (
+            <>
+              <input id="rew-fund" type="checkbox" aria-describedby="rew-fund-desc" checked={fund} onChange={(e) => setFund(e.target.checked)} className="size-3.5 accent-[var(--accent-a)]" />
+              <div className="flex-1">
+                <label htmlFor="rew-fund" className="cursor-pointer">
+                  Recargar desde <span className="font-medium">{scan.funder.label}</span> la fee de {unfunded === 1 ? "la wallet" : `las ${unfunded} wallets`} sin SOL
+                </label>
+                <p id="rew-fund-desc" className="text-[11.5px] text-faint">
+                  Se transfiere lo justo antes de reclamar y se queda en la wallet; el coste extra es la fee de esa transferencia. Funder: {fmtSol(lamToSol(scan.funder.lamports), 4)}
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="flex-1 text-muted">
+              {unfunded === 1 ? "Una wallet no tiene" : `${unfunded} wallets no tienen`} SOL para la fee de red.{" "}
+              <Link href="/funder" className="text-accent-b hover:underline">
+                Crea un funder
+              </Link>{" "}
+              para recargarlas al reclamar.
+            </p>
+          )}
+        </div>
+      )}
+
       {error && <p className="mt-4 rounded-[var(--radius-sm)] border border-sell/30 bg-[var(--sell-soft)] p-3 text-[12.5px] text-sell">{error}</p>}
 
       {scan === null && !error ? (
@@ -176,7 +206,7 @@ export function RewardsView() {
                       </div>
                     </td>
                     <td className={`px-3 py-2.5 text-right ${has ? "" : "text-faint"}`}>{money(i.claimable)}</td>
-                    <td className={`num px-3 py-2.5 text-right ${i.canPayFee ? "text-muted" : "text-warn"}`} title={i.canPayFee ? "" : "Sin SOL para la fee de red: recarga la wallet antes de reclamar"}>
+                    <td className={`num px-3 py-2.5 text-right ${i.canPayFee ? "text-muted" : "text-warn"}`} title={i.canPayFee ? "" : "Sin SOL para la fee de red: activa la recarga desde el funder o recarga la wallet"}>
                       {fmtSol(lamToSol(i.lamports), 4)}
                     </td>
                   </tr>
@@ -206,17 +236,33 @@ function ClaimDialog({ claim, busy, onConfirm, onClose, money }: { claim: Claim;
         <ul className="mt-4 space-y-1.5">
           {claim.items.map((i) => {
             const net = BigInt(i.expected) - BigInt(i.fee);
-            const extra = BigInt(i.fee) - BigInt(i.networkFee);
+            const topupFee = BigInt(i.topupFee ?? "0");
+            const extra = BigInt(i.fee) - BigInt(i.networkFee) - topupFee;
+            const estimated = preview && i.topup !== null;
             return (
               <li key={i.ord} className="rounded-[var(--radius-sm)] border border-line bg-surface-2/50 px-3 py-2 text-[12.5px]">
                 <div className="flex items-center gap-2">
                   {i.status === "OK" ? <CheckCircle2 className="size-3.5 text-buy" aria-label="cobrada" /> : i.status === "FAILED" ? <XCircle className="size-3.5 text-sell" aria-label="falló" /> : i.status === "SKIPPED" ? <CircleSlash className="size-3.5 text-faint" aria-label="omitida" /> : busy ? <Loader2 className="size-3.5 animate-spin text-muted" aria-label="enviando" /> : <PauseCircle className="size-3.5 text-muted" aria-label="pendiente" />}
                   <span className="flex-1">{i.label}</span>
-                  {i.status === "SKIPPED" ? <span className="text-faint">{i.reason}</span> : <span>{money(i.status === "OK" && i.received ? i.received : net.toString())}</span>}
+                  {i.status === "SKIPPED" ? (
+                    <span className="text-faint">{i.reason}</span>
+                  ) : (
+                    <span>
+                      {estimated && <span className="mr-1 text-faint">≈</span>}
+                      {money(i.status === "OK" && i.received ? i.received : net.toString())}
+                    </span>
+                  )}
                 </div>
+                {i.status !== "SKIPPED" && i.topup !== null && (
+                  <p className="num mt-1 pl-5.5 text-[11.5px] text-accent-b">
+                    Recarga desde {claim.funder?.label ?? "el funder"}: {fmtSol(lamToSol(i.topup), 6)} (se queda en la wallet)
+                    {i.topupSignature ? " · enviada ✓" : ""}
+                  </p>
+                )}
                 {i.status !== "SKIPPED" && (
                   <p className="num mt-1 pl-5.5 text-[11.5px] text-faint">
-                    {fmtSol(lamToSol(i.expected), 6)} reclamable − {fmtSol(lamToSol(i.networkFee), 6)} de red{extra > 0n ? ` − ${fmtSol(lamToSol(extra), 6)} de cuentas nuevas` : ""}
+                    {fmtSol(lamToSol(i.expected), 6)} reclamable − {fmtSol(lamToSol(i.networkFee), 6)} de red{topupFee > 0n ? ` − ${fmtSol(lamToSol(topupFee), 6)} de la recarga` : ""}{extra > 0n ? ` − ${fmtSol(lamToSol(extra), 6)} de cuentas nuevas` : ""}
+                    {estimated && " · estimado: sin saldo no se puede simular"}
                     {i.status === "OK" && i.leftAfter !== null && <span className={i.leftAfter === "0" ? "text-buy" : "text-warn"}> · {i.leftAfter === "0" ? "bóveda vacía ✓" : `quedan ${fmtSol(lamToSol(i.leftAfter), 6)}`}</span>}
                     {i.status === "FAILED" && <span className="text-sell"> · {i.reason}</span>}
                   </p>
@@ -229,6 +275,12 @@ function ClaimDialog({ claim, busy, onConfirm, onClose, money }: { claim: Claim;
           <span className="text-muted">Neto total ({pending.length} wallets)</span>
           <span className="text-[15px] font-medium">{money(claim.totals.net)}</span>
         </div>
+        {BigInt(claim.totals.topup ?? "0") > 0n && (
+          <p className="mt-1.5 flex items-center justify-between text-[12px] text-muted">
+            <span>Recargas desde {claim.funder?.label ?? "el funder"} (se quedan en tus wallets)</span>
+            <span className="num">{fmtSol(lamToSol(claim.totals.topup), 6)}</span>
+          </p>
+        )}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="btn h-9 px-4 text-[13px]">
             {preview ? "Cancelar" : "Cerrar"}
