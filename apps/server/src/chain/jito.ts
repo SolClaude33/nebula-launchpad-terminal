@@ -1,8 +1,10 @@
 // F2 · bloque 5 (REQ-SET-001, NFR-TX-003): Jito como vía de envío opcional.
-// - Solo vía de envío: cada compra, venta y creación propia lleva UNA instrucción de propina (transferencia de SOL a
-//   una cuenta oficial de Jito) dentro de la MISMA transacción, y los mismos bytes firmados salen por el RPC normal y
-//   por `sendTransaction` del Block Engine. Nada de bundles (§2.3: nada de MEV de bloque 0) ni de tx de propina sueltas
-//   (Jito avisa del «uncle bandit» y se pagaría aunque la operación fallase).
+// - Compra, venta y creación sueltas: UNA propina dentro de la MISMA transacción, y esos bytes salen por el RPC y por
+//   `sendTransaction` del Block Engine. No hay una tx de propina aparte (Jito avisa del «uncle bandit»).
+// - Bundle de lanzamiento (aparte): `sendBundle` en `/api/v1/bundles`, como máximo 5 transacciones, secuenciales y
+//   atómicas (docs.jito.wtf, «Low Latency Transaction Send»). La propina va en la última transacción del bundle, no
+//   en una tx suelta. Recibir un bundle_id no significa que haya aterrizado: eso lo dice `getInflightBundleStatuses`
+//   y, de verdad, la cadena. El snipe no entra en ese bundle: compra después, por el sender normal.
 // - La cuenta de propina se elige de forma determinista (hash de la idempotency key), nunca al azar.
 // - La cuenta de propina nunca va en una tabla de direcciones (lo pide Jito): se añade en el sender, no en el
 //   adaptador, para que `staticLaunchKeys` no la meta en la tabla de Nébula.
@@ -23,8 +25,24 @@ export const JITO_TIP_ACCOUNTS = [
   "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ] as const;
 
-/** Propina mínima que acepta Jito. */
+/** Propina mínima que acepta Jito (docs.jito.wtf: 1.000 lamports). */
 export const JITO_MIN_TIP_LAMPORTS = 1_000n;
+/** Un bundle son como máximo 5 transacciones (docs.jito.wtf). La creación ocupa una. */
+export const JITO_MAX_BUNDLE_TXS = 5;
+export const MAX_BUNDLE_BUYS = JITO_MAX_BUNDLE_TXS - 1;
+
+/**
+ * Cómo se puede mandar un bundle de lanzamiento sin llamar a la red.
+ * `block-engine`: `sendBundle` de verdad. `mock`: el libro local lo aplica atómico y lo marca simulado.
+ * `unavailable`: Jito apagado, o simulado contra un RPC (Surfpool no tiene Block Engine y el RPC no es un bundle).
+ */
+export type BundleTransport = "block-engine" | "mock" | "unavailable";
+export function bundleTransport(cfg: JitoConfig, kind: "mock" | "rpc" | "off"): BundleTransport {
+  if (!cfg.enabled || cfg.tipLamports < JITO_MIN_TIP_LAMPORTS || !cfg.endpoint) return "unavailable";
+  if (kind === "mock") return "mock";
+  if (cfg.simulated || kind !== "rpc") return "unavailable";
+  return "block-engine";
+}
 /** Tamaño máximo de una transacción de Solana. */
 export const MAX_TX_BYTES = 1232;
 /** Solo las operaciones de mercado propias llevan propina; reclamos, transferencias y quemas no. */
@@ -69,6 +87,70 @@ export class JitoClient {
 
   get url() {
     return `${this.endpoint.replace(/\/+$/, "")}/api/v1/transactions`;
+  }
+
+  private endpointUrl(path: string) {
+    return `${this.endpoint.replace(/\/+$/, "")}${path}`;
+  }
+
+  private async rpc(path: string, method: string, params: unknown): Promise<{ ok: true; result: unknown } | { ok: false; error: string; transport: boolean }> {
+    await this.bucket.take(1);
+    try {
+      const res = await this.fetchImpl(this.endpointUrl(path), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = (await res.json().catch(() => null)) as { result?: unknown; error?: { message?: string } } | null;
+      if (!res.ok || !body || body.error) {
+        const error = body?.error?.message ?? `HTTP ${res.status}`;
+        this.stats.failed++;
+        this.stats.lastError = error;
+        return { ok: false, error, transport: false };
+      }
+      return { ok: true, result: body.result };
+    } catch (e) {
+      this.stats.failed++;
+      this.stats.lastError = String((e as Error)?.message ?? e).slice(0, 200);
+      return { ok: false, error: this.stats.lastError, transport: true };
+    }
+  }
+
+  /**
+   * `sendBundle` (POST `/api/v1/bundles`). El `result` es el bundle_id que devuelve Jito: recibirlo no significa
+   * que el bundle haya aterrizado. No se inventa un id si la respuesta no trae una cadena.
+   */
+  async sendBundle(raws: Uint8Array[]): Promise<{ ok: true; bundleId: string } | { ok: false; error: string; transport: boolean }> {
+    if (raws.length < 1 || raws.length > JITO_MAX_BUNDLE_TXS) {
+      const error = `Un bundle admite de 1 a ${JITO_MAX_BUNDLE_TXS} transacciones (Jito); se iban a enviar ${raws.length}.`;
+      this.stats.failed++;
+      this.stats.lastError = error;
+      return { ok: false, error, transport: false };
+    }
+    const sent = await this.rpc("/api/v1/bundles", "sendBundle", [raws.map((raw) => Buffer.from(raw).toString("base64")), { encoding: "base64" }]);
+    if (!sent.ok) return sent;
+    if (typeof sent.result !== "string" || !sent.result) {
+      const error = "El Block Engine no devolvió un bundle_id.";
+      this.stats.failed++;
+      this.stats.lastError = error;
+      return { ok: false, error, transport: false };
+    }
+    this.stats.sent++;
+    return { ok: true, bundleId: sent.result };
+  }
+
+  /**
+   * `getInflightBundleStatuses` (POST `/api/v1/getInflightBundleStatuses`). `unknown` si no está (la doc devuelve
+   * null): no es lo mismo que Landed. Pending / Landed / Failed / Invalid son los estados que documenta Jito.
+   */
+  async inflight(bundleId: string): Promise<{ status: "Pending" | "Landed" | "Failed" | "Invalid" | "unknown"; error?: string }> {
+    const sent = await this.rpc("/api/v1/getInflightBundleStatuses", "getInflightBundleStatuses", [[bundleId]]);
+    if (!sent.ok) return { status: "unknown", error: sent.error };
+    const value = (sent.result as { value?: { status?: string }[] | null } | null)?.value;
+    const status = value?.[0]?.status;
+    if (status === "Pending" || status === "Landed" || status === "Failed" || status === "Invalid") return { status };
+    return { status: "unknown" };
   }
 
   /**

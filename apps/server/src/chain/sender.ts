@@ -4,19 +4,19 @@
 import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { firstSignature } from "./sig";
 import { txFee } from "./fees";
-import type { DB } from "../db";
+import { kvGet, kvSet, type DB } from "../db";
 import { VaultError } from "../signer";
 import type { RpcPool } from "./rpc";
 import { isNetworkError, isRateLimited } from "./rpc";
-import type { MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
+import type { BundleSendResult, MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
 import type { PumpPayload } from "./pumpfun";
-import { JITO_OFF, JitoClient, MAX_TX_BYTES, tipFor, tipInstruction, type JitoConfig } from "./jito";
+import { JITO_MAX_BUNDLE_TXS, JITO_OFF, JitoClient, MAX_TX_BYTES, bundleTransport, tipFor, tipInstruction, type JitoConfig } from "./jito";
 
 /**
  * `rebroadcastMs`: cada cuánto se reenvía la MISMA transacción firmada mientras se espera la confirmación (0 = nunca).
  * `jito`: configuración de Jito, leída en cada envío (Ajustes la cambia sin reconectar). `fetch`: el del Block Engine (tests).
  */
-export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number; rebroadcastMs?: number; jito?: () => JitoConfig; fetch?: typeof fetch };
+export type SenderOpts = { computeUnitLimit: number; priorityMicroLamports: () => number; rebroadcastMs?: number; jito?: () => JitoConfig; fetch?: typeof fetch; /** pruebas: el límite documentado es 1/s; no lo subas en producción */ jitoRps?: number };
 
 /** Por defecto, un reenvío cada 2 s: con Helius Free (1 envío/s) deja cupo a los envíos nuevos. */
 export const REBROADCAST_MS = 2000;
@@ -66,14 +66,14 @@ export class SolanaSender implements TxSender {
   jito(): JitoClient | null {
     const cfg = this.jitoConfig();
     if (!cfg.enabled || cfg.simulated || !cfg.endpoint) return null;
-    if (this.jitoClient?.endpoint !== cfg.endpoint) this.jitoClient = new JitoClient(cfg.endpoint, this.opts.fetch ?? fetch);
+    if (this.jitoClient?.endpoint !== cfg.endpoint) this.jitoClient = new JitoClient(cfg.endpoint, this.opts.fetch ?? fetch, this.opts.jitoRps ?? 1);
     return this.jitoClient;
   }
 
-  private async build(tx: PreparedTx, key: string) {
+  private async build(tx: PreparedTx, key: string, opts?: { tipLamports?: bigint; blockhash?: { blockhash: string; lastValidBlockHeight: number }; requireTip?: boolean }) {
     this.price = this.opts.priorityMicroLamports();
     const { instructions } = tx.payload as PumpPayload;
-    const { blockhash, lastValidBlockHeight } = await this.pool.run((c) => c.getLatestBlockhash("confirmed"));
+    const { blockhash, lastValidBlockHeight } = opts?.blockhash ?? (await this.pool.run((c) => c.getLatestBlockhash("confirmed")));
     const compile = (tip: bigint) =>
       new TransactionMessage({
         payerKey: new PublicKey(tx.payer),
@@ -86,7 +86,7 @@ export class SolanaSender implements TxSender {
           ...(tip > 0n ? [tipInstruction(tx.payer, tip, key)] : []),
         ],
       }).compileToV0Message(tx.lookupTables);
-    let tipLamports = tipFor(tx.kind, this.jitoConfig());
+    let tipLamports = opts?.tipLamports ?? tipFor(tx.kind, this.jitoConfig());
     let vtx = new VersionedTransaction(compile(tipLamports));
     // La creación con dev buy va justa: si la propina no cabe en 1.232 bytes, esa tx sale sin propina y solo por el
     // RPC normal. Nunca se parte la creación del dev buy ni se paga una propina en una tx aparte. Es determinista:
@@ -100,16 +100,18 @@ export class SolanaSender implements TxSender {
       }
     };
     if (tipLamports > 0n && !fits(vtx)) {
+      if (opts?.requireTip) throw new Error("La propina de Jito no cabe en la última transacción del bundle (1.232 bytes). No se envía una propina aparte: si el bundle fallara, se pagaría igual.");
       tipLamports = 0n;
       vtx = new VersionedTransaction(compile(0n));
     }
+    if (opts?.requireTip && tipLamports <= 0n) throw new Error("El bundle necesita una propina de Jito dentro de la última transacción. No se ha enviado nada.");
     const bytes = vtx.message.serialize();
     for (const s of tx.signers) vtx.addSignature(new PublicKey(s), this.sign(s, bytes));
     const signature = firstSignature(vtx);
     return { vtx, blockhash, lastValidBlockHeight, signature, tipLamports };
   }
 
-  async send(tx: PreparedTx, { idempotencyKey, simulateOnly, watch }: { idempotencyKey: string; simulateOnly?: boolean; watch?: string }): Promise<SendResult> {
+  async send(tx: PreparedTx, { idempotencyKey, simulateOnly, watch, tipLamports }: { idempotencyKey: string; simulateOnly?: boolean; watch?: string; tipLamports?: bigint }): Promise<SendResult> {
     const prev = this.row(idempotencyKey);
     if (prev?.status === "CONFIRMED") return { status: "confirmed", signature: prev.signature!, reused: true, feeLamports: prev.fee_lamports != null ? BigInt(prev.fee_lamports) : undefined, tipLamports: BigInt(prev.tip_lamports ?? 0) };
     if (prev?.status === "FAILED" && prev.signature && (await this.statusOf(prev.signature).catch(() => "unknown" as const)) === "confirmed") {
@@ -127,7 +129,7 @@ export class SolanaSender implements TxSender {
     for (let attempt = 0; attempt < 2; attempt++) {
       let built: Awaited<ReturnType<SolanaSender["build"]>>;
       try {
-        built = await this.build(tx, idempotencyKey);
+        built = await this.build(tx, idempotencyKey, tipLamports !== undefined ? { tipLamports } : undefined);
       } catch (e) {
         // Bóveda bloqueada o clave ausente: no se ha emitido nada; quien llama decide (pausar)
         if (e instanceof VaultError) throw e;
@@ -260,6 +262,124 @@ export class SolanaSender implements TxSender {
   private markFailed(key: string, code: SendErrorCode, message: string, signature?: string): SendResult {
     this.db().prepare("UPDATE tx SET status = 'FAILED', error_code = ?, error = ?, updated_at = ? WHERE idempotency_key = ?").run(code, message, Date.now(), key);
     return { status: "failed", code, message, signature };
+  }
+
+  /**
+   * Bundle de lanzamiento: mismas firmas, un solo blockhash, propina solo en la última tx, y SOLO `sendBundle`.
+   * No se reenvía por el RPC (eso rompería el todo-o-nada). Si Jito está simulado o apagado, no se llama a nadie.
+   */
+  async sendBundle(items: { tx: PreparedTx; idempotencyKey: string }[], { bundleKey }: { bundleKey: string }): Promise<BundleSendResult> {
+    if (items.length < 1 || items.length > JITO_MAX_BUNDLE_TXS) return { status: "failed", code: "SIMULATION_FAILED", message: `Un bundle admite de 1 a ${JITO_MAX_BUNDLE_TXS} transacciones.` };
+    const transport = bundleTransport(this.jitoConfig(), "rpc");
+    if (transport !== "block-engine") return { status: "failed", code: "SIMULATION_FAILED", message: "No se envía el bundle: Jito no está en el Block Engine. No se ha llamado a sendBundle ni al RPC." };
+
+    const prev = this.readBundle(bundleKey);
+    if (prev) {
+      const again = await this.settleBundle(prev, true);
+      // Confirmado, a medias o aún en vuelo: no se firma otro. Un rechazo o un blockhash caducado sí se puede rehacer.
+      if (again.status !== "failed") return again;
+    }
+
+    const client = this.jito();
+    if (!client) return { status: "failed", code: "SIMULATION_FAILED", message: "No hay cliente del Block Engine. No se ha enviado el bundle." };
+    const tip = tipFor(items[items.length - 1].tx.kind, this.jitoConfig());
+    let block: { blockhash: string; lastValidBlockHeight: number };
+    try {
+      block = await this.pool.run((c) => c.getLatestBlockhash("confirmed"));
+    } catch {
+      return { status: "pending", signatures: [], bundleId: null, message: "El RPC no responde; no se ha enviado el bundle." };
+    }
+    const built: { vtx: VersionedTransaction; signature: string; key: string; tip: bigint }[] = [];
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const last = i === items.length - 1;
+        const one = await this.build(items[i].tx, last ? bundleKey : items[i].idempotencyKey, { tipLamports: last ? tip : 0n, blockhash: block, requireTip: last });
+        built.push({ vtx: one.vtx, signature: one.signature, key: items[i].idempotencyKey, tip: one.tipLamports });
+      }
+    } catch (e) {
+      if (e instanceof VaultError) throw e;
+      return { status: "failed", code: "SIMULATION_FAILED", message: String((e as Error).message ?? e) };
+    }
+    // Solo se simula la creación: las compras aún no tienen curva y una simulación suelta daría un fallo falso.
+    const sim = await this.pool.run((c) => c.simulateTransaction(built[0].vtx, { sigVerify: true, commitment: "confirmed" })).catch((e) => ({ value: { err: e, logs: [] as string[] } }));
+    if (sim.value.err) {
+      const c = classify(sim.value.logs, sim.value.err);
+      return { status: "failed", code: c.code, message: c.message };
+    }
+    const now = Date.now();
+    const insert = this.db().prepare(
+      `INSERT INTO tx(idempotency_key, kind, signature, last_valid_block_height, status, payer, mint, tip_lamports, created_at, updated_at) VALUES(?, ?, ?, ?, 'SENT', ?, ?, ?, ?, ?)
+       ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, last_valid_block_height = excluded.last_valid_block_height, status = 'SENT', tip_lamports = excluded.tip_lamports, updated_at = excluded.updated_at`,
+    );
+    built.forEach((b, i) => insert.run(b.key, items[i].tx.kind, b.signature, block.lastValidBlockHeight, items[i].tx.payer, items[i].tx.mint ?? null, Number(b.tip), now, now));
+    const raws = built.map((b) => b.vtx.serialize());
+    const signatures = built.map((b) => b.signature);
+    const stored = { bundleId: null as string | null, signatures, keys: built.map((b) => b.key), lastValidBlockHeight: block.lastValidBlockHeight, tipLamports: tip.toString(), raws: raws.map((r) => Buffer.from(r).toString("base64")) };
+    this.writeBundle(bundleKey, stored);
+    const sent = await client.sendBundle(raws);
+    if (!sent.ok) {
+      // Un corte de red no dice si el Block Engine lo recibió: no se reenvía mientras el blockhash viva.
+      if (sent.transport) return { status: "pending", signatures, bundleId: null, message: `No se sabe si el Block Engine recibió el bundle (${sent.error}). No se reenvía para no duplicarlo.` };
+      built.forEach((b) => this.markFailed(b.key, "SIMULATION_FAILED", sent.error, b.signature));
+      return { status: "failed", code: "SIMULATION_FAILED", message: sent.error, signatures };
+    }
+    this.writeBundle(bundleKey, { ...stored, bundleId: sent.bundleId });
+    return this.settleBundle({ ...stored, bundleId: sent.bundleId }, false);
+  }
+
+  private readBundle(key: string) {
+    const raw = kvGet(this.db(), `jito-bundle:${key}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as { bundleId: string | null; signatures: string[]; keys: string[]; lastValidBlockHeight: number; tipLamports: string; raws: string[] };
+  }
+  private writeBundle(key: string, value: { bundleId: string | null; signatures: string[]; keys: string[]; lastValidBlockHeight: number; tipLamports: string; raws: string[] }) {
+    kvSet(this.db(), `jito-bundle:${key}`, JSON.stringify(value));
+  }
+
+  /** Firma cada transacción del bundle contra la cadena. No convierte un bundle_id en éxito. */
+  private async settleBundle(stored: { bundleId: string | null; signatures: string[]; keys: string[]; lastValidBlockHeight: number; tipLamports: string }, reused: boolean): Promise<BundleSendResult> {
+    const states = await Promise.all(stored.signatures.map((s) => this.statusOf(s).catch(() => "unknown" as const)));
+    const tip = BigInt(stored.tipLamports);
+    const rows = stored.keys.map((k) => this.row(k));
+    if (rows.every((r) => r?.status === "FAILED") && states.every((s) => s !== "confirmed")) {
+      return { status: "failed", code: "SIMULATION_FAILED", message: "El intento anterior fue rechazado y no está confirmado en la cadena.", signatures: stored.signatures };
+    }
+    if (states.every((s) => s === "confirmed")) {
+      stored.keys.forEach((key, i) => this.markConfirmed(key, stored.signatures[i], undefined, undefined, i === stored.keys.length - 1 ? tip : 0n));
+      return { status: "confirmed", signatures: stored.signatures, bundleId: stored.bundleId, simulated: false, tipLamports: tip, reused };
+    }
+    if (states.some((s) => s === "confirmed" || s === "failed")) {
+      const ok = states.map((s) => s === "confirmed");
+      stored.keys.forEach((key, i) => (ok[i] ? this.markConfirmed(key, stored.signatures[i]) : this.markFailed(key, "SIMULATION_FAILED", "La transacción del bundle no se confirmó.", stored.signatures[i])));
+      return { status: "partial", signatures: stored.signatures, ok, bundleId: stored.bundleId, simulated: false, message: "El bundle no aterrizó entero: alguna firma está en la cadena y otra no. No se da por bueno." };
+    }
+    const client = this.jito();
+    let inflight: "Pending" | "Landed" | "Failed" | "Invalid" | "unknown" = "unknown";
+    let inflightError: string | undefined;
+    if (stored.bundleId && client) {
+      const got = await client.inflight(stored.bundleId);
+      inflight = got.status;
+      inflightError = got.error;
+    }
+    if (inflight === "Landed") {
+      const again = await Promise.all(stored.signatures.map((s) => this.statusOf(s).catch(() => "unknown" as const)));
+      if (again.every((s) => s === "confirmed")) {
+        stored.keys.forEach((key, i) => this.markConfirmed(key, stored.signatures[i], undefined, undefined, i === stored.keys.length - 1 ? tip : 0n));
+        return { status: "confirmed", signatures: stored.signatures, bundleId: stored.bundleId, simulated: false, tipLamports: tip };
+      }
+      return { status: "pending", signatures: stored.signatures, bundleId: stored.bundleId, message: "Jito marca el bundle como Landed, pero el RPC aún no confirma las firmas. No se da por lanzado." };
+    }
+    if (inflight === "Failed" || inflight === "Invalid") {
+      stored.keys.forEach((key, i) => this.markFailed(key, "SIMULATION_FAILED", `El Block Engine marcó el bundle como ${inflight}.`, stored.signatures[i]));
+      return { status: "failed", code: "SIMULATION_FAILED", message: `El Block Engine marcó el bundle como ${inflight}. No aterrizó.`, signatures: stored.signatures };
+    }
+    const height = await this.pool.run((c) => c.getBlockHeight("confirmed")).catch(() => 0);
+    if (height > stored.lastValidBlockHeight) {
+      stored.keys.forEach((key) => this.db().prepare("UPDATE tx SET status = 'EXPIRED', updated_at = ? WHERE idempotency_key = ? AND status = 'SENT'").run(Date.now(), key));
+      return { status: "failed", code: "BLOCKHASH_EXPIRED", message: "El blockhash del bundle caducó y las firmas no están en la cadena. No se cobró la propina.", signatures: stored.signatures };
+    }
+    const why = stored.bundleId ? `El Block Engine recibió el bundle ${stored.bundleId} (${inflight}${inflightError ? `: ${inflightError}` : ""}). Aún no ha aterrizado.` : "El bundle se firmó pero no hay bundle_id. No se reenvía mientras el blockhash siga vivo.";
+    return { status: "pending", signatures: stored.signatures, bundleId: stored.bundleId, message: why };
   }
 
   /** NFR-TX-005: al arrancar, resuelve los envíos que quedaron en SENT. Devuelve cuántos cambiaron. */

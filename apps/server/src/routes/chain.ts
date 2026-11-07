@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Ctx } from "../app";
 import { logActivity } from "../db";
 import { VaultError } from "../signer";
+import { bundleTransport } from "../chain/jito";
 import { solToLamports } from "../chain/types";
 import { storedSettings } from "../settings";
 
@@ -15,7 +16,8 @@ export const chainRoutes =
     // el perfil de pruebas (la propina va en la tx, pero no se envía nada al Block Engine)
     app.get("/chain/status", async () => {
       const j = ctx.chain.jito();
-      return { profile: ctx.profile, ...ctx.chain.state(), sendPerSec: storedSettings(ctx.db()).rpcSendPerSec ?? 0, jito: { enabled: j.enabled, tipLamports: (j.enabled ? j.tipLamports : 0n).toString(), simulated: j.simulated } };
+      const mode = ctx.chain.state().mode;
+      return { profile: ctx.profile, ...ctx.chain.state(), sendPerSec: storedSettings(ctx.db()).rpcSendPerSec ?? 0, jito: { enabled: j.enabled, tipLamports: (j.enabled ? j.tipLamports : 0n).toString(), simulated: j.simulated, bundle: bundleTransport(j, mode === "off" ? "off" : mode) } };
     });
 
     // Saldos de todas las wallets activas (lecturas en lotes de 100)

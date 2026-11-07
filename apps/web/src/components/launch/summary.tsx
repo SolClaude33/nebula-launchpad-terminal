@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
 import { Address } from "@/components/address";
 import { api } from "@/lib/api";
-import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
+import { bundleAmounts, issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports, useChain, useJitoTip } from "@/lib/chain";
 import { TokenGlyph } from "@/components/live/token-header";
@@ -70,8 +70,9 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
   const d = useDraft((s) => s.draft);
   const { balances, addressOf } = useLaunchData();
   const jitoTip = useJitoTip();
+  const bundleTransport = useChain((s) => s.status?.jito?.bundle);
   const chainOff = useChain((s) => s.status?.mode === "off");
-  const list = issues(d, { balances, addressOf, tipLamports: jitoTip });
+  const list = issues(d, { balances, addressOf, tipLamports: jitoTip, bundleTransport });
   const view = useLaunchRun((s) => s.view);
   const fp = useLaunchRun((s) => s.fp);
   const busy = useLaunchRun((s) => s.busy);
@@ -88,7 +89,9 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
     await useLaunchRun.getState().load(view.id);
   };
   const devBuy = toLamports(d.devBuy);
-  const amounts = planAmounts(d);
+  const bAmounts = bundleAmounts(d);
+  const sAmounts = planAmounts(d);
+  const amounts = [...bAmounts, ...sAmounts];
   const q = useQuote(devBuy, amounts);
   const supply = q ? BigInt(q.supply) : 0n;
   const devTokens = q ? BigInt(q.devTokens) : 0n;
@@ -108,11 +111,11 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
   const fee5k = 5_000n;
   const costs: { k: string; v: bigint; tip: string }[] = [
     { k: "Dev buy", v: devBuy, tip: "Monto del paso 2 (incluye la fee del pad)." },
-    { k: "Compras de holders", v: holdersSol, tip: "Suma de los montos del plan (paso 3)." },
+    { k: "Compras de holders", v: holdersSol, tip: "Suma del bundle y del snipe (paso 3), en ese orden." },
     { k: `Firmas (${2 + amounts.length})`, v: fee5k * BigInt(2 + amounts.length), tip: "5.000 lamports por firma: creador + mint en la creación, y una por compra." },
     { k: "Cuentas de token de holders", v: (HOLDER_BUFFER - 500_000n) * BigInt(amounts.length), tip: "Estimado: rent de la cuenta de token de cada holder (recuperable al cerrarla) + priority fee." },
-    // F2 · bloque 5: la creación y cada compra llevan su propina dentro de la misma tx (el dry-run dice si cabe en la creación)
-    ...(jitoTip > 0n ? [{ k: `Propinas Jito (${1 + amounts.length})`, v: jitoTip * BigInt(1 + amounts.length), tip: "Una por transacción: la creación con el dev buy y cada compra. Va dentro de la misma tx y solo se paga si entra. Si en la creación no cabe (1.232 bytes), el dry-run lo indica y esa sale sin propina." }] : []),
+    // Una propina para el lanzamiento (en la creación, o una sola en el bundle) y una por cada snipe.
+    ...(jitoTip > 0n ? [{ k: `Propinas Jito (${1 + sAmounts.length})`, v: jitoTip * BigInt(1 + sAmounts.length), tip: bAmounts.length ? "El bundle lleva una sola propina, en su última compra. Cada snipe lleva la suya, porque sale en otra transacción." : "Una por transacción: la creación con el dev buy y cada compra. Va dentro de la misma tx y solo se paga si entra. Si en la creación no cabe (1.232 bytes), el dry-run lo indica y esa sale sin propina." }] : []),
   ];
   const total = costs.reduce((a, c) => a + c.v, 0n);
 

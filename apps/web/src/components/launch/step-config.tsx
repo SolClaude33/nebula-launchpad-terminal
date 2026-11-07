@@ -43,7 +43,7 @@ export function StepConfig() {
 
       <Field id="devWallet" label="Wallet dev" hint="Crea el token y hace el dev buy. Las comisiones de creador van a esta wallet." error={!d.devWalletId && loaded && candidates.length === 0 ? "No hay wallets: crea una con rol dev en Wallets." : undefined}>
         <div className="flex gap-2">
-          <select id="devWallet" value={d.devWalletId} onChange={(e) => set({ devWalletId: e.target.value, plan: d.plan.filter((p) => p !== e.target.value) })} className={`field h-10 py-0${d.review?.includes("devWallet") ? " ring-2 ring-warn/60 ring-offset-2 ring-offset-[var(--bg)]" : ""}`}>
+          <select id="devWallet" value={d.devWalletId} onChange={(e) => set({ devWalletId: e.target.value, plan: d.plan.filter((p) => p !== e.target.value), bundle: (d.bundle ?? []).filter((p) => p !== e.target.value) })} className={`field h-10 py-0${d.review?.includes("devWallet") ? " ring-2 ring-warn/60 ring-offset-2 ring-offset-[var(--bg)]" : ""}`}>
             <option value="">Elige una wallet…</option>
             {candidates.map((w) => (
               <option key={w.id} value={w.id}>
@@ -102,8 +102,8 @@ export function StepConfig() {
       <fieldset>
         <legend className="mb-2 text-[13px] font-medium">Modo de lanzamiento</legend>
         <div className="grid grid-cols-3 gap-2">
-          <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Tras crear el token compran, en orden, las wallets holder del plan (paso 3). Verás la supply que queda en wallets propias." />
-          <RadioCard name="lm" value="pro" checked={d.launchMode === "pro"} onSelect={() => set({ launchMode: "pro" })} title="Pro" body="Como Quick, pero eliges cuántos milisegundos espera cada wallet antes de comprar (paso 3). Esperas fijas, sin aleatoriedad." />
+          <RadioCard name="lm" value="quick" checked={d.launchMode === "quick"} onSelect={() => set({ launchMode: "quick" })} title="Quick" body="Puedes meter compras en el bundle atómico con la creación y, aparte, un snipe que compra justo después (paso 3)." />
+          <RadioCard name="lm" value="pro" checked={d.launchMode === "pro"} onSelect={() => set({ launchMode: "pro" })} title="Pro" body="Como Quick. La espera fija (paso 3) es solo del snipe: el bundle no espera, entra en el mismo envío que la creación." />
           <RadioCard name="lm" value="manual" checked={d.launchMode === "manual"} onSelect={() => set({ launchMode: "manual" })} title="Manual" body="Solo crea el token con el dev buy." />
         </div>
         {buysAfterCreate(d) && (

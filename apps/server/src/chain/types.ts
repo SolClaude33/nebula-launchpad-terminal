@@ -137,6 +137,11 @@ export interface LaunchpadAdapter {
   /** dev buy y compras de holders en orden sobre una curva nueva (estimación del resumen, REQ-LAUNCH-011) */
   quoteLaunch(p: { devBuyLamports: bigint; buys: bigint[] }): Promise<LaunchQuote>;
   buildCreateTx(p: { name: string; symbol: string; uri: string; creator: string; mint: string; devBuyLamports: bigint; slippagePct: number; mayhem: boolean; holderReward?: boolean }): Promise<PreparedTx>;
+  /**
+   * Compras del bundle de lanzamiento, cotizadas sobre la curva que dejaría el dev buy (y las compras anteriores
+   * del propio bundle). No lee la curva de la cadena: todavía no existe. El snipe no usa esto.
+   */
+  buildLaunchBundleBuys(p: { mint: string; creator: string; devBuyLamports: bigint; slippagePct: number; mayhem: boolean; holderReward: boolean; buys: { user: string; lamports: bigint }[] }): Promise<PreparedTx[]>;
   buildBuyTx(p: { mint: string; user: string; lamports: bigint; slippagePct: number }): Promise<PreparedTx>;
   buildSellTx(p: { mint: string; user: string; tokens: bigint; slippagePct: number }): Promise<PreparedTx>;
   /**
@@ -170,8 +175,19 @@ export interface LaunchpadAdapter {
 /** Firma los bytes de un mensaje con la clave de `address`. Lo implementa `signer` (la bóveda). */
 export type MessageSigner = (address: string, message: Uint8Array) => Uint8Array;
 
+/**
+ * Resultado de un bundle. `simulated` significa que el libro local lo aplicó atómico y NO se llamó al Block Engine:
+ * `bundleId` es null. Un `bundleId` sin firmas confirmadas no es un aterrizaje.
+ */
+export type BundleSendResult =
+  | { status: "confirmed"; signatures: string[]; bundleId: string | null; simulated: boolean; tipLamports: bigint; reused?: boolean }
+  | { status: "pending"; signatures: string[]; bundleId: string | null; message: string }
+  | { status: "partial"; signatures: string[]; ok: boolean[]; bundleId: string | null; simulated: boolean; message: string }
+  | { status: "failed"; code: SendErrorCode; message: string; signatures?: string[] };
+
 export interface TxSender {
-  send(tx: PreparedTx, opts: { idempotencyKey: string; simulateOnly?: boolean; watch?: string }): Promise<SendResult>;
+  send(tx: PreparedTx, opts: { idempotencyKey: string; simulateOnly?: boolean; watch?: string; /** fuerza la propina (0n = sin propina); si no se pasa, la decide Jito */ tipLamports?: bigint }): Promise<SendResult>;
+  sendBundle(items: { tx: PreparedTx; idempotencyKey: string }[], opts: { bundleKey: string }): Promise<BundleSendResult>;
 }
 
 export type EmptyTokenAccount = { address: string; mint: string; program: string; lamports: bigint };

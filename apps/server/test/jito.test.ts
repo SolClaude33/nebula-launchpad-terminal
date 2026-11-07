@@ -223,13 +223,13 @@ describe("Ajustes de Jito", () => {
     await call("POST", "/api/vault/setup", { password: PW, ack: true });
     const off = (await call("GET", "/api/settings")).json;
     expect(off).toMatchObject({ jitoEnabled: false, jitoTipSol: 0.001 });
-    expect((await call("GET", "/api/chain/status")).json.jito).toEqual({ enabled: false, tipLamports: "0", simulated: true });
+    expect((await call("GET", "/api/chain/status")).json.jito).toEqual({ enabled: false, tipLamports: "0", simulated: true, bundle: "unavailable" });
     expect((await call("PUT", "/api/settings", { jitoEnabled: true, jitoTipSol: 0.0000005 })).status).toBe(400);
     expect((await call("PUT", "/api/settings", { jitoEndpoint: "http://mainnet.block-engine.jito.wtf" })).status).toBe(400);
     const r = await call("PUT", "/api/settings", { jitoEnabled: true, jitoTipSol: 0.002, jitoEndpoint: "https://frankfurt.mainnet.block-engine.jito.wtf" });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     expect(r.json).toMatchObject({ jitoEnabled: true, jitoTipSol: 0.002, jitoEndpoint: "https://frankfurt.mainnet.block-engine.jito.wtf" });
-    expect((await call("GET", "/api/chain/status")).json.jito).toEqual({ enabled: true, tipLamports: "2000000", simulated: true });
+    expect((await call("GET", "/api/chain/status")).json.jito).toEqual({ enabled: true, tipLamports: "2000000", simulated: true, bundle: "mock" });
     await app.close();
   });
 });

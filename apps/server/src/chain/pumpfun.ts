@@ -2,7 +2,7 @@
 // construye instrucciones; la firma la hace el sender con la bóveda.
 // Tras graduar, compra y venta van contra el pool canónico de PumpSwap (REQ-LIVE-002, E2E-12).
 import BN from "bn.js";
-import { PublicKey, type Connection } from "@solana/web3.js";
+import { PublicKey, type AccountInfo, type Connection } from "@solana/web3.js";
 import { ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getTokenMetadata, unpackMint } from "@solana/spl-token";
 import {
   OnlinePumpSdk,
@@ -14,6 +14,7 @@ import {
   userVolumeAccumulatorPda,
   getBuyTokenAmountFromSolAmount,
   getSellSolAmountFromTokenAmount,
+  holderRewardsPda,
   newBondingCurve,
   type BondingCurve,
   type Global,
@@ -225,6 +226,40 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
           : [await PUMP_SDK.createV2Instruction(base)];
       const alt = getLaunchAlt();
       return { kind: "create", payer: p.creator, signers: [p.creator, p.mint], mint: p.mint, quote: q, payload: { instructions } satisfies PumpPayload, ...(alt ? { lookupTables: [alt] } : {}) };
+    },
+
+    // Compras del bundle: la curva no está en la cadena. Se cotizan en orden sobre el estado que dejaría
+    // create_v2 + dev buy (Token-2022, igual que createV2AndBuyInstructions). `buyInstructions` exige
+    // `bondingCurveAccountInfo` en el tipo, pero solo lee `creator` e `isMayhemMode` del objeto decodificado.
+    buildLaunchBundleBuys: async (p) => {
+      if (!p.buys.length) return [];
+      const { global, feeConfig } = await globals();
+      const mint = new PublicKey(p.mint);
+      const c = newBondingCurve(global, undefined, null, undefined, p.holderReward);
+      c.creator = p.holderReward ? holderRewardsPda(mint) : new PublicKey(p.creator);
+      c.isMayhemMode = p.mayhem;
+      const feeBps = BigInt(global.feeBasisPoints.toString());
+      const advance = (l: bigint, first: boolean) => {
+        if (l <= 0n) return 0n;
+        const tokens = big(getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: first ? null : c.tokenTotalSupply, bondingCurve: first ? null : c, amount: bn(l), quoteMint: NATIVE_MINT }));
+        const net = l - (l * feeBps) / 10_000n;
+        c.virtualQuoteReserves = bn(big(c.virtualQuoteReserves) + net);
+        c.virtualTokenReserves = bn(big(c.virtualTokenReserves) - tokens);
+        c.realTokenReserves = bn(big(c.realTokenReserves) - tokens);
+        c.realQuoteReserves = bn(big(c.realQuoteReserves) + net);
+        return tokens;
+      };
+      advance(p.devBuyLamports, true);
+      const accountInfo: AccountInfo<Buffer> = { data: Buffer.alloc(0), executable: false, lamports: 0, owner: new PublicKey("11111111111111111111111111111111") };
+      const out: PreparedTx[] = [];
+      for (const b of p.buys) {
+        const seen = buyQuote(global, feeConfig, c, b.lamports, p.slippagePct);
+        advance(b.lamports, false);
+        const user = new PublicKey(b.user);
+        const instructions = await PUMP_SDK.buyInstructions({ global, bondingCurveAccountInfo: accountInfo, bondingCurve: c, associatedUserAccountInfo: null, mint, user, amount: bn(seen.amountOut), solAmount: bn(b.lamports), slippage: p.slippagePct, tokenProgram: TOKEN_2022_PROGRAM_ID });
+        out.push({ kind: "buy", payer: b.user, signers: [b.user], mint: p.mint, quote: seen, payload: { instructions } satisfies PumpPayload });
+      }
+      return out;
     },
 
     buildBuyTx: async ({ mint, user, lamports, slippagePct }) => {
