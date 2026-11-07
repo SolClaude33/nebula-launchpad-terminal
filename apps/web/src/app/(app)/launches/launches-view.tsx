@@ -43,6 +43,9 @@ const STATUS: Record<LaunchItem["status"], { label: string; cls: string }> = {
 
 export function LaunchesView({ tab }: { tab: "launches" | "drafts" }) {
   const [counts, setCounts] = useState<{ launches: number | null; drafts: number | null }>({ launches: null, drafts: null });
+  // Callbacks estables: si cambiaran en cada render, el efecto de carga de las listas se relanzaría sin fin.
+  const onLaunches = useCallback((n: number) => setCounts((c) => (c.launches === n ? c : { ...c, launches: n })), []);
+  const onDrafts = useCallback((n: number) => setCounts((c) => (c.drafts === n ? c : { ...c, drafts: n })), []);
   return (
     <div className="mx-auto max-w-[1080px] p-6 pb-16">
       <div className="flex items-end justify-between gap-4">
@@ -67,7 +70,7 @@ export function LaunchesView({ tab }: { tab: "launches" | "drafts" }) {
           </Link>
         ))}
       </nav>
-      {tab === "launches" ? <LaunchList onCount={(n) => setCounts((c) => ({ ...c, launches: n }))} onDrafts={(n) => setCounts((c) => ({ ...c, drafts: n }))} /> : <DraftList onCount={(n) => setCounts((c) => ({ ...c, drafts: n }))} />}
+      {tab === "launches" ? <LaunchList onCount={onLaunches} onDrafts={onDrafts} /> : <DraftList onCount={onDrafts} />}
     </div>
   );
 }

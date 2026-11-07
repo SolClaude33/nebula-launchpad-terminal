@@ -13,6 +13,7 @@ import { walletRoutes } from "./routes/wallets";
 import { settingsRoutes } from "./routes/settings";
 import { chainRoutes } from "./routes/chain";
 import { ChainManager } from "./chain-manager";
+import { isNetworkError } from "./chain/rpc";
 import { Operations } from "./operations";
 import { operationRoutes } from "./routes/operations";
 import { Launches } from "./launches";
@@ -229,6 +230,11 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     if (err instanceof ZodError) return reply.code(400).send({ code: "VALIDATION", message: err.issues.map((i) => i.message).join(" · ") });
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ code: "BAD_REQUEST", message: scrub(e.message ?? "") });
+    if (isNetworkError(err)) {
+      // Sin RPC alcanzable (p. ej. mainnet con el RPC local por defecto): mensaje accionable en vez de «Error interno».
+      req.log.warn({ err: { message: scrub(e.message ?? "") } }, "RPC inalcanzable");
+      return reply.code(503).send({ code: "RPC_UNREACHABLE", message: "No hay conexión con el RPC. Revisa la URL y la clave del RPC principal en Ajustes." });
+    }
     req.log.error({ err: { message: scrub(e.message ?? "") } }, "error no controlado");
     return reply.code(500).send({ code: "INTERNAL", message: "Error interno. Revisa los logs locales." });
   });
