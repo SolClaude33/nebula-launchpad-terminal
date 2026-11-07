@@ -2,23 +2,44 @@
 // cola del log técnico en un JSON y lo redacta antes de que salga del proceso:
 // - por valor: los secretos de Ajustes (descifrados solo para buscarlos), el token de sesión y cualquier
 //   secreto registrado en `remember`;
-// - por patrón: claves privadas (base58 de 64 bytes, arrays JSON de 64 números), JWT, parámetros de
-//   credencial en URL y cabeceras de autorización.
+// - por patrón: claves privadas (base58 de 64 bytes, arrays JSON de 64 o 32 números), JWT, claves de API
+//   con nombre, credenciales en URL (parámetro, segmento o subdominio) y cabeceras de autorización;
+// - las cadenas base58 de 32 bytes (semilla o dirección: mismo formato) se acortan a `abcd…wxyz`, salvo las
+//   direcciones que la app ya conoce (wallets, mints, libreta, traders del Live y programas).
 // Nunca incluye claves de wallets (no se descifran aquí) ni el contenido de la bóveda.
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { version as nodeVersion } from "node:process";
 import type { Ctx } from "./app";
 import { logActivity } from "./db";
-import { readSecret, remember, scrub, SECRET_NAMES, storedSettings } from "./settings";
+import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@pump-fun/pump-sdk";
+import { readSecret, remember, scrub, SECRET_NAMES, splitRpcKey, storedSettings } from "./settings";
 
 const LOG_TAIL_BYTES = 512 * 1024;
 
 // claves privadas de Solana en base58 (64 bytes ≈ 86-88 caracteres)
 const B58_64 = /\b[1-9A-HJ-NP-Za-km-z]{80,90}\b/g;
+// semillas de 32 bytes y direcciones (32-44 caracteres): no se distinguen por el formato (REVIEW-F1 P3-12)
+const B58_32 = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+const URL_RE = /\b(?:https?|wss?):\/\/[^\s"'<>\\]+/gi;
+// programas que aparecen a menudo en los logs y no son secretos
+const PROGRAMS = [
+  "11111111111111111111111111111111",
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+  "ComputeBudget111111111111111111111111111111",
+  "AddressLookupTab1e1111111111111111111111111",
+  "So11111111111111111111111111111111111111112",
+  PUMP_PROGRAM_ID.toBase58(),
+  PUMP_AMM_PROGRAM_ID.toBase58(),
+];
 const PATTERNS: [RegExp, string][] = [
-  // arrays de 64 bytes (formato del CLI de Solana)
+  // arrays de 64 o 32 bytes (formato del CLI de Solana, o una semilla)
   [/\[\s*(?:\d{1,3}\s*,\s*){63}\d{1,3}\s*\]/g, "[clave-redactada]"],
+  [/\[\s*(?:\d{1,3}\s*,\s*){31}\d{1,3}\s*\]/g, "[clave-redactada]"],
+  // claves de API y secretos con nombre: "apiKey": "…", x-api-key: …, password=…
+  [/((?:x-)?(?:api[-_]?key|apikey|secret(?:[-_]?key)?|private[-_]?key|password|passphrase|jwt|(?:access|auth|api|session|bearer|refresh)[-_]?token)(?:\\*["'])?\s*[:=]\s*(?:\\*["'])?)(?!\{key\}|\[|true\b|false\b|null\b)[A-Za-z0-9._~+/=-]{8,}/gi, "$1[redactado]"],
   // JWT (Pinata y similares)
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[jwt-redactado]"],
   // credenciales en URL
@@ -34,9 +55,35 @@ const PATTERNS: [RegExp, string][] = [
 export function redact(text: string, extra: string[] = [], keep: Set<string> = new Set()) {
   let out = scrub(text);
   for (const s of extra) if (s && s.length >= 6) out = out.split(s).join("[redactado]");
+  // URLs con la clave en un parámetro con otro nombre, en un segmento o en el subdominio: la misma heurística
+  // que al guardar el RPC (aquí separar de más es inocuo)
+  out = out.replace(URL_RE, (u) => {
+    const { key } = splitRpcKey(u);
+    return key && !keep.has(key) ? u.split(key).join("[redactado]") : u;
+  });
   out = out.replace(B58_64, (m) => (keep.has(m) ? m : "[clave-redactada]"));
   for (const [re, rep] of PATTERNS) out = out.replace(re, rep);
+  out = out.replace(B58_32, (m) => (keep.has(m) ? m : `${m.slice(0, 4)}…${m.slice(-4)}`));
   return out;
+}
+
+/** Direcciones públicas que la app conoce: se dejan enteras porque sirven para depurar. */
+function knownAddresses(db: ReturnType<Ctx["db"]>) {
+  const col = (sql: string) => (db.prepare(sql).all() as { a: string | null }[]).map((r) => r.a).filter((a): a is string => !!a);
+  return [
+    ...PROGRAMS,
+    ...col("SELECT address AS a FROM wallet"),
+    ...col("SELECT address AS a FROM mint_key"),
+    ...col("SELECT address AS a FROM address_book"),
+    ...col("SELECT mint AS a FROM launch"),
+    ...col("SELECT DISTINCT mint AS a FROM tx"),
+    ...col("SELECT mint AS a FROM live_mint"),
+    ...col("SELECT migrated_pool AS a FROM live_mint"),
+    ...col("SELECT DISTINCT user AS a FROM live_trade"),
+    ...col("SELECT DISTINCT mint AS a FROM trade_order"),
+    ...col("SELECT DISTINCT mint AS a FROM task"),
+    ...col("SELECT DISTINCT address AS a FROM claim_item"),
+  ];
 }
 
 function tail(file: string, bytes: number) {
@@ -82,8 +129,9 @@ export function diagnostics(ctx: Ctx) {
     activity: db.prepare("SELECT at, kind, detail FROM activity_log ORDER BY id DESC LIMIT 300").all(),
     log: tail(join(ctx.dataDir, "logs", "nebula.log"), LOG_TAIL_BYTES).split("\n").filter(Boolean),
   };
-  const sigs = new Set((db.prepare("SELECT signature FROM tx WHERE signature IS NOT NULL").all() as { signature: string }[]).map((r) => r.signature));
-  const text = redact(JSON.stringify(report, null, 2), [ctx.token], sigs);
+  const keep = new Set((db.prepare("SELECT signature FROM tx WHERE signature IS NOT NULL").all() as { signature: string }[]).map((r) => r.signature));
+  for (const a of knownAddresses(db)) keep.add(a);
+  const text = redact(JSON.stringify(report, null, 2), [ctx.token], keep);
   logActivity(db, "diagnostics.export", "Diagnóstico exportado (secretos redactados)");
   return text;
 }

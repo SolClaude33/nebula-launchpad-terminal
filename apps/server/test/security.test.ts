@@ -3,6 +3,8 @@ import { networkInterfaces } from "node:os";
 import { connect } from "node:net";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { b58encode } from "../src/base58";
 import { HOST, makeApp, ORIGIN, PW } from "./helpers";
 
 type App = Awaited<ReturnType<typeof makeApp>>;
@@ -102,5 +104,36 @@ describe("REQ-LOG-001 · Exportar diagnóstico", () => {
     // con la bóveda bloqueada no se exporta
     await a.call("POST", "/api/vault/lock");
     expect((await a.app.inject({ method: "GET", url: "/api/diagnostics", headers: { host: HOST, origin: ORIGIN, "x-nebula-session": a.ctx.token } })).statusCode).toBe(423);
+  });
+
+  it("REVIEW-F1 P3-12: también redacta claves de 32 bytes, claves de API y URLs con la clave en cualquier sitio, sin perder las direcciones propias", async () => {
+    const a = await makeApp();
+    apps.push(a);
+    await a.call("POST", "/api/vault/setup", { password: PW, ack: true });
+    const [w] = (await a.call("POST", "/api/wallets", { count: 1 })).json.created as string[];
+    const address = ((await a.call("GET", "/api/wallets")).json.wallets as { id: string; address: string }[]).find((x) => x.id === w)!.address;
+    const seed = b58encode(randomBytes(32)); // semilla de 32 bytes: mismo formato que una dirección
+    const stranger = b58encode(randomBytes(32)); // dirección ajena que la app no conoce
+    const leaks = [
+      seed,
+      "sk_live_9f8e7d6c5b4a3928", // "apiKey": …
+      "hdr-0a1b2c3d4e5f6a7b8c9d", // x-api-key: …
+      "k3y0123456789abcdef", // segmento de la ruta
+      "a1b2c3d4e5f6g7h8i9", // subdominio
+      "9f8e7d6c5b4a39281706", // parámetro con otro nombre
+    ];
+    a.app.log.warn(`semilla accidental ${seed} y dirección propia ${address}`);
+    a.app.log.warn(`array de 32 [${Array.from({ length: 32 }, (_, i) => 200 + (i % 50)).join(",")}]`);
+    a.app.log.warn(`config {"apiKey":"${leaks[1]}"} x-api-key: ${leaks[2]}`);
+    a.app.log.warn(`rpc https://mainnet.example-rpc.com/v2/${leaks[3]} ws wss://${leaks[4]}.rpc.example.com/ y https://rpc.example.com/?x-credencial=${leaks[5]}&net=main`);
+    a.app.log.warn(`comprador externo ${stranger}`);
+    const text = (await a.app.inject({ method: "GET", url: "/api/diagnostics", headers: { host: HOST, origin: ORIGIN, "x-nebula-session": a.ctx.token } })).body;
+    expect(() => JSON.parse(text)).not.toThrow();
+    for (const s of leaks) expect(text, s).not.toContain(s);
+    expect(text).not.toContain("200,201,202,203");
+    // la dirección propia se conserva entera; la ajena se acorta (reconocible, pero no reconstruible)
+    expect(text).toContain(address);
+    expect(text).not.toContain(stranger);
+    expect(text).toContain(`${stranger.slice(0, 4)}…${stranger.slice(-4)}`);
   });
 });
