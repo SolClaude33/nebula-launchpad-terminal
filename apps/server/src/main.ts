@@ -3,6 +3,10 @@ import { dirname } from "node:path";
 import { API_PORT } from "@nebula/shared";
 import { currentProfile, dataDir, sessionTokenPath } from "@nebula/shared/node";
 import { buildApp } from "./app";
+import { installOutputScrub } from "./settings";
+
+// lo que las librerías escriban por la terminal también pasa por la redacción (REVIEW-F1 P3-14)
+installOutputScrub();
 
 const profile = currentProfile();
 const dir = dataDir(profile);

@@ -123,3 +123,32 @@ export function scrub(text: string): string {
   for (const s of known) if (out.includes(s)) out = out.split(s).join("[redactado]");
   return out;
 }
+
+type Writable = { write: (...args: never[]) => boolean };
+const patched = new WeakSet<object>();
+
+/**
+ * REVIEW-F1 P3-14: lo que las librerías imprimen por console.* (p. ej. errores de WebSocket de web3.js) no
+ * pasa por pino. Se envuelven stdout y stderr del proceso para que también pase por `scrub`.
+ */
+export function installOutputScrub(streams: Writable[] = [process.stdout, process.stderr]) {
+  for (const stream of streams) {
+    if (patched.has(stream)) continue;
+    patched.add(stream);
+    const original = stream.write.bind(stream) as (...args: unknown[]) => boolean;
+    (stream as { write: unknown }).write = (chunk: unknown, ...rest: unknown[]) => {
+      if (known.size > 0) {
+        if (typeof chunk === "string") chunk = scrub(chunk);
+        else if (chunk instanceof Uint8Array) {
+          const text = Buffer.from(chunk).toString("utf8");
+          const clean = scrub(text);
+          if (clean !== text) {
+            chunk = clean;
+            if (typeof rest[0] === "string") rest[0] = "utf8";
+          }
+        }
+      }
+      return original(chunk, ...rest);
+    };
+  }
+}
