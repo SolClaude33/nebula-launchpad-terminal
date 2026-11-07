@@ -503,6 +503,13 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     feeOf,
     rentExemptMin: async () => RENT_EXEMPT_MIN_DEFAULT,
   };
-  const launchAlt = { status: async () => ({ ready: true, address: null, keys: 0, rentLamports: 0n }), ensure: async () => ({ address: "mock", created: false }) };
+  const launchAlt = {
+    status: async () => ({ ready: true, address: null, keys: 0, rentLamports: 0n }),
+    ensure: async () => ({ address: "mock", created: false }),
+    // el mock no necesita tabla de direcciones: no hay nada que cerrar
+    closing: async () => ({ current: null, closing: null }),
+    deactivate: async (): Promise<SendResult> => ({ status: "failed", code: "SIMULATION_FAILED", message: "El mock no usa tabla de direcciones." }),
+    close: async (): Promise<SendResult> => ({ status: "failed", code: "SIMULATION_FAILED", message: "El mock no usa tabla de direcciones." }),
+  };
   return { adapter, sender, reader, ledger, transfers, launchAlt };
 }

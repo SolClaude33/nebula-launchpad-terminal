@@ -214,6 +214,19 @@ export type LaunchAltManager = {
   status(): Promise<{ ready: boolean; address: string | null; keys: number; rentLamports: bigint }>;
   /** la crea si falta; la paga `payer` (una sola vez por perfil y versión del programa) */
   ensure(payer: string): Promise<{ address: string; created: boolean }>;
+  /** Cierre en dos pasos para recuperar su rent: desactivar y, ~512 slots después, cerrar. `null` si no hay */
+  closing(): Promise<AltCloseInfo>;
+  /** desactiva la tabla actual (la firma su autoridad); la siguiente creación de token creará otra */
+  deactivate(): Promise<SendResult>;
+  /** cierra la tabla desactivada y manda su rent a `recipient` (paga la fee la autoridad) */
+  close(recipient: string): Promise<SendResult>;
+};
+
+export type AltCloseInfo = {
+  /** tabla en uso (activa) */
+  current: { address: string; authority: string | null; lamports: bigint } | null;
+  /** tabla desactivada pendiente de cerrar; `slotsLeft` = 0 cuando ya se puede cerrar */
+  closing: { address: string; authority: string | null; lamports: bigint; deactivationSlot: number; slotsLeft: number } | null;
 };
 
 export type ChainEnv = { adapter: LaunchpadAdapter; sender: TxSender; reader: ChainReader; transfers: TransferBuilder; launchAlt: LaunchAltManager };

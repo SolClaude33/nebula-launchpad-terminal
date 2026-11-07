@@ -185,6 +185,47 @@ export class Launches {
     return r;
   }
 
+  // ── Cerrar la tabla de direcciones para recuperar su rent (F2 · restos Should) ─────────────────────────
+  // Solo tiene sentido cuando ya no se va a lanzar más: el siguiente lanzamiento la vuelve a crear y paga el rent
+  // otra vez. Se bloquea mientras haya un lanzamiento en curso, en pausa o programado.
+  private altBlocker() {
+    const busy = this.db().prepare("SELECT COUNT(*) AS n FROM launch WHERE status IN ('CREATING','CREATED','BUYING','PAUSED') OR (status = 'PREPARED' AND schedule_state IN ('WAITING','PAUSED'))").get() as { n: number };
+    return busy.n ? "Hay un lanzamiento en curso, en pausa o programado: espera a que termine o cancélalo." : null;
+  }
+  private ownByAddress(address: string | null) {
+    return address ? ((this.db().prepare("SELECT id, label, address FROM wallet WHERE address = ? AND archived = 0").get(address) as { id: string; label: string; address: string } | undefined) ?? null) : null;
+  }
+
+  async altInfo() {
+    if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
+    const st = await this.chain.get().launchAlt.closing();
+    const conv = <T extends { authority: string | null; lamports: bigint }>(x: T | null) => (x ? { ...x, lamports: x.lamports.toString(), authorityWallet: this.ownByAddress(x.authority) } : null);
+    return { current: conv(st.current), closing: conv(st.closing), blocker: this.altBlocker() };
+  }
+
+  async deactivateAlt() {
+    if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
+    const b = this.altBlocker();
+    if (b) throw Object.assign(new Error(b), { statusCode: 409 });
+    const info = await this.altInfo();
+    if (info.current && !info.current.authorityWallet) throw Object.assign(new Error("La autoridad de la tabla no es una wallet de la bóveda (o está archivada)."), { statusCode: 409 });
+    const res = await this.chain.get().launchAlt.deactivate();
+    if (res.status !== "confirmed") throw Object.assign(new Error(res.status === "pending" ? "La desactivación está pendiente de confirmar; vuelve a mirar en unos segundos." : `No se pudo desactivar: ${"message" in res ? res.message : res.status}`), { statusCode: 409 });
+    logActivity(this.db(), "launch.alt.deactivate", `Tabla de direcciones ${info.current!.address} desactivada (se podrá cerrar en ~512 slots)`);
+    return this.altInfo();
+  }
+
+  async closeAlt(recipientId: string) {
+    if (!this.vault.isUnlocked()) throw new VaultError("LOCKED", "La bóveda está bloqueada.");
+    const to = this.wallet(recipientId);
+    const info = await this.altInfo();
+    if (info.closing && !info.closing.authorityWallet) throw Object.assign(new Error("La autoridad de la tabla no es una wallet de la bóveda (o está archivada)."), { statusCode: 409 });
+    const res = await this.chain.get().launchAlt.close(to.address);
+    if (res.status !== "confirmed") throw Object.assign(new Error(res.status === "pending" ? "El cierre está pendiente de confirmar; vuelve a mirar en unos segundos." : `No se pudo cerrar: ${"message" in res ? res.message : res.status}`), { statusCode: 409 });
+    logActivity(this.db(), "launch.alt.close", `Tabla de direcciones ${info.closing!.address} cerrada: ${(Number(info.closing!.lamports) / 1e9).toFixed(6)} SOL de rent a ${to.label}`);
+    return { ...(await this.altInfo()), recovered: info.closing!.lamports, to: to.label };
+  }
+
   quote(devBuyLamports: bigint, buys: bigint[]) {
     return this.chain.get().adapter.quoteLaunch({ devBuyLamports, buys });
   }

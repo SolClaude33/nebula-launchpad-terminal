@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+import { AddressLookupTableProgram, PublicKey } from "@solana/web3.js";
 import { ExtensionType, TOKEN_PROGRAM_ID, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getMint, getTokenMetadata } from "@solana/spl-token";
 
 const METAPLEX = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
@@ -264,7 +264,8 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
   const loadAlt = async (address: string, want: string[]) => {
     const r = await pool.run((c) => c.getAddressLookupTable(new PublicKey(address)));
     const acc = r.value;
-    if (!acc) return null;
+    // una tabla desactivada no sirve para crear tokens (deja de poder usarse en ~512 slots)
+    if (!acc || !acc.isActive()) return null;
     const have = new Set(acc.state.addresses.map((a) => a.toBase58()));
     return want.every((k) => have.has(k)) ? acc : null;
   };
@@ -317,6 +318,53 @@ export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endp
       if (!alt) throw Object.assign(new Error("La tabla de direcciones no se activó a tiempo; vuelve a intentarlo."), { statusCode: 409 });
       kvSet(opts.db(), `launchAlt:${opts.profile}`, JSON.stringify({ address, fp: keysFingerprint(want) }));
       return { address, created: true };
+    },
+    // Recuperar el rent de la tabla: se desactiva (pasa a `launchAltClosing`, así una creación posterior puede crear
+    // otra sin perder la pendiente) y, cuando la desactivación sale de SlotHashes (~512 slots), se cierra.
+    closing: async () => {
+      const slot = await pool.run((c) => c.getSlot("confirmed"));
+      const read = async (key: string) => {
+        const saved = JSON.parse(kvGet(opts.db(), key) ?? "null") as { address: string } | null;
+        if (!saved) return null;
+        const pk = new PublicKey(saved.address);
+        const [r, info] = await Promise.all([pool.run((c) => c.getAddressLookupTable(pk)), pool.run((c) => c.getAccountInfo(pk, "confirmed"))]);
+        if (!r.value || !info) {
+          if (key.startsWith("launchAltClosing")) kvSet(opts.db(), key, "null"); // ya cerrada
+          return null;
+        }
+        return { address: saved.address, authority: r.value.state.authority?.toBase58() ?? null, lamports: BigInt(info.lamports), active: r.value.isActive(), deactivationSlot: Number(r.value.state.deactivationSlot) };
+      };
+      const cur = await read(`launchAlt:${opts.profile}`);
+      const old = await read(`launchAltClosing:${opts.profile}`);
+      const pending = old ?? (cur && !cur.active ? cur : null);
+      return {
+        current: cur && cur.active ? { address: cur.address, authority: cur.authority, lamports: cur.lamports } : null,
+        closing: pending ? { address: pending.address, authority: pending.authority, lamports: pending.lamports, deactivationSlot: pending.deactivationSlot, slotsLeft: Math.max(0, pending.deactivationSlot + 513 - slot) } : null,
+      };
+    },
+    deactivate: async () => {
+      const st = await launchAlt.closing();
+      if (st.closing) throw Object.assign(new Error("Ya hay una tabla desactivada pendiente de cerrar."), { statusCode: 409 });
+      if (!st.current?.authority) throw Object.assign(new Error("No hay tabla de direcciones activa."), { statusCode: 409 });
+      const lookupTable = new PublicKey(st.current.address);
+      const authority = st.current.authority;
+      const res = await sender.send({ kind: "transfer", payer: authority, signers: [authority], cuLimit: 10_000, payload: { instructions: [AddressLookupTableProgram.deactivateLookupTable({ lookupTable, authority: new PublicKey(authority) })] } }, { idempotencyKey: `alt-deactivate:${st.current.address}` });
+      if (res.status === "confirmed") {
+        kvSet(opts.db(), `launchAltClosing:${opts.profile}`, JSON.stringify({ address: st.current.address }));
+        kvSet(opts.db(), `launchAlt:${opts.profile}`, "null");
+        alt = null;
+      }
+      return res;
+    },
+    close: async (recipient: string) => {
+      const st = await launchAlt.closing();
+      if (!st.closing?.authority) throw Object.assign(new Error("No hay ninguna tabla desactivada que cerrar."), { statusCode: 409 });
+      if (st.closing.slotsLeft > 0) throw Object.assign(new Error(`Aún no se puede cerrar: faltan ~${st.closing.slotsLeft} slots (unos ${Math.ceil((st.closing.slotsLeft * 0.4) / 60)} min).`), { statusCode: 409 });
+      const authority = st.closing.authority;
+      const ix = AddressLookupTableProgram.closeLookupTable({ lookupTable: new PublicKey(st.closing.address), authority: new PublicKey(authority), recipient: new PublicKey(recipient) });
+      const res = await sender.send({ kind: "transfer", payer: authority, signers: [authority], cuLimit: 10_000, payload: { instructions: [ix] } }, { idempotencyKey: `alt-close:${st.closing.address}` });
+      if (res.status === "confirmed") kvSet(opts.db(), `launchAltClosing:${opts.profile}`, "null");
+      return res;
     },
   };
   const transfers: TransferBuilder = {

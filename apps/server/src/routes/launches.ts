@@ -42,6 +42,10 @@ export const launchRoutes =
       const { payerWalletId } = z.object({ payerWalletId: z.string() }).parse(req.body);
       return ctx.launches.ensureAlt(payerWalletId);
     });
+    // Recuperar el rent de la tabla de direcciones: desactivar y, ~512 slots después, cerrar
+    app.get("/launches/alt", async () => ctx.launches.altInfo());
+    app.post("/launches/alt/deactivate", async () => ctx.launches.deactivateAlt());
+    app.post("/launches/alt/close", async (req) => ctx.launches.closeAlt(z.object({ recipientId: z.string() }).parse(req.body).recipientId));
 
     app.post("/launches/:id/execute", async (req) => {
       const { id } = z.object({ id: z.string() }).parse(req.params);

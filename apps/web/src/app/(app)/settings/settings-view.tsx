@@ -13,6 +13,7 @@ import { useVault } from "@/lib/vault";
 import { toast } from "@/lib/toast";
 import { StepUpDialog } from "@/components/wallets/dialogs";
 import { BackupsPanel } from "./backups-panel";
+import { AltPanel } from "./alt-panel";
 import Link from "next/link";
 import { ScrollText } from "lucide-react";
 import { DiagnosticsButton } from "@/components/settings/diagnostics-button";
@@ -68,6 +69,7 @@ export function SettingsView() {
           <TradingSection s={s} save={save} />
           <JitoSection s={s} save={save} profile={profile} />
           <SecuritySection s={s} save={save} />
+          <AltPanel />
           <BackupsPanel />
           <PasswordSection />
           <DiagnosticsSection />
