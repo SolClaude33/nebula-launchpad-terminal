@@ -70,7 +70,29 @@ describe("modo Pro · espera fija por wallet", () => {
     expect(t.every((x) => typeof x === "number")).toBe(true);
     expect(t[0]).toBeGreaterThanOrEqual(1000); // 1 s tras la creación
     expect(t[1]).toBeGreaterThanOrEqual(t[0]); // sin espera: justo después de la primera
-    expect(t[2] - t[1]).toBeGreaterThanOrEqual(2000); // 2 s tras la segunda
+    expect(t[2] - t[1]).toBeGreaterThanOrEqual(1900); // ~2 s tras la segunda (medido entre envíos)
+  }, 40_000);
+
+  it("la espera se cuenta desde el ENVÍO anterior: una confirmación lenta no retrasa la siguiente compra", async () => {
+    const sender = ctx.chain.get().sender;
+    const orig = sender.send.bind(sender);
+    // confirmaciones de 1,5 s solo para las compras del lanzamiento
+    sender.send = async (tx, o) => {
+      const r = await orig(tx, o);
+      if (o.idempotencyKey.includes(":buy:")) await sleep(1500);
+      return r;
+    };
+    try {
+      const id = await launch(cfg("pro", [0, 500, 500]));
+      const v = await ctx.launches.waitIdle(id, 30_000);
+      expect(v.status).toBe("DONE");
+      const t = (v.buys as Buy[]).map((b) => b.sentAfterMs!);
+      expect(t[1] - t[0]).toBeGreaterThanOrEqual(450);
+      expect(t[1] - t[0]).toBeLessThan(1200); // antes: 500 ms + 1,5 s de confirmación
+      expect(t[2] - t[1]).toBeLessThan(1200);
+    } finally {
+      sender.send = orig;
+    }
   }, 40_000);
 
   it("en Quick la espera se ignora", async () => {

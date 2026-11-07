@@ -25,8 +25,8 @@ export const LaunchConfig = z.object({
   /** quick: compras seguidas tras la creación · pro: igual, con una espera fija por wallet · manual: solo dev. */
   mode: z.enum(["quick", "pro", "manual"]),
   /**
-   * `delayMs` (solo en Pro): milisegundos fijos de espera antes de la compra de esa wallet, contados desde que se
-   * confirmó la compra anterior (o la creación, para la primera). Sin aleatoriedad.
+   * `delayMs` (solo en Pro): milisegundos fijos entre el envío de la compra anterior y el de esta (la primera,
+   * desde la creación confirmada). Las confirmaciones no frenan la siguiente compra. Sin aleatoriedad.
    */
   holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/), delayMs: z.number().int().min(0).max(10_000).default(0) })).max(40).default([]),
   slippagePct: z.number().min(0.1).max(50),
@@ -119,9 +119,16 @@ export class Launches {
     const created = this.db().prepare("SELECT updated_at FROM tx WHERE idempotency_key = ? AND status = 'CONFIRMED'").get(`launch:${id}:create`) as { updated_at: number } | undefined;
     const buys = (
       this.db()
-        .prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
-        .all(id) as { ord: number; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null }[]
-    ).map(({ sentAt, ...b }) => ({ ...b, delayMs: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0, sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null }));
+        .prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt, t.status AS txStatus, t.updated_at AS txUpdatedAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
+        .all(id) as { ord: number; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null; txStatus: string | null; txUpdatedAt: number | null }[]
+    ).map(({ sentAt, txStatus, txUpdatedAt, ...b }) => ({
+      ...b,
+      delayMs: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0,
+      // Envío y confirmación reales, en ms desde la confirmación de la creación; `sentAt` (epoch) para la cuenta en vivo
+      sentAt: b.status === "PENDING" && txStatus === "SENT" ? sentAt : null,
+      sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null,
+      confirmedAfterMs: created && txStatus === "CONFIRMED" && txUpdatedAt !== null ? Math.max(0, txUpdatedAt - created.updated_at) : null,
+    }));
     const scheduled = r.scheduled_at !== null && (r.schedule_state === "WAITING" || r.schedule_state === "PAUSED" || r.schedule_state === "FAILED") && r.status === "PREPARED";
     return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
   }
@@ -463,20 +470,27 @@ export class Launches {
         const guard = cfg.guard ?? null;
         // la ventana del guard empieza al pasar a las compras (justo tras la creación confirmada)
         const guardStart = this.clock();
+        // Pro: cada compra SALE a su hora (espera contada desde que salió la anterior; la primera, desde la
+        // creación confirmada) y las confirmaciones corren a la vez. Quick: una tras otra, esperando cada una.
+        const pro = cfg.mode === "pro";
+        const inflight: Promise<void>[] = [];
+        let unknownLanding = false;
+        let lastStart = Date.now();
         for (const b of buys) {
-          if (this.row(id)!.status !== "BUYING") return;
+          if (this.row(id)!.status !== "BUYING") break;
           await this.testHooks.beforeBuy?.(id, b.ord);
-          // Pro: espera fija antes de esta compra. Se corta si el lanzamiento deja de estar en BUYING (pausa,
-          // bloqueo); al reanudar, la espera de la wallet en curso empieza de cero.
-          const delayMs = cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0;
+          // Espera fija (sin aleatoriedad). Se corta si el lanzamiento deja de estar en BUYING (pausa, bloqueo);
+          // al reanudar, la espera de la wallet en curso cuenta de nuevo desde ese momento.
+          const delayMs = pro ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0;
           if (delayMs > 0) {
-            const until = Date.now() + delayMs;
+            const until = lastStart + delayMs;
             while (Date.now() < until) {
-              if (this.row(id)!.status !== "BUYING") return;
-              await new Promise((res) => setTimeout(res, Math.min(250, until - Date.now())));
+              if (this.row(id)!.status !== "BUYING") break;
+              await new Promise((res) => setTimeout(res, Math.min(50, Math.max(1, until - Date.now()))));
             }
-            if (this.row(id)!.status !== "BUYING") return;
+            if (this.row(id)!.status !== "BUYING") break;
           }
+          lastStart = Date.now();
           // REQ-LAUNCH-014: dentro de la ventana, si las compras externas superan el umbral se completa antes
           if (guard && this.clock() - guardStart <= guard.windowSec * 1000) {
             // Falla cerrado: sin datos de la cadena (429, timeout) no se compra a ciegas (REVIEW-F1 P1-3)
@@ -511,11 +525,29 @@ export class Launches {
             upd.run("FAILED", null, null, (e as Error).message, id, b.ord);
             continue;
           }
-          const res = await chain.sender.send(tx, { idempotencyKey: `launch:${id}:buy:${b.wallet_id}` });
-          if (res.status === "confirmed") upd.run("OK", (await chain.reader.tokenBalance(r.mint, w.address)).toString(), res.signature, null, id, b.ord);
-          else if (res.status === "pending") return this.pause(id, "BUYING");
-          else if (res.status === "failed") upd.run("FAILED", null, res.signature ?? null, res.message, id, b.ord);
+          const mint = r.mint;
+          const settle = async () => {
+            const res = await chain.sender.send(tx, { idempotencyKey: `launch:${id}:buy:${b.wallet_id}` });
+            if (res.status === "confirmed") upd.run("OK", (await chain.reader.tokenBalance(mint, w.address).catch(() => 0n)).toString(), res.signature, null, id, b.ord);
+            else if (res.status === "pending") unknownLanding = true;
+            else if (res.status === "failed") upd.run("FAILED", null, res.signature ?? null, res.message, id, b.ord);
+          };
+          if (!pro) {
+            await settle();
+            if (unknownLanding) return this.pause(id, "BUYING");
+            continue;
+          }
+          // En Pro la confirmación no frena la siguiente compra; un error inesperado no dice si se emitió: pausa
+          inflight.push(
+            settle().catch((e) => {
+              unknownLanding = true;
+              this.log(`Compra ${b.ord} de ${id}: ${(e as Error).message}`);
+            }),
+          );
         }
+        await Promise.all(inflight);
+        if (unknownLanding) return this.pause(id, "BUYING");
+        if (this.row(id)!.status !== "BUYING") return;
         this.set(id, "DONE");
       }
       const v = this.view(id);

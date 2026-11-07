@@ -2,14 +2,15 @@
 
 import { useEffect, useId, useState } from "react";
 import Link from "next/link";
-import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CircleSlash, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
+import { Activity, AlertCircle, CalendarClock, Check, CheckCircle2, CircleDashed, CloudOff, Info, Loader2, PauseCircle, Rocket, XCircle } from "lucide-react";
 import { Address } from "@/components/address";
 import { api } from "@/lib/api";
-import { fmtMs, issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
+import { issues, planAmounts, toLamports, useDraft, HOLDER_BUFFER } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports, useChain } from "@/lib/chain";
 import { TokenGlyph } from "@/components/live/token-header";
 import { useLaunchData } from "./use-launch-data";
+import { LaunchBuys } from "./launch-buys";
 
 function Tip({ text }: { text: string }) {
   const id = useId();
@@ -219,7 +220,6 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
 function LaunchResult() {
   const view = useLaunchRun((s) => s.view)!;
   const steps = view.status === "PAUSED" ? "En pausa" : view.status === "DONE" ? "Lanzado" : view.status === "CREATING" ? "Creando el token…" : view.status === "BUYING" ? "Compras de holders…" : "Confirmación pendiente…";
-  const ok = view.buys.filter((b) => b.status === "OK").length;
   return (
     <div aria-live="polite">
       <p className="telemetry mb-2">Lanzamiento</p>
@@ -243,25 +243,7 @@ function LaunchResult() {
           </div>
         )}
       </dl>
-      {view.mode !== "manual" && (
-        <>
-          <p className="mt-3 mb-1.5 text-[12px] text-muted">
-            Compras · {ok}/{view.buys.length}
-          </p>
-          <ul className="scroll-thin max-h-48 space-y-1 overflow-y-auto">
-            {view.buys.map((b) => (
-              <li key={b.ord} className="flex items-center gap-2 text-[12px]">
-                {b.status === "OK" ? <CheckCircle2 className="size-3.5 text-buy" aria-label="entró" /> : b.status === "FAILED" ? <XCircle className="size-3.5 text-sell" aria-label="falló" /> : b.status === "SKIPPED" ? <CircleSlash className="size-3.5 text-faint" aria-label="omitida" /> : <Loader2 className="size-3.5 animate-spin text-muted" aria-label="pendiente" />}
-                <span className="w-24 truncate">{b.label}</span>
-                <span className="num text-muted">{fmtLamports(BigInt(b.lamports), 3)}</span>
-                {view.mode === "pro" && <span className="num text-faint">espera {fmtMs(b.delayMs ?? 0)}</span>}
-                {b.sentAfterMs != null && <span className="num text-faint" title="Momento real del envío, desde la confirmación de la creación">T+{fmtMs(b.sentAfterMs)}</span>}
-                {b.reason && <span className="truncate text-sell">{b.reason}</span>}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+      {view.mode !== "manual" && <LaunchBuys view={view} />}
       {/* El token ya existe en cadena desde CREATED: su Live Workspace lee datos reales */}
       {["CREATED", "BUYING", "DONE", "PAUSED"].includes(view.status) && view.createSignature && (
         <Link href={`/t/${view.mint}`} className="cta cta-fill mt-4 flex h-11 w-full items-center justify-center gap-2 text-[13.5px] font-semibold">

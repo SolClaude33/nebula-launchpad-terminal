@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { api } from "@/lib/api";
 
-export type ChainStatus = { profile: "test" | "mainnet"; mode: "rpc" | "mock" | "off"; healthy: boolean; host: string | null; latencyMs: number | null; usingBackup: boolean; error: string | null };
+export type ChainStatus = { profile: "test" | "mainnet"; mode: "rpc" | "mock" | "off"; healthy: boolean; host: string | null; latencyMs: number | null; usingBackup: boolean; error: string | null; sendPerSec?: number };
 
 type ChainStore = {
   status: ChainStatus | null;

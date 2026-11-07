@@ -4,12 +4,14 @@ import type { Ctx } from "../app";
 import { logActivity } from "../db";
 import { VaultError } from "../signer";
 import { solToLamports } from "../chain/types";
+import { storedSettings } from "../settings";
 
 export const chainRoutes =
   (ctx: Ctx): FastifyPluginAsync =>
   async (app) => {
     // Estado del RPC para la topbar: no expone nada sensible y no cuenta como actividad
-    app.get("/chain/status", async () => ({ profile: ctx.profile, ...ctx.chain.state() }));
+    // sendPerSec: límite de envíos por segundo de Ajustes (p. ej. 1 en Helius Free); 0 = sin límite
+    app.get("/chain/status", async () => ({ profile: ctx.profile, ...ctx.chain.state(), sendPerSec: storedSettings(ctx.db()).rpcSendPerSec ?? 0 }));
 
     // Saldos de todas las wallets activas (lecturas en lotes de 100)
     app.get("/wallets/balances", async () => {

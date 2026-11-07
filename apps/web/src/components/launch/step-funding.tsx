@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
 import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fmtMs, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
-import { fmtLamports } from "@/lib/chain";
+import { fmtLamports, useChain } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
 import { useLaunchData } from "./use-launch-data";
@@ -120,6 +120,10 @@ export function StepFunding() {
   const [allDelay, setAllDelay] = useState("500");
   const fe = fieldErrors(d);
   const delayErr = fe.delays;
+  // Con un límite de envíos (Helius Free: 1/s), dos compras no pueden salir más juntas que 1000 / límite ms
+  const sendPerSec = useChain((s) => s.status?.sendPerSec ?? 0);
+  const minGap = sendPerSec > 0 ? Math.ceil(1000 / sendPerSec) : 0;
+  const tooTight = isPro && minGap > 0 && d.plan.some((id, i) => i > 0 && (delayOf(d, id) || 0) < minGap);
   const custom = buysAfterCreate(d) && d.amountMode === "custom";
   const funders = wallets.filter((w) => w.kind === "funder" && !w.archived);
   const def = funders.find((f) => f.isDefaultFunder);
@@ -256,7 +260,12 @@ export function StepFunding() {
         {custom && fe.amounts && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.amounts}</p>}
         {isPro && (
           <p className={`border-b border-line px-4 py-2 text-[11.5px] ${delayErr ? "text-sell" : "text-faint"}`}>
-            {delayErr ?? "La espera de cada wallet cuenta desde que se confirma la compra anterior (la primera, desde la creación). A cada compra súmale ~1.000–2.000 ms de confirmación."}
+            {delayErr ?? "La espera de cada wallet cuenta desde que SALE la compra anterior (la primera, desde que se confirma la creación). Las confirmaciones no frenan la siguiente compra."}
+          </p>
+        )}
+        {tooTight && !delayErr && (
+          <p className="border-b border-line bg-[var(--warn-soft)] px-4 py-2 text-[11.5px] text-warn">
+            Tu RPC admite {sendPerSec} envío{sendPerSec === 1 ? "" : "s"} por segundo: entre dos compras habrá al menos {fmtMs(minGap)} aunque pongas menos.
           </p>
         )}
         <div aria-hidden className={`grid ${cols} gap-3 border-b border-line bg-surface-2/40 px-4 py-2`}>
