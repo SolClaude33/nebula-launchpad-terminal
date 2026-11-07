@@ -192,6 +192,9 @@ export class Pnl {
       jito += x.tip;
       if (gross !== null) {
         claims += gross;
+      } else if (x.kind === "close-accounts" && x.own_delta !== null) {
+        // REQ-WAL-010: rent recuperado al cerrar cuentas vacías: vuelve del rent «en cuentas», no es beneficio
+        rent -= x.own_delta + x.fee + x.tip;
       } else if (x.mint && x.own_delta !== null && ["create", "buy", "sell"].includes(x.kind)) {
         // la propina sale de la wallet (está en own_delta): no es rent
         rent += (tradeNet.get(x.signature) ?? 0) - x.fee - x.tip - x.own_delta;

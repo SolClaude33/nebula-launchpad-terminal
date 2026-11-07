@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { ExtensionType, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getMint, getTokenMetadata } from "@solana/spl-token";
+import { ExtensionType, TOKEN_PROGRAM_ID, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getMint, getTokenMetadata } from "@solana/spl-token";
 
 const METAPLEX = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 import { b58decode } from "../base58";
@@ -195,6 +195,20 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
       return r ? BigInt(r.value.amount) : 0n;
     },
     accountExists: async (address) => !!(await pool.run((c) => c.getAccountInfo(new PublicKey(address), "confirmed"))),
+    // REQ-WAL-010: una petición por programa de token; saldo (u64 en el offset 64) exactamente 0
+    emptyTokenAccounts: async (owner) => {
+      const o = new PublicKey(owner);
+      const out: { address: string; mint: string; program: string; lamports: bigint }[] = [];
+      for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+        const r = await pool.run((c) => c.getTokenAccountsByOwner(o, { programId }, "confirmed"));
+        for (const { pubkey, account } of r.value) {
+          const d = account.data;
+          if (d.length < 72 || d.readBigUInt64LE(64) !== 0n) continue;
+          out.push({ address: pubkey.toBase58(), mint: new PublicKey(d.subarray(0, 32)).toBase58(), program: programId.toBase58(), lamports: BigInt(account.lamports) });
+        }
+      }
+      return out;
+    },
     tokenMetadata: async (mint) => {
       const m = new PublicKey(mint);
       const info = await pool.run((c) => c.getAccountInfo(m, "confirmed"));

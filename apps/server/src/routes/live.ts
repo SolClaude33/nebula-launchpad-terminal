@@ -40,6 +40,15 @@ export const liveRoutes =
     app.post("/rewards/:id/execute", async (req) => ctx.rewards.execute(z.object({ id: z.string() }).parse(req.params).id));
     app.post("/rewards/:id/resume", async (req) => ctx.rewards.resume(z.object({ id: z.string() }).parse(req.params).id));
     app.get("/rewards/:id", async (req) => ctx.rewards.view(z.object({ id: z.string() }).parse(req.params).id));
+    // REQ-WAL-010: recuperar rent de cuentas de token vacías
+    app.get("/reclaim", async () => ctx.reclaim.scan());
+    app.post("/reclaim/preview", async (req) => {
+      const b = z.object({ walletIds: z.array(z.string()).min(1).max(500), toId: z.string() }).parse(req.body);
+      return ctx.reclaim.preview(b.walletIds, b.toId);
+    });
+    app.post("/reclaim/:id/execute", async (req) => ctx.reclaim.execute(z.object({ id: z.string() }).parse(req.params).id));
+    app.post("/reclaim/:id/resume", async (req) => ctx.reclaim.resume(z.object({ id: z.string() }).parse(req.params).id));
+    app.get("/reclaim/:id", async (req) => ctx.reclaim.view(z.object({ id: z.string() }).parse(req.params).id));
 
     // Solo en el perfil de pruebas: en mainnet la migración a PumpSwap la hace Pump.fun
     app.post("/dev/migrate", async (req) => {

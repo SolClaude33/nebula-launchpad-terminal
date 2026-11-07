@@ -49,7 +49,7 @@ export type LaunchQuote = {
 
 /** Transacción preparada por el adaptador. `payload` es opaco: solo lo entiende el sender del mismo backend. */
 export type PreparedTx = {
-  kind: "create" | "buy" | "sell" | "claim" | "transfer" | "migrate" | "token-transfer" | "burn";
+  kind: "create" | "buy" | "sell" | "claim" | "transfer" | "migrate" | "token-transfer" | "burn" | "close-accounts";
   /** límite de CU solicitado; la priority fee se cobra sobre él */
   cuLimit?: number;
   /** tablas de direcciones para compilar el mensaje v0 (solo el backend real) */
@@ -151,6 +151,8 @@ export interface LaunchpadAdapter {
   /** rent de las cuentas que crea el reclamo: `upfront` = lo que la wallet necesita además de la fee de red;
    *  `kept` = la parte que no vuelve (coste) */
   claimRent(creator: string): Promise<{ upfront: bigint; kept: bigint }>;
+  /** REQ-WAL-010: cierra cuentas de token VACÍAS de `owner`; el rent va a `dest`, que paga la fee (firma también `owner`) */
+  buildCloseAccountsTx(p: { owner: string; dest: string; accounts: EmptyTokenAccount[] }): Promise<PreparedTx>;
   /** curva, PumpSwap o en migración; market cap, progreso y reservas reales */
   tokenInfo(mint: string): Promise<TokenInfo>;
   /** trades, graduación y migración de una transacción ya confirmada (las fallidas no emiten nada) */
@@ -172,6 +174,8 @@ export interface TxSender {
   send(tx: PreparedTx, opts: { idempotencyKey: string; simulateOnly?: boolean; watch?: string }): Promise<SendResult>;
 }
 
+export type EmptyTokenAccount = { address: string; mint: string; program: string; lamports: bigint };
+
 export interface ChainReader {
   balances(addresses: string[]): Promise<Map<string, bigint>>;
   tokenBalance(mint: string, owner: string): Promise<bigint>;
@@ -191,6 +195,8 @@ export interface ChainReader {
   solUsd(): Promise<{ usd: number; publishedAt: number } | null>;
   /** rent de una cuenta de token nueva del mint (lo que cuesta la primera compra) */
   tokenAccountRent(mint: string): Promise<bigint>;
+  /** REQ-WAL-010: cuentas de token de `owner` con saldo exactamente 0 (Token y Token-2022) */
+  emptyTokenAccounts(owner: string): Promise<EmptyTokenAccount[]>;
   /** solo en el perfil de pruebas */
   airdrop?(address: string, lamports: bigint): Promise<void>;
 }

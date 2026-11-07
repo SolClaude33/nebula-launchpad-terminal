@@ -3,7 +3,7 @@
 // Tras graduar, compra y venta van contra el pool canónico de PumpSwap (REQ-LIVE-002, E2E-12).
 import BN from "bn.js";
 import { PublicKey, type Connection } from "@solana/web3.js";
-import { ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createTransferCheckedInstruction, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getTokenMetadata, unpackMint } from "@solana/spl-token";
+import { ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAccountLen, getAccountTypeOfMintType, getAssociatedTokenAddressSync, getExtensionTypes, getTokenMetadata, unpackMint } from "@solana/spl-token";
 import {
   OnlinePumpSdk,
   PUMP_SDK,
@@ -280,6 +280,14 @@ export function createPumpFunAdapter(pool: RpcPool, getLaunchAlt: () => import("
     // REQ-REW-003: la tx de reclamo (SDK `collectCoinCreatorFee`) crea, pagando el creador, las cuentas WSOL que
     // falten: la del vault de PumpSwap (de una PDA: su rent se queda allí, es coste) y la del creador (se cierra
     // en la misma tx y el rent vuelve). Las dos hay que adelantarlas. Comprobado en Surfpool el 2026-11-07.
+    // REQ-WAL-010: cerrar cuentas vacías; ~3.000 CU cada una en Token y algo más en Token-2022
+    buildCloseAccountsTx: async ({ owner, dest, accounts }) => {
+      const o = new PublicKey(owner);
+      const d = new PublicKey(dest);
+      const instructions = accounts.map((a) => createCloseAccountInstruction(new PublicKey(a.address), d, o, [], new PublicKey(a.program)));
+      return { kind: "close-accounts", payer: dest, signers: dest === owner ? [owner] : [dest, owner], cuLimit: 5_000 + 6_000 * accounts.length, payload: { instructions } satisfies PumpPayload } satisfies PreparedTx;
+    },
+
     claimRent: async (creator) => {
       const owner = new PublicKey(creator);
       const vaultAta = coinCreatorVaultAtaPda(coinCreatorVaultAuthorityPda(owner), NATIVE_MINT, TOKEN_PROGRAM_ID);

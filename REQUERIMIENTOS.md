@@ -151,7 +151,7 @@ Cada adaptador implementa estas funciones:
 | REQ-WAL-007 | M | Archivar, restaurar y borrar. No se puede borrar una wallet usada por una tarea activa. | Borrar una wallet con saldo exige reconfirmar la contraseña y ofrece "Recolectar antes de borrar". | Vortex, Block X |
 | REQ-WAL-008 | M | Acciones: Depositar (QR), Transferir (1 a 1), Dispersar (1 a N, monto fijo o por wallet) y Recolectar (N a 1) | Cada acción muestra una vista previa con las fees de red antes de confirmar. Una vez lanzada, la acción sigue corriendo aunque se cierre el modal. | Proxima, Vortex, Block X |
 | REQ-WAL-009 | S | Actividad por wallet: antigüedad, número de trades, tokens, entradas y salidas, P&L realizado | Coincide con la cadena con un desfase de 1 % o menos. | Vortex |
-| REQ-WAL-010 | S | Recuperar rent: cerrar las cuentas de token vacías y devolver el SOL a la wallet elegida | — | Proxima/Recover Residual Funds |
+| REQ-WAL-010 | S | Recuperar rent: cerrar las cuentas de token vacías y devolver el SOL a la wallet elegida | Solo cuentas con saldo exactamente 0 (Token y Token-2022), nunca quema polvo. Destino = wallet propia, que paga la fee. Vista previa simulada; lo recibido se verifica en cadena. Se omiten las wallets con algo en curso o en pausa. El rent recuperado no cuenta como beneficio en el P&L. | Proxima/Recover Residual Funds |
 
 ### 6.3 FUND: funder
 | ID | P | Requerimiento | Criterios de aceptación | ref |

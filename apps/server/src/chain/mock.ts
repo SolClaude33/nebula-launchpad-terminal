@@ -26,6 +26,7 @@ type Op =
   | { op: "buy"; mint: string; user: string; tokens: bigint; maxSol: bigint }
   | { op: "sell"; mint: string; user: string; tokens: bigint; minSol: bigint }
   | { op: "claim"; creator: string }
+  | { op: "close"; owner: string; dest: string; mints: string[] }
   | { op: "migrate"; mint: string; payer: string }
   | { op: "transfer"; from: string; items: { to: string; lamports: bigint }[] }
   | { op: "token-transfer"; mint: string; from: string; to: string; tokens: bigint }
@@ -41,6 +42,7 @@ const unjson = (s: string) => JSON.parse(s, (_k, x) => (typeof x === "string" &&
 const mcOf = (quote: bigint, token: bigint) => (token > 0n ? (quote * INIT.supply) / token : 0n);
 export const mockCurveAccount = (mint: string) => `curve-${mint}`;
 export const mockPoolAccount = (mint: string) => `pool-${mint}`;
+export const mockTokenAccount = (mint: string, owner: string) => `ata-${mint.slice(0, 8)}-${owner}`;
 
 export class MockLedger {
   sol = new Map<string, bigint>();
@@ -160,6 +162,14 @@ export class MockLedger {
       if (o.op === "token-transfer") this.addTokens(o.mint, o.to, o.tokens);
       else this.burned.set(o.mint, (this.burned.get(o.mint) ?? 0n) + o.tokens);
       this.sol.set(owner, this.balance(owner) - TX_FEE - rent);
+      return { ok: true, fee: TX_FEE };
+    }
+    if (o.op === "close") {
+      // REQ-WAL-010: en el mock una cuenta de token existe si hay entrada (mint, owner), aunque esté a 0
+      for (const m of o.mints) if (!this.tokens.get(m)?.has(o.owner) || this.tokenOf(m, o.owner) !== 0n) return fail("SIMULATION_FAILED", "La cuenta no existe o no está vacía");
+      if (this.balance(o.dest) < TX_FEE) return fail("INSUFFICIENT_FUNDS", "Saldo insuficiente para la fee de red");
+      for (const m of o.mints) this.tokens.get(m)!.delete(o.owner);
+      this.sol.set(o.dest, this.balance(o.dest) - TX_FEE + MOCK_ATA_RENT * BigInt(o.mints.length));
       return { ok: true, fee: TX_FEE };
     }
     if (o.op === "claim") {
@@ -345,6 +355,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
     },
     buildClaimTx: async ({ creator }) => ({ kind: "claim", payer: creator, signers: [creator], payload: { op: "claim", creator } satisfies Op }),
     claimRent: async () => ({ upfront: 0n, kept: 0n }),
+    buildCloseAccountsTx: async ({ owner, dest, accounts }) => ({ kind: "close-accounts", payer: dest, signers: dest === owner ? [owner] : [dest, owner], cuLimit: 5_000 + 6_000 * accounts.length, payload: { op: "close", owner, dest, mints: accounts.map((a) => a.mint) } satisfies Op }),
     tokenInfo: async (mint): Promise<TokenInfo> => {
       const c = curve(mint);
       const pool = ledger.pools.get(mint);
@@ -453,6 +464,10 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
   const reader: ChainReader = {
     balances: async (addrs) => new Map(addrs.map((a) => [a, ledger.balance(a)])),
     tokenBalance: async (mint, owner) => ledger.tokenOf(mint, owner),
+    emptyTokenAccounts: async (owner) =>
+      [...ledger.tokens]
+        .filter(([, m]) => m.has(owner) && m.get(owner) === 0n)
+        .map(([mint]) => ({ address: mockTokenAccount(mint, owner), mint, program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", lamports: MOCK_ATA_RENT })),
     tokenBalances: async (mint, owners) => new Map(owners.map((o) => [o, ledger.tokenOf(mint, o)])),
     holders: async (mint) => ({ complete: true, items: holdersOf(mint) }),
     accountExists: async (a) => ledger.curves.has(a) || ledger.balance(a) > 0n,

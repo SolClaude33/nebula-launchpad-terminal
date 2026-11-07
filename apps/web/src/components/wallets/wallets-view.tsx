@@ -14,6 +14,7 @@ import {
   Layers,
   Loader2,
   Pencil,
+  Recycle,
   Plus,
   Search,
   Send,
@@ -31,6 +32,7 @@ import { Address } from "@/components/address";
 import { Modal, RevealDialog, StepUpDialog } from "./dialogs";
 import { fmtLamports, useChain } from "@/lib/chain";
 import { CollectDialog, DepositDialog, DisperseDialog, TransferDialog } from "./funds-dialogs";
+import { ReclaimDialog } from "./reclaim-dialog";
 import { useVault } from "@/lib/vault";
 
 type Kind = "wallet" | "funder";
@@ -51,7 +53,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
   const profile = useVault((s) => s.status?.profile);
   const [airdropping, setAirdropping] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "rename" | "folder" | "deposit" | "transfer" | "disperse" | "collect">(null);
+  const [dialog, setDialog] = useState<null | "create" | "import" | "export" | "delete" | "role" | "rename" | "folder" | "deposit" | "transfer" | "disperse" | "collect" | "reclaim">(null);
   const [revealed, setRevealed] = useState<{ label: string; address: string; secretKey: string }[] | null>(null);
   const [loadError, setLoadError] = useState("");
 
@@ -207,6 +209,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
             <ActionBtn icon={Send} label="Transferir" disabled={selected.length !== 1 || chainOff} onClick={() => setDialog("transfer")} />
             {kind === "wallet" && <ActionBtn icon={Split} label="Dispersar" disabled={selected.length === 0 || chainOff} onClick={() => setDialog("disperse")} />}
             <ActionBtn icon={Layers} label="Recolectar" disabled={selected.length === 0 || chainOff} onClick={() => setDialog("collect")} />
+            <ActionBtn icon={Recycle} label="Recuperar rent" disabled={selected.length === 0 || chainOff} onClick={() => setDialog("reclaim")} />
           </div>
           <p className="mt-2.5 text-[11.5px] leading-relaxed text-faint">
             {kind === "wallet" ? "Depositar y transferir: una wallet. Dispersar desde un funder y recolectar: varias." : "Para dispersar, selecciona las wallets de destino en Wallets."} Todo se ejecuta en el servidor con vista previa de fees.
@@ -269,6 +272,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
       {dialog === "deposit" && selected[0] && <DepositDialog wallet={selected[0]} onClose={() => setDialog(null)} />}
       {dialog === "transfer" && selected[0] && <TransferDialog from={selected[0]} own={allActive} onClose={() => setDialog(null)} onDone={load} />}
       {dialog === "disperse" && <DisperseDialog funders={allActive.filter((w) => w.kind === "funder")} targets={selected} onClose={() => setDialog(null)} onDone={load} />}
+      {dialog === "reclaim" && <ReclaimDialog owners={selected} destinations={allActive} onClose={() => setDialog(null)} onDone={() => void refreshBalances()} />}
       {dialog === "collect" && <CollectDialog sources={selected} destinations={allActive.filter((w) => !sel.has(w.id) && (w.kind === "funder" || kind === "funder"))} onClose={() => setDialog(null)} onDone={load} />}
       {dialog === "delete" && withBalance.length > 0 && (
         <Modal title="Estas wallets tienen saldo" labelId="del-balance-title" onClose={() => setDialog(null)} width={440}>

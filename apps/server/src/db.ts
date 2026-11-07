@@ -259,6 +259,32 @@ const MIGRATIONS: string[] = [
   ALTER TABLE claim_item ADD COLUMN topup_fee TEXT;
   ALTER TABLE claim_item ADD COLUMN topup_signature TEXT;
   `,
+  `
+  -- REQ-WAL-010: recuperar rent (cerrar cuentas de token vacías). Una fila por transacción (una dueña, hasta
+  -- CLOSE_CHUNK cuentas); expected = neto simulado para el destino, received = medido en cadena
+  CREATE TABLE reclaim (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('PREVIEW','RUNNING','PAUSED','COMPLETED','PARTIAL','FAILED')),
+    to_wallet_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE reclaim_item (
+    reclaim_id TEXT NOT NULL REFERENCES reclaim(id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    wallet_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    accounts TEXT NOT NULL,
+    rent TEXT NOT NULL,
+    expected TEXT NOT NULL,
+    fee TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','OK','FAILED','SKIPPED')),
+    received TEXT,
+    signature TEXT,
+    reason TEXT,
+    PRIMARY KEY (reclaim_id, ord)
+  );
+  `,
 ];
 
 export function openDb(dir: string): DB {

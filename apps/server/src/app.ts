@@ -23,6 +23,7 @@ import { scrub } from "./settings";
 import { Live } from "./live";
 import { Trading } from "./trading";
 import { Rewards } from "./rewards";
+import { Reclaim } from "./reclaim";
 import { liveRoutes } from "./routes/live";
 import { Automations } from "./automations";
 import { automationRoutes } from "./routes/automations";
@@ -53,6 +54,7 @@ export type Ctx = {
   live: Live;
   trading: Trading;
   rewards: Rewards;
+  reclaim: Reclaim;
   automations: Automations;
   pnl: Pnl;
   drafts: Drafts;
@@ -109,6 +111,7 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   let live: Live | null = null;
   let trading: Trading | null = null;
   let rewards: Rewards | null = null;
+  let reclaim: Reclaim | null = null;
   let automations: Automations | null = null;
   let pnl: Pnl | null = null;
   let tokenOps: TokenOps | null = null;
@@ -137,6 +140,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
     },
     get rewards() {
       return rewards!;
+    },
+    get reclaim() {
+      return reclaim!;
     },
     get automations() {
       return automations!;
@@ -206,6 +212,9 @@ export async function buildApp(opts: { profile: Profile; dataDir: string; token?
   rewards = new Rewards(getDb, chainManager, vault, priority, (m) => logger.info(m));
   rewards.pauseAllRunning();
   vault.onLock(() => rewards?.pauseAllRunning());
+  reclaim = new Reclaim(getDb, chainManager, vault, (m) => logger.info(m));
+  reclaim.pauseAllRunning();
+  vault.onLock(() => reclaim?.pauseAllRunning());
   // REQ-AUTO: el motor solo trabaja con la bóveda abierta; al bloquear, pauseRunningTasks deja lo RUNNING en PAUSED
   automations = new Automations(getDb, vault, trading, live, opts.clock ?? Date.now, (m) => logger.info(m));
   automations.start();
