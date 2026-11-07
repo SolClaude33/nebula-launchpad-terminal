@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../src/app";
-import { isPrivateIp, safeFetch } from "../src/clone";
+import { Cloner, ipfsCandidates, isPrivateIp, safeFetch } from "../src/clone";
 import { HOST, ORIGIN, PW, tmpDir } from "./helpers";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -34,6 +34,29 @@ describe("REQ-LAUNCH-005 · clonar metadatos", () => {
     expect((ctx.db().prepare("SELECT COUNT(*) AS n FROM launch").get() as { n: number }).n).toBe(launchesBefore);
     expect((await call("POST", "/api/launches/clone", { mint: "no-es-una-direccion" })).status).toBe(400);
     await app.close();
+  });
+
+  it("si la pasarela responde 429, el mismo CID se pide por las de respaldo (JSON e imagen)", async () => {
+    const cid = "QmSoEyEtUdp2bXbhUH8iYMNstLKhDTwWTCxtLJeviiuKXx";
+    const imgCid = "bafybeibz3d3oj4jmt3i4h2fke4grjmrkjp6yzycnifh2mojrexample";
+    expect(ipfsCandidates(`https://ipfs.io/ipfs/${cid}`, "https://ipfs.io/ipfs/", ["https://a.example/ipfs/"])).toEqual([`https://ipfs.io/ipfs/${cid}`, `https://a.example/ipfs/${cid}`]);
+    expect(ipfsCandidates("https://metadata.example/x.json", "https://ipfs.io/ipfs/")).toEqual(["https://metadata.example/x.json"]);
+    // IPs públicas literales para no depender del DNS: 8.8.4.4 hace de ipfs.io (429) y 1.1.1.1 de respaldo
+    const hits: string[] = [];
+    const fake = (async (u: URL) => {
+      hits.push(u.toString());
+      if (u.hostname === "8.8.4.4") return new Response("Too Many Requests", { status: 429 });
+      if (u.pathname.endsWith(cid)) return new Response(JSON.stringify({ name: "Drink Watta", symbol: "WATTA", image: `https://8.8.4.4/ipfs/${imgCid}` }), { status: 200 });
+      return new Response(Buffer.from(PNG, "base64"), { status: 200, headers: { "content-type": "image/png" } });
+    }) as unknown as typeof fetch;
+    const store = { putMedia: async (b: Buffer, type: string) => ({ cid: "cid-subido", uri: `https://x/ipfs/cid-subido`, size: b.length, type }) };
+    const chain = { get: () => ({ reader: { tokenMetadata: async () => ({ name: "Drink Watta", symbol: "WATTA", uri: `https://8.8.4.4/ipfs/${cid}` }) } }) };
+    const db = { prepare: () => ({ get: () => undefined }) };
+    const cloner = new Cloner(() => db as never, chain as never, store as never, () => "https://8.8.4.4/ipfs/", fake, ["https://1.1.1.1/ipfs/"]);
+    const r = await cloner.clone("FRTdwerLprNJMEu9Wr1YtMJHeJhxtRokgW8o454Hpump");
+    expect(r.warnings).toEqual([]);
+    expect(r).toMatchObject({ name: "Drink Watta", symbol: "WATTA", image: { cid: "cid-subido", contentType: "image/png" } });
+    expect(hits).toContain(`https://1.1.1.1/ipfs/${imgCid}`);
   });
 
   it("la descarga rechaza http, IPs privadas o locales y archivos demasiado grandes", async () => {

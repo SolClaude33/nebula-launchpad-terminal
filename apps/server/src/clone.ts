@@ -13,6 +13,20 @@ const JSON_MAX = 64 * 1024;
 const IMAGE_MAX = 2 * 1024 * 1024;
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
+/**
+ * Pasarelas de respaldo para contenido IPFS. ipfs.io, dweb.link, w3s.link y nftstorage.link responden 429 casi
+ * siempre a peticiones automáticas (medido el 2026-11-07); estas sirvieron el JSON y la imagen de tokens reales.
+ * pump.mypinata.cloud es la pasarela de Pump.fun y la más rápida para sus tokens.
+ */
+export const IPFS_FALLBACK_GATEWAYS = ["https://pump.mypinata.cloud/ipfs/", "https://ipfs.filebase.io/ipfs/", "https://4everland.io/ipfs/", "https://gateway.pinata.cloud/ipfs/"];
+
+/** URLs a probar en orden: la original y, si es contenido IPFS, el mismo CID por la pasarela de Ajustes y las de respaldo. */
+export function ipfsCandidates(uri: string, gateway: string, fallbacks: string[] = IPFS_FALLBACK_GATEWAYS) {
+  const url = uri.startsWith("ipfs://") ? `${gateway}${uri.slice(7).replace(/^ipfs\//, "")}` : uri;
+  const cid = /\/ipfs\/([A-Za-z0-9]{32,100}(?:\/[^?#]*)?)/.exec(url)?.[1];
+  return [url, ...(cid ? [gateway, ...fallbacks].map((g) => `${g}${cid}`) : [])].filter((v, i, a) => a.indexOf(v) === i);
+}
+
 export class CloneError extends Error {
   statusCode = 422;
 }
@@ -115,6 +129,7 @@ export class Cloner {
     private store: MetadataStore,
     private gateway: () => string,
     private fetchImpl: typeof fetch = fetch,
+    private fallbacks: string[] = IPFS_FALLBACK_GATEWAYS,
   ) {}
 
   private async resolve(uri: string, maxBytes: number) {
@@ -123,12 +138,9 @@ export class Cloner {
       if (!got) throw new CloneError("La URI local no existe en este almacén.");
       return { bytes: got.bytes, contentType: got.contentType };
     }
-    const url = uri.startsWith("ipfs://") ? `${this.gateway()}${uri.slice(7).replace(/^ipfs\//, "")}` : uri;
     // Si es contenido de IPFS y la pasarela falla (p. ej. 429 de ipfs.io), el mismo CID se pide por otras
-    const cid = /\/ipfs\/([A-Za-z0-9]{32,100}(?:\/[^?#]*)?)/.exec(url)?.[1];
-    const candidates = [url, ...(cid ? [`${this.gateway()}${cid}`, `https://dweb.link/ipfs/${cid}`] : [])].filter((v, i, a) => a.indexOf(v) === i);
     let last: unknown;
-    for (const c of candidates) {
+    for (const c of ipfsCandidates(uri, this.gateway(), this.fallbacks)) {
       try {
         return await safeFetch(c, maxBytes, this.fetchImpl);
       } catch (e) {
