@@ -339,7 +339,7 @@ function ScheduledCard() {
           {pad(Math.floor(left / 3600))}:{pad(Math.floor((left % 3600) / 60))}:{pad(left % 60)}
         </p>
       )}
-      {s.state === "PAUSED" && <p className="mt-2 text-[12px] text-warn">La bóveda estaba bloqueada. Confírmalo desde el aviso de tareas en pausa o desde Lanzamientos.</p>}
+      {s.state === "PAUSED" && <p className="mt-2 text-[12px] text-warn">{s.error ?? "En pausa."} Confírmalo desde el aviso de tareas en pausa o desde Lanzamientos: se lanzará al momento.</p>}
       {s.state === "FAILED" && s.error && <p className="mt-2 text-[12px] text-sell">{s.error}</p>}
       <button onClick={() => cancel(view.id)} disabled={!canCancel || busy !== null} className="btn mt-3 h-8 w-full text-[12px]">
         {busy === "schedule" ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <XCircle className="size-3.5" aria-hidden />}

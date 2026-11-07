@@ -51,6 +51,8 @@ type Row = { id: string; status: Status; paused_from: Status | null; config: str
 export const SCHEDULE_MIN_LEAD_MS = 20_000;
 export const SCHEDULE_CANCEL_CUTOFF_MS = 10_000;
 const SCHEDULE_MAX_LEAD_MS = 30 * 86_400_000;
+/** REVIEW-F1 P1-2: pasado este retraso (app cerrada o suspendida, RPC caído) no se lanza sin confirmar. */
+export const SCHEDULE_GRACE_MS = 2 * 60_000;
 type Check = { label: string; kind: "simulated" | "checked" | "setup"; ok: boolean; reason?: string; units?: number; action?: "create-alt" };
 type Stored = LaunchConfig & { uri: string; preflight?: { ok: boolean; checks: Check[]; at: number } };
 
@@ -249,7 +251,7 @@ export class Launches {
     if (r && r.status === "PREPARED" && r.schedule_state === "PAUSED") {
       this.dropPaused(id);
       if ((r.scheduled_at ?? 0) > this.clock()) {
-        this.db().prepare("UPDATE launch SET schedule_state = 'WAITING', updated_at = ? WHERE id = ?").run(this.clock(), id);
+        this.db().prepare("UPDATE launch SET schedule_state = 'WAITING', schedule_error = NULL, updated_at = ? WHERE id = ?").run(this.clock(), id);
         return this.view(id);
       }
       await this.fire(id, true);
@@ -313,16 +315,21 @@ export class Launches {
   }
 
   /** Al bloquear (REQ-VAULT-003) los programados pasan a PAUSED y se listan para confirmar al desbloquear. */
-  pauseScheduled(reason: "lock" | "due-locked") {
-    const rows = this.db().prepare(`SELECT id, config FROM launch WHERE status = 'PREPARED' AND schedule_state = 'WAITING' ${reason === "due-locked" ? "AND scheduled_at <= ?" : ""}`).all(...(reason === "due-locked" ? [this.clock()] : [])) as { id: string; config: string }[];
+  pauseScheduled(reason: "lock" | "due-locked" | "late") {
+    const now = this.clock();
+    const cond = reason === "due-locked" ? "AND scheduled_at <= ?" : reason === "late" ? "AND scheduled_at <= ?" : "";
+    const args = reason === "due-locked" ? [now] : reason === "late" ? [now - SCHEDULE_GRACE_MS] : [];
+    const rows = this.db().prepare(`SELECT id, config, scheduled_at FROM launch WHERE status = 'PREPARED' AND schedule_state = 'WAITING' ${cond}`).all(...args) as { id: string; config: string; scheduled_at: number }[];
     if (!rows.length) return 0;
     const list = JSON.parse(kvGet(this.db(), "paused") ?? "[]") as { id: string; kind: string; label: string }[];
     for (const r of rows) {
-      this.db().prepare("UPDATE launch SET schedule_state = 'PAUSED', updated_at = ? WHERE id = ?").run(this.clock(), r.id);
-      if (!list.some((p) => p.id === r.id)) list.push({ id: r.id, kind: "lanzamiento", label: `Lanzamiento programado de $${(JSON.parse(r.config) as Stored).symbol}` });
+      const why = reason === "late" ? `Llegó con ${Math.round((now - r.scheduled_at) / 60_000)} min de retraso (app cerrada o suspendida, o RPC caído). No se lanza sin confirmar.` : reason === "due-locked" ? "La bóveda estaba bloqueada a la hora programada." : "La bóveda se bloqueó antes de la hora programada.";
+      this.db().prepare("UPDATE launch SET schedule_state = 'PAUSED', schedule_error = ?, updated_at = ? WHERE id = ?").run(why, now, r.id);
+      const symbol = (JSON.parse(r.config) as Stored).symbol;
+      if (!list.some((p) => p.id === r.id)) list.push({ id: r.id, kind: "lanzamiento", label: `Lanzamiento programado de $${symbol}${reason === "late" ? " (llegó tarde)" : ""}` });
     }
     kvSet(this.db(), "paused", JSON.stringify(list));
-    logActivity(this.db(), "launch.schedule.paused", `${rows.length} lanzamientos programados en pausa (${reason === "lock" ? "bloqueo" : "llegó la hora con la bóveda bloqueada"})`);
+    logActivity(this.db(), "launch.schedule.paused", `${rows.length} lanzamientos programados en pausa (${reason === "lock" ? "bloqueo" : reason === "late" ? "llegaron con más de 2 min de retraso" : "llegó la hora con la bóveda bloqueada"})`);
     return rows.length;
   }
 
@@ -338,8 +345,10 @@ export class Launches {
 
   /** Dispara los programados vencidos: con la bóveda bloqueada no se lanza nada y quedan en pausa. */
   async tickSchedule() {
+    // Los que llegan tarde (más de SCHEDULE_GRACE_MS) nunca se lanzan solos, esté la bóveda como esté
+    const late = this.pauseScheduled("late");
     const due = this.db().prepare("SELECT id FROM launch WHERE status = 'PREPARED' AND schedule_state = 'WAITING' AND scheduled_at <= ?").all(this.clock()) as { id: string }[];
-    if (!due.length) return 0;
+    if (!due.length) return late;
     if (!this.vault.isUnlocked()) return this.pauseScheduled("due-locked");
     for (const d of due) await this.fire(d.id, false);
     return due.length;

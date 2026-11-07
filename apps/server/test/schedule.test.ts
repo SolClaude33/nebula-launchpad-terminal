@@ -144,6 +144,30 @@ describe("REQ-LAUNCH-015 · lanzamiento programado", () => {
     await a.app.close();
   });
 
+  it("REVIEW-F1 P1-2 · con más de 2 min de retraso no se lanza solo aunque la bóveda esté abierta: PAUSED con el motivo", async () => {
+    const clock = { now: Date.parse("2026-11-06T12:00:00Z") };
+    const a = await open(tmpDir(), clock);
+    await a.call("POST", "/api/vault/setup", { password: PW, ack: true });
+    const { draftId: id } = await prepare(a, "LATE");
+    const { draftId: ontime } = await prepare(a, "ONTIME");
+    const T = clock.now + MIN;
+    await a.call("POST", `/api/launches/${id}/schedule`, { at: T });
+    await a.call("POST", `/api/launches/${ontime}/schedule`, { at: T + 10 * MIN - 30_000 });
+    // el equipo estuvo suspendido 10 minutos con la bóveda abierta
+    clock.now = T + 10 * MIN;
+    await a.ctx.launches.tickSchedule();
+    const v = (await a.call("GET", `/api/launches/${id}`)).json;
+    expect(v).toMatchObject({ status: "PREPARED", createSignature: null, schedule: { state: "PAUSED" } });
+    expect(v.schedule.error).toMatch(/10 min de retraso/);
+    expect((await a.call("GET", "/api/vault/status")).json.paused).toEqual(expect.arrayContaining([{ id, kind: "lanzamiento", label: "Lanzamiento programado de $LATE (llegó tarde)" }]));
+    // el que llega dentro de la ventana (30 s tarde) sí se lanza
+    expect((await a.ctx.launches.waitIdle(ontime)).status).toBe("DONE");
+    // confirmar = lanzar ahora
+    await a.call("POST", `/api/launches/${id}/resume`, {});
+    expect((await a.ctx.launches.waitIdle(id)).status).toBe("DONE");
+    await a.app.close();
+  });
+
   it("si a su hora el dry-run ya no pasa, queda FAILED con el motivo y no se envía nada", async () => {
     const clock = { now: Date.parse("2026-11-06T12:00:00Z") };
     const a = await open(tmpDir(), clock);
