@@ -24,7 +24,8 @@ export type Draft = {
   devBuy: string;
   /** quick: compras seguidas tras crear · pro: con espera fija por wallet · manual: solo dev */
   launchMode: "quick" | "pro" | "manual";
-  amountMode: "fixed" | "range";
+  /** fixed: el mismo monto · range: rampa fija mín.–máx. · custom: un monto por wallet (paso 3) */
+  amountMode: "fixed" | "range" | "custom";
   fixedAmount: string;
   rangeMin: string;
   rangeMax: string;
@@ -33,6 +34,8 @@ export type Draft = {
   plan: string[];
   /** Modo Pro: segundos de espera antes de la compra de cada wallet (por id), desde la compra anterior */
   delays: Record<string, string>;
+  /** Monto «Por wallet»: SOL de cada wallet (por id); vacío = el monto fijo por defecto */
+  amounts: Record<string, string>;
   /** REQ-LAUNCH-014: Launch Guard (solo modo Quick) */
   guardEnabled: boolean;
   guardSol: string;
@@ -62,6 +65,7 @@ export const emptyDraft = (): Draft => ({
   slippage: "15",
   plan: [],
   delays: {},
+  amounts: {},
   guardEnabled: false,
   guardSol: "1",
   guardSec: "30",
@@ -96,9 +100,13 @@ export const delayTimeline = (d: Draft) => {
   return d.plan.map((id) => (acc += delayOf(d, id) || 0));
 };
 
+/** Texto del monto de una wallet en modo «Por wallet» (si no se ha tocado, el monto fijo por defecto). */
+export const amountText = (d: Pick<Draft, "amounts" | "fixedAmount">, id: string) => d.amounts?.[id] ?? d.fixedAmount;
+
 export function planAmounts(d: Draft): bigint[] {
   if (d.launchMode === "manual") return [];
   if (d.amountMode === "fixed") return d.plan.map(() => toLamports(d.fixedAmount));
+  if (d.amountMode === "custom") return d.plan.map((id) => toLamports(amountText(d, id)));
   const lo = toLamports(d.rangeMin);
   const hi = toLamports(d.rangeMax);
   return d.plan.map((_, i) => lo + ((hi - lo) * BigInt((i * 37) % 100)) / 100n);
@@ -143,6 +151,10 @@ export function fieldErrors(d: Draft) {
     if (d.amountMode === "fixed") {
       const a = num(d.fixedAmount);
       if (Number.isNaN(a) || a <= 0) e.fixedAmount = "Indica un monto mayor que 0.";
+    } else if (d.amountMode === "custom") {
+      const a = num(d.fixedAmount);
+      if (Number.isNaN(a) || a <= 0) e.fixedAmount = "Indica un monto mayor que 0.";
+      if (d.plan.some((id) => !(num(amountText(d, id)) > 0))) e.amounts = "Cada wallet necesita un monto mayor que 0.";
     } else {
       const lo = num(d.rangeMin);
       const hi = num(d.rangeMax);
@@ -168,7 +180,7 @@ export function issues(d: Draft, ctx: { balances: Record<string, bigint>; addres
   else if (d.upload.status !== "done") out.push({ id: "upload", step: 1, field: "image", message: "Sube la imagen." });
   for (const [k, v] of Object.entries(fe)) {
     if (!v) continue;
-    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : k === "delays" ? 3 : 2, field: k, message: v });
+    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : k === "delays" || k === "amounts" ? 3 : 2, field: k, message: v });
   }
   if (!d.devWalletId) out.push({ id: "dev", step: 2, field: "devWallet", message: "Elige la wallet dev." });
   if (!d.feeAck) out.push({ id: "feeAck", step: 2, field: "feeAck", message: "Confirma el destino de las comisiones (irreversible)." });

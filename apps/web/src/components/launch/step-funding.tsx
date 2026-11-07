@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
-import { buysAfterCreate, delayOf, delayTimeline, fieldErrors, fundingNeeds, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fmtLamports } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
@@ -29,10 +29,12 @@ type RowProps = {
   onRemove: () => void;
   /** Modo Pro: espera de esta wallet y segundo acumulado en que compraría (sin contar confirmaciones) */
   pro?: { value: string; at: number; invalid: boolean; onChange: (v: string) => void };
+  /** Monto «Por wallet»: casilla editable en la columna Compra */
+  amountEdit?: { value: string; invalid: boolean; onChange: (v: string) => void };
   cols: string;
 };
 
-function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDragStart, onDrop, onMove, onRemove, pro, cols }: RowProps) {
+function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDragStart, onDrop, onMove, onRemove, pro, amountEdit, cols }: RowProps) {
   return (
     <li
       draggable={!dev}
@@ -77,7 +79,14 @@ function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDr
             <span className="num text-[10.5px] text-faint">{pro.invalid ? "0–600 s" : `≈ T+${pro.at} s`}</span>
           </span>
         ))}
-      <span className="num text-right">{fmtLamports(amount, 3)}</span>
+      {amountEdit ? (
+        <span className="relative justify-self-end">
+          <input aria-label={`SOL de la compra de ${label}`} inputMode="decimal" value={amountEdit.value} onChange={(e) => amountEdit.onChange(e.target.value)} aria-invalid={amountEdit.invalid} className="field num h-7 w-[84px] pr-9 text-right text-[12px]" />
+          <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[10.5px] text-faint">SOL</span>
+        </span>
+      ) : (
+        <span className="num text-right">{fmtLamports(amount, 3)}</span>
+      )}
       <span className="num text-right text-muted">{fmtLamports(have, 3)}</span>
       {shortBy > 0n ? (
         <span className="num text-right text-[12px] text-warn">faltan {fmtLamports(shortBy, 4)}</span>
@@ -109,7 +118,9 @@ export function StepFunding() {
   const cols = isPro ? COLS_PRO : COLS;
   const timeline = delayTimeline(d);
   const [allDelay, setAllDelay] = useState("5");
-  const delayErr = fieldErrors(d).delays;
+  const fe = fieldErrors(d);
+  const delayErr = fe.delays;
+  const custom = buysAfterCreate(d) && d.amountMode === "custom";
   const funders = wallets.filter((w) => w.kind === "funder" && !w.archived);
   const def = funders.find((f) => f.isDefaultFunder);
   const folders = useMemo(() => [...new Set(wallets.flatMap((w) => w.folderIds))], [wallets]);
@@ -138,6 +149,7 @@ export function StepFunding() {
       have: n?.have,
       shortBy: n?.short ?? 0n,
       cols,
+      amountEdit: custom && !dev ? { value: amountText(d, id), invalid: !(num(amountText(d, id)) > 0), onChange: (v) => set({ amounts: { ...d.amounts, [id]: v } }) } : undefined,
       pro: isPro && !dev ? { value: d.delays?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delays: { ...d.delays, [id]: v } }) } : undefined,
       dragging: dragId === id,
       onDragStart: () => setDragId(id),
@@ -241,6 +253,7 @@ export function StepFunding() {
             </ul>
           </div>
         )}
+        {custom && fe.amounts && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.amounts}</p>}
         {isPro && (
           <p className={`border-b border-line px-4 py-2 text-[11.5px] ${delayErr ? "text-sell" : "text-faint"}`}>
             {delayErr ?? "La espera de cada wallet cuenta desde que se confirma la compra anterior (la primera, desde la creación). A cada compra súmale ~1–2 s de confirmación."}

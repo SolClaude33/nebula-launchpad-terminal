@@ -120,7 +120,9 @@ export function Topbar() {
                 <span className="sr-only">para el bloqueo automático. Bloquear ahora.</span>
               </>
             ) : (
-              <span className="text-[12px] text-muted">Bloquear</span>
+              <span className="text-[12px] text-muted">
+                Bloquear<span className="sr-only"> ahora</span>
+              </span>
             )}
           </button>
         </div>

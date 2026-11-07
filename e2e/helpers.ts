@@ -22,7 +22,10 @@ export async function json<T = any>(ctx: APIRequestContext, method: "GET" | "POS
 export async function unlockUi(page: Page, path = "/") {
   // El estado real lo dice la API (la web redirige a /unlock en el cliente, tras leerlo)
   const locked = !(await json(await api(), "GET", "/vault/status")).unlocked;
-  await page.goto(path);
+  // Con la bóveda bloqueada, la redirección a /unlock puede llegar antes del «load» y abortar el goto: es lo esperado
+  await page.goto(path).catch((e: Error) => {
+    if (!locked || !/ERR_ABORTED|interrupted by another navigation/.test(e.message)) throw e;
+  });
   if (locked) {
     await page.waitForURL(/\/unlock/, { timeout: 30_000 });
     await page.getByPlaceholder("••••••••••••").fill(PW);

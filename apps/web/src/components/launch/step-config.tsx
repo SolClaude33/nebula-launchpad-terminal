@@ -106,14 +106,14 @@ export function StepConfig() {
         {buysAfterCreate(d) && (
           <div className="mt-3 grid grid-cols-[auto_1fr] items-start gap-4 rounded-[var(--radius-md)] border border-line bg-surface-1 p-4">
             <div role="radiogroup" aria-label="Monto por wallet" className="flex rounded-[var(--radius-sm)] border border-line bg-surface-2 p-0.5">
-              {(["fixed", "range"] as const).map((m) => (
+              {(["fixed", "range", "custom"] as const).map((m) => (
                 <button key={m} role="radio" aria-checked={d.amountMode === m} onClick={() => set({ amountMode: m })} className={`h-8 rounded-[6px] px-3 text-[12.5px] ${d.amountMode === m ? "bg-surface-3 text-fg" : "text-muted hover:text-fg"}`}>
-                  {m === "fixed" ? "Monto fijo" : "Rango"}
+                  {m === "fixed" ? "Monto fijo" : m === "range" ? "Rango" : "Por wallet"}
                 </button>
               ))}
             </div>
-            {d.amountMode === "fixed" ? (
-              <Field id="fixedAmount" label="SOL por wallet" error={fe.fixedAmount}>
+            {d.amountMode !== "range" ? (
+              <Field id="fixedAmount" label={d.amountMode === "custom" ? "SOL por defecto" : "SOL por wallet"} error={fe.fixedAmount} hint={d.amountMode === "custom" ? "Cada wallet nueva empieza con este monto; cámbialo por wallet en el paso 3." : undefined}>
                 <div className="relative max-w-[200px]">
                   <input id="fixedAmount" inputMode="decimal" value={d.fixedAmount} onChange={(e) => set({ fixedAmount: e.target.value })} aria-invalid={!!fe.fixedAmount} className="field num h-9 pr-12" />
                   <Suffix>SOL</Suffix>
