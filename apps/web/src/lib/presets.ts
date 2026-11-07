@@ -15,7 +15,7 @@ export const savePreset = (kind: PresetKind, name: string, data: Record<string, 
 export const deletePreset = (id: string) => api(`/presets/${id}`, { method: "DELETE" });
 
 /** Campos del borrador que forman un preset de lanzamiento (configuración, no identidad del token). */
-const LAUNCH_KEYS = ["mode", "feeMode", "devWalletId", "devBuy", "launchMode", "amountMode", "fixedAmount", "rangeMin", "rangeMax", "slippage", "plan", "delaysMs", "amounts", "guardEnabled", "guardSol", "guardSec", "guardWhitelist"] as const;
+const LAUNCH_KEYS = ["mode", "feeMode", "devWalletId", "devBuy", "launchMode", "amountMode", "fixedAmount", "rangeMin", "rangeMax", "slippage", "plan", "bundle", "delaysMs", "amounts", "guardEnabled", "guardSol", "guardSec", "guardWhitelist"] as const;
 
 export const launchPresetFrom = (d: Draft) => Object.fromEntries(LAUNCH_KEYS.map((k) => [k, d[k]])) as Record<string, unknown>;
 
@@ -34,10 +34,11 @@ export const REVIEW_LABEL: Record<ReviewItem, { label: string; step: 2 | 3 }> = 
 export function applyLaunchPreset(d: Draft, data: Record<string, unknown>, activeWalletIds: Set<string>) {
   const patch: Partial<Draft> = {};
   for (const k of LAUNCH_KEYS) if (k in data) (patch as Record<string, unknown>)[k] = data[k];
-  const plan = Array.isArray(patch.plan) ? (patch.plan as string[]).filter((id) => activeWalletIds.has(id)) : d.plan;
-  const dropped = Array.isArray(patch.plan) ? (patch.plan as string[]).length - plan.length : 0;
   const dev = typeof patch.devWalletId === "string" && activeWalletIds.has(patch.devWalletId) ? patch.devWalletId : "";
-  const keep = <T,>(m: unknown) => Object.fromEntries(Object.entries((m as Record<string, T>) ?? {}).filter(([id]) => plan.includes(id))) as Record<string, T>;
+  const bundle = (Array.isArray(patch.bundle) ? (patch.bundle as string[]) : d.bundle ?? []).filter((id) => activeWalletIds.has(id) && id !== dev);
+  const plan = (Array.isArray(patch.plan) ? (patch.plan as string[]) : d.plan).filter((id) => activeWalletIds.has(id) && id !== dev && !bundle.includes(id));
+  const dropped = (Array.isArray(patch.plan) ? (patch.plan as string[]).length : d.plan.length) - plan.length;
+  const keep = <T,>(m: unknown) => Object.fromEntries(Object.entries((m as Record<string, T>) ?? {}).filter(([id]) => plan.includes(id) || bundle.includes(id))) as Record<string, T>;
   const review: ReviewItem[] = ["devWallet", "feeAck", ...((patch.launchMode ?? d.launchMode) !== "manual" ? (["plan"] as const) : [])];
-  return { patch: { ...patch, plan, devWalletId: dev, delaysMs: keep<string>(patch.delaysMs), amounts: keep<string>(patch.amounts), feeAck: false, review }, dropped, devMissing: !!data.devWalletId && !dev };
+  return { patch: { ...patch, plan, bundle, devWalletId: dev, delaysMs: keep<string>(patch.delaysMs), amounts: keep<string>(patch.amounts), feeAck: false, review }, dropped, devMissing: !!data.devWalletId && !dev };
 }

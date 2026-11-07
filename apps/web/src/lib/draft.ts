@@ -30,8 +30,10 @@ export type Draft = {
   rangeMin: string;
   rangeMax: string;
   slippage: string;
-  /** wallets holder del plan, en orden de compra */
+  /** wallets holder del plan, en orden de compra. Es el snipe: compra después del bundle. */
   plan: string[];
+  /** wallets cuya compra entra en el bundle atómico con la creación (Jito, máximo 4: la creación ocupa una de 5) */
+  bundle: string[];
   /** Modo Pro: milisegundos de espera antes de la compra de cada wallet (por id), desde la compra anterior */
   delaysMs: Record<string, string>;
   /** Monto «Por wallet»: SOL de cada wallet (por id); vacío = el monto fijo por defecto */
@@ -66,6 +68,7 @@ export const emptyDraft = (): Draft => ({
   rangeMax: "0,3",
   slippage: "15",
   plan: [],
+  bundle: [],
   delaysMs: {},
   amounts: {},
   review: [],
@@ -83,6 +86,9 @@ export const toLamports = (s: string) => {
   const v = num(s);
   return Number.isNaN(v) || v < 0 ? 0n : BigInt(Math.round(v * 1e9));
 };
+
+/** Jito admite 5 transacciones por bundle; la creación ocupa una (docs.jito.wtf). */
+export const MAX_BUNDLE_BUYS = 4;
 
 /** Monto de cada holder del plan (determinista dentro del rango para que la vista previa sea estable). */
 /** Quick y Pro compran con las wallets del plan tras crear el token. */
@@ -112,13 +118,21 @@ export const delayTimeline = (d: Draft) => {
 /** Texto del monto de una wallet en modo «Por wallet» (si no se ha tocado, el monto fijo por defecto). */
 export const amountText = (d: Pick<Draft, "amounts" | "fixedAmount">, id: string) => d.amounts?.[id] ?? d.fixedAmount;
 
-export function planAmounts(d: Draft): bigint[] {
+export function listAmounts(d: Draft, ids: string[]): bigint[] {
   if (d.launchMode === "manual") return [];
-  if (d.amountMode === "fixed") return d.plan.map(() => toLamports(d.fixedAmount));
-  if (d.amountMode === "custom") return d.plan.map((id) => toLamports(amountText(d, id)));
+  if (d.amountMode === "fixed") return ids.map(() => toLamports(d.fixedAmount));
+  if (d.amountMode === "custom") return ids.map((id) => toLamports(amountText(d, id)));
   const lo = toLamports(d.rangeMin);
   const hi = toLamports(d.rangeMax);
-  return d.plan.map((_, i) => lo + ((hi - lo) * BigInt((i * 37) % 100)) / 100n);
+  return ids.map((_, i) => lo + ((hi - lo) * BigInt((i * 37) % 100)) / 100n);
+}
+
+export function planAmounts(d: Draft): bigint[] {
+  return listAmounts(d, d.plan);
+}
+
+export function bundleAmounts(d: Draft): bigint[] {
+  return listAmounts(d, d.bundle ?? []);
 }
 
 // ── Validación ─────────────────────────────────────────────────────
@@ -156,14 +170,19 @@ export function fieldErrors(d: Draft) {
   const slip = num(d.slippage);
   if (Number.isNaN(slip) || slip < 0.1 || slip > 50) e.slippage = "Entre 0,1 % y 50 %.";
   if (d.launchMode === "pro" && d.plan.some((id) => Number.isNaN(delayOf(d, id)))) e.delays = "Espera: milisegundos enteros entre 0 y 10.000 (10 s).";
+  const bundle = d.bundle ?? [];
+  const overlap = bundle.filter((id) => id === d.devWalletId || d.plan.includes(id));
+  if (overlap.length) e.overlap = "Una wallet no puede estar en el bundle y en el snipe, ni ser la dev.";
+  if (bundle.length > MAX_BUNDLE_BUYS) e.bundle = `Jito admite 5 transacciones por bundle y la creación ocupa una: como máximo ${MAX_BUNDLE_BUYS} compras.`;
   if (buysAfterCreate(d)) {
+    const ids = [...bundle, ...d.plan];
     if (d.amountMode === "fixed") {
       const a = num(d.fixedAmount);
       if (Number.isNaN(a) || a <= 0) e.fixedAmount = "Indica un monto mayor que 0.";
     } else if (d.amountMode === "custom") {
       const a = num(d.fixedAmount);
       if (Number.isNaN(a) || a <= 0) e.fixedAmount = "Indica un monto mayor que 0.";
-      if (d.plan.some((id) => !(num(amountText(d, id)) > 0))) e.amounts = "Cada wallet necesita un monto mayor que 0.";
+      if (ids.some((id) => !(num(amountText(d, id)) > 0))) e.amounts = "Cada wallet del bundle y del snipe necesita un monto mayor que 0.";
     } else {
       const lo = num(d.rangeMin);
       const hi = num(d.rangeMax);
@@ -189,35 +208,34 @@ export function issues(d: Draft, ctx: FundingCtx): Issue[] {
   else if (d.upload.status !== "done") out.push({ id: "upload", step: 1, field: "image", message: "Sube la imagen." });
   for (const [k, v] of Object.entries(fe)) {
     if (!v) continue;
-    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : k === "delays" || k === "amounts" ? 3 : 2, field: k, message: v });
+    out.push({ id: `fe-${k}`, step: ["name", "symbol", "description", "x", "telegram", "web"].includes(k) ? 1 : k === "delays" || k === "amounts" || k === "overlap" || k === "bundle" ? 3 : 2, field: k, message: v });
   }
   if (!d.devWalletId) out.push({ id: "dev", step: 2, field: "devWallet", message: "Elige la wallet dev." });
   if (!d.feeAck) out.push({ id: "feeAck", step: 2, field: "feeAck", message: "Confirma el destino de las comisiones (irreversible)." });
-  if (buysAfterCreate(d) && d.plan.length === 0) out.push({ id: "plan", step: 3, field: "plan", message: "Añade al menos una wallet holder o usa el modo Manual." });
+  if (buysAfterCreate(d) && d.plan.length + (d.bundle ?? []).length === 0) out.push({ id: "plan", step: 3, field: "plan", message: "Añade al menos una wallet al bundle o al snipe, o usa el modo Manual." });
+  if ((d.bundle ?? []).length > 0 && !(ctx.tipLamports && ctx.tipLamports > 0n)) out.push({ id: "bundle-jito", step: 3, field: "bundle", message: "El bundle necesita Jito activado, con propina de al menos 1.000 lamports. Sin eso no se lanza." });
+  if ((d.bundle ?? []).length > 0 && ctx.bundleTransport === "unavailable" && (ctx.tipLamports ?? 0n) > 0n) out.push({ id: "bundle-transport", step: 3, field: "bundle", message: "Este perfil no llama al Block Engine. El bundle no se envía por el RPC porque no sería atómico." });
   const short = fundingNeeds(d, ctx).filter((n) => n.short > 0n).length;
   if (short > 0) out.push({ id: "funding", step: 3, field: "funding", message: `${short} wallets sin saldo suficiente. Financia desde el funder.` });
   return out;
 }
 
 /** `tipLamports`: propina de Jito por transacción (0 sin Jito): la creación y cada compra llevan una. */
-export type FundingCtx = { balances: Record<string, bigint>; addressOf: (id: string) => string | undefined; tipLamports?: bigint };
+export type FundingCtx = { balances: Record<string, bigint>; addressOf: (id: string) => string | undefined; tipLamports?: bigint; bundleTransport?: "block-engine" | "mock" | "unavailable" };
 
 export function fundingNeeds(d: Draft, ctx: FundingCtx) {
   const tip = ctx.tipLamports ?? 0n;
   const out: { walletId: string; need: bigint; have: bigint; short: bigint; dev: boolean }[] = [];
-  if (d.devWalletId) {
-    const a = ctx.addressOf(d.devWalletId);
-    const need = toLamports(d.devBuy) + DEV_BUFFER + tip;
+  const bundle = buysAfterCreate(d) ? (d.bundle ?? []) : [];
+  const bAmounts = bundleAmounts(d);
+  const push = (walletId: string, need: bigint, dev: boolean) => {
+    const a = ctx.addressOf(walletId);
     const have = a ? (ctx.balances[a] ?? 0n) : 0n;
-    out.push({ walletId: d.devWalletId, need, have, short: need > have ? need - have : 0n, dev: true });
-  }
-  planAmounts(d).forEach((l, i) => {
-    const id = d.plan[i];
-    const a = ctx.addressOf(id);
-    const need = l + HOLDER_BUFFER + tip;
-    const have = a ? (ctx.balances[a] ?? 0n) : 0n;
-    out.push({ walletId: id, need, have, short: need > have ? need - have : 0n, dev: false });
-  });
+    out.push({ walletId, need, have, short: need > have ? need - have : 0n, dev });
+  };
+  if (d.devWalletId) push(d.devWalletId, toLamports(d.devBuy) + DEV_BUFFER + (bundle.length ? 0n : tip), true);
+  bAmounts.forEach((l, i) => push(bundle[i], l + HOLDER_BUFFER + (i === bAmounts.length - 1 ? tip : 0n), false));
+  planAmounts(d).forEach((l, i) => push(d.plan[i], l + HOLDER_BUFFER + tip, false));
   return out;
 }
 
@@ -236,6 +254,7 @@ export function toConfig(d: Draft) {
     devWalletId: d.devWalletId,
     devBuyLamports: toLamports(d.devBuy).toString(),
     mode: d.launchMode,
+    bundle: buysAfterCreate(d) ? (d.bundle ?? []).map((id, i) => ({ walletId: id, lamports: bundleAmounts(d)[i].toString() })) : [],
     holders: buysAfterCreate(d) ? d.plan.map((id, i) => ({ walletId: id, lamports: amounts[i].toString(), delayMs: delayOf(d, id) || 0 })) : [],
     slippagePct: num(d.slippage),
     mayhem: d.mode === "mayhem",
@@ -268,7 +287,8 @@ let loadSeq = 0;
 const revive = (data: Partial<Draft>, id: string): Draft => {
   // Una subida en curso no sobrevive a un cierre
   const upload = data.upload?.status === "uploading" ? { status: "idle" as const, progress: 0 } : data.upload;
-  return { ...emptyDraft(), ...data, draftId: id, upload: upload ?? { status: "idle", progress: 0 } };
+  const bundle = Array.isArray(data.bundle) ? data.bundle.filter((id) => typeof id === "string") : [];
+  return { ...emptyDraft(), ...data, draftId: id, bundle, upload: upload ?? { status: "idle", progress: 0 } };
 };
 
 /** Lo que se guarda: la vista previa solo si es una imagen pequeña (un vídeo se vuelve a elegir). */
@@ -318,7 +338,7 @@ export const useDraft = create<DraftStore>((set, get) => ({
       const touched = new Set<string>();
       if ("devWalletId" in p) touched.add("devWallet");
       if ("feeAck" in p) touched.add("feeAck");
-      if (["plan", "delaysMs", "amounts", "amountMode", "fixedAmount", "rangeMin", "rangeMax"].some((k) => k in p)) touched.add("plan");
+      if (["plan", "bundle", "delaysMs", "amounts", "amountMode", "fixedAmount", "rangeMin", "rangeMax"].some((k) => k in p)) touched.add("plan");
       if (touched.size) next.review = next.review.filter((r) => !touched.has(r));
     }
     set({ draft: next, save: "unsaved" });

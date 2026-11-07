@@ -285,6 +285,10 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (reclaim_id, ord)
   );
   `,
+  `
+  -- Bundle de lanzamiento frente a snipe. Las filas anteriores son snipe (compras tras crear).
+  ALTER TABLE launch_buy ADD COLUMN role TEXT NOT NULL DEFAULT 'snipe';
+  `,
 ];
 
 export function openDb(dir: string): DB {

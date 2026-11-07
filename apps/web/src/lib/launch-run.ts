@@ -16,7 +16,8 @@ export type LaunchView = {
   symbol: string;
   mode: "quick" | "pro" | "manual";
   preflight: { ok: boolean; checks: Check[]; at: number } | null;
-  buys: { ord: number; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null; delayMs?: number; sentAt?: number | null; sentAfterMs?: number | null; confirmedAfterMs?: number | null }[];
+  buys: { ord: number; role?: "bundle" | "snipe" | string; walletId: string; label: string; lamports: number; status: "PENDING" | "OK" | "FAILED" | "SKIPPED"; tokens: string | null; signature: string | null; reason: string | null; delayMs?: number; sentAt?: number | null; sentAfterMs?: number | null; confirmedAfterMs?: number | null }[];
+  bundleResult?: { transport: "simulated" | "block-engine"; bundleId: string | null; status: string; message?: string } | null;
   /** REQ-LAUNCH-015: programación activa (esperando, en pausa o fallida a su hora) */
   schedule: { at: number; state: "WAITING" | "PAUSED" | "FAILED"; error: string | null; cancellableUntil: number } | null;
 };

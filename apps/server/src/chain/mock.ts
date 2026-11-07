@@ -59,7 +59,11 @@ export class MockLedger {
   priceShockPct = 0;
   /** retardo artificial por envío (para pausar operaciones a mitad en los tests) */
   sendDelayMs = 0;
+  /** Si está puesto, el bundle falla en esa posición (0 = creación) y se revierte entero. */
+  failBundleAt: number | null = null;
   sent = new Map<string, SendResult>();
+  /** Resultado de un bundle ya aplicado (la misma clave no se vuelve a aplicar). */
+  bundles = new Map<string, { status: "confirmed"; signatures: string[]; bundleId: null; simulated: boolean; tipLamports: bigint }>();
   seq = 0;
   /** transacciones confirmadas, de la más antigua a la más nueva */
   txs: (RawTx & { mentions: Set<string> })[] = [];
@@ -98,6 +102,13 @@ export class MockLedger {
 
   discardEvents() {
     this.events = [];
+  }
+  /** Aparta los eventos del último apply para publicarlos solo si un bundle entero entra. */
+  detachEvents() {
+    return this.events.splice(0);
+  }
+  attachEvents(events: MockEvent[]) {
+    this.events = events;
   }
 
   /** Tras un envío confirmado: lo registra como transacción y avisa a los suscriptores de logs. */
@@ -334,6 +345,32 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       const q = quoteOf(c, pool, "buy", p.lamports, p.slippagePct);
       return { kind: "buy", payer: p.user, signers: [p.user], mint: p.mint, quote: q, payload: { op: "buy", mint: p.mint, user: p.user, tokens: q.amountOut, maxSol: q.limit } satisfies Op };
     },
+    // La curva todavía no existe: se cotiza en una copia, en el mismo orden en que el bundle las aplicará.
+    buildLaunchBundleBuys: async (p) => {
+      const curve: Curve = { ...fresh(), creator: p.creator, mayhem: p.mayhem };
+      const take = (lamports: bigint) => {
+        if (lamports <= 0n) return 0n;
+        const q = quoteOf(curve, undefined, "buy", lamports, p.slippagePct);
+        const cost = MockLedger.costFor(curve, q.amountOut);
+        const net = cost - bpsOf(cost, FEE_BPS);
+        curve.vSol += net;
+        curve.vTok -= q.amountOut;
+        curve.realSol += net;
+        curve.realTok -= q.amountOut;
+        return q;
+      };
+      take(p.devBuyLamports);
+      return p.buys.map((b) => {
+        const q = quoteOf(curve, undefined, "buy", b.lamports, p.slippagePct);
+        const cost = MockLedger.costFor(curve, q.amountOut);
+        const net = cost - bpsOf(cost, FEE_BPS);
+        curve.vSol += net;
+        curve.vTok -= q.amountOut;
+        curve.realSol += net;
+        curve.realTok -= q.amountOut;
+        return { kind: "buy" as const, payer: b.user, signers: [b.user], mint: p.mint, quote: q, payload: { op: "buy", mint: p.mint, user: b.user, tokens: q.amountOut, maxSol: q.limit } satisfies Op };
+      });
+    },
     buildSellTx: async (p) => {
       const { c, pool } = tradable(p.mint);
       const q = quoteOf(c, pool, "sell", p.tokens, p.slippagePct);
@@ -397,7 +434,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
   };
 
   const sender: TxSender = {
-    send: async (tx: PreparedTx, { idempotencyKey, simulateOnly, watch }) => {
+    send: async (tx: PreparedTx, { idempotencyKey, simulateOnly, watch, tipLamports: tipOverride }) => {
       if (ledger.sendDelayMs) await new Promise((r) => setTimeout(r, ledger.sendDelayMs));
       const prev = ledger.sent.get(idempotencyKey);
       if (prev && prev.status === "confirmed") return { ...prev, reused: true };
@@ -409,7 +446,7 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
       if (f === "RPC_DOWN") return { status: "pending", message: "Fallo inyectado: RPC caído (no se envió nada)" };
       if (f) return { status: "failed", code: f, message: `Fallo inyectado: ${f}` };
       // Jito (F2 · bloque 5): la propina va en la misma «tx» que la operación: o entran las dos o ninguna
-      const tip = tipFor(tx.kind, jito());
+      const tip = tipOverride ?? tipFor(tx.kind, jito());
       const snap = () => structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools, burned: ledger.burned });
       const applyWithTip = (): ReturnType<MockLedger["apply"]> => {
         const before = tip > 0n ? snap() : null;
@@ -448,6 +485,67 @@ export function createMockEnv(sign: MessageSigner, ledger = new MockLedger(), pr
           .run(idempotencyKey, tx.kind, res.signature, Number(res.feeLamports ?? 0n), Number(tip), tx.payer, tx.mint ?? null, now, now);
       }
       ledger.sent.set(idempotencyKey, res);
+      return res;
+    },
+    sendBundle: async (items, { bundleKey }) => {
+      const prev = ledger.bundles.get(bundleKey);
+      if (prev?.status === "confirmed") return { ...prev, reused: true };
+      if (items.length < 1 || items.length > 5) return { status: "failed", code: "SIMULATION_FAILED", message: "Un bundle admite de 1 a 5 transacciones." };
+      const cfg = jito();
+      if (!cfg.enabled || cfg.tipLamports < 1000n) return { status: "failed", code: "SIMULATION_FAILED", message: "Sin Jito activo no se simula el bundle. No se ha aplicado nada." };
+      for (const it of items) {
+        const msg = new TextEncoder().encode(`${it.idempotencyKey}:${json(it.tx.payload)}`);
+        for (const s of it.tx.signers) sign(s, msg);
+      }
+      const snap = () => structuredClone({ sol: ledger.sol, tokens: ledger.tokens, curves: ledger.curves, pools: ledger.pools, burned: ledger.burned });
+      const before = snap();
+      const tip = tipFor(items[items.length - 1].tx.kind, cfg);
+      const signatures: string[] = [];
+      const staged: { signature: string; payer: string; fee: bigint; pre: Map<string, bigint>; tip: bigint; key: string; kind: PreparedTx["kind"]; mint: string | undefined; held: ReturnType<MockLedger["detachEvents"]> }[] = [];
+      const restore = () => {
+        Object.assign(ledger, before);
+        ledger.discardEvents();
+      };
+      for (let i = 0; i < items.length; i++) {
+        if (ledger.failBundleAt === i) {
+          ledger.failBundleAt = null;
+          restore();
+          return { status: "failed", code: "SIMULATION_FAILED", message: `Fallo inyectado en la transacción ${i} del bundle. No se aplicó ninguna.` };
+        }
+        const last = i === items.length - 1;
+        const payer = items[i].tx.payer;
+        const pre = new Map(ledger.sol);
+        const r = ledger.apply(items[i].tx.payload as Op, feeOf(items[i].tx));
+        if (!r.ok) {
+          restore();
+          return { status: "failed", code: r.code, message: r.message };
+        }
+        if (last) {
+          if (ledger.balance(payer) < tip) {
+            restore();
+            return { status: "failed", code: "INSUFFICIENT_FUNDS", message: "Saldo insuficiente para la propina única del bundle." };
+          }
+          const to = tipAccountFor(bundleKey).toBase58();
+          ledger.sol.set(payer, ledger.balance(payer) - tip);
+          ledger.sol.set(to, ledger.balance(to) + tip);
+        }
+        const signature = `mock${++ledger.seq}`;
+        signatures.push(signature);
+        staged.push({ signature, payer, fee: r.fee, pre, tip: last ? tip : 0n, key: items[i].idempotencyKey, kind: items[i].tx.kind, mint: items[i].tx.mint, held: ledger.detachEvents() });
+      }
+      const now = Date.now();
+      for (const s of staged) {
+        ledger.attachEvents(s.held);
+        ledger.record(s.signature, s.payer, { fee: s.fee, pre: s.pre });
+        db?.()
+          .prepare(
+            `INSERT INTO tx(idempotency_key, kind, signature, status, fee_lamports, tip_lamports, payer, mint, created_at, updated_at) VALUES(?, ?, ?, 'CONFIRMED', ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(idempotency_key) DO UPDATE SET signature = excluded.signature, status = 'CONFIRMED', fee_lamports = excluded.fee_lamports, tip_lamports = excluded.tip_lamports, updated_at = excluded.updated_at`,
+          )
+          .run(s.key, s.kind, s.signature, Number(s.fee), Number(s.tip), s.payer, s.mint ?? null, now, now);
+      }
+      const res = { status: "confirmed" as const, signatures, bundleId: null, simulated: true, tipLamports: tip };
+      ledger.bundles.set(bundleKey, res);
       return res;
     },
   };

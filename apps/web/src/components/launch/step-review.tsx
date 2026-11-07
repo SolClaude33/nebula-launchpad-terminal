@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CircleDashed, FlaskConical, Loader2, Table2, XCircle } from "lucide-react";
-import { buysAfterCreate, delayTimeline, fmtMs, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { bundleAmounts, buysAfterCreate, delayTimeline, fmtMs, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fingerprint, useLaunchRun } from "@/lib/launch-run";
 import { fmtLamports } from "@/lib/chain";
 import { SectionTitle } from "./ui";
@@ -19,7 +19,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
   const pf = view?.preflight ?? null;
   const launched = view && view.status !== "PREPARED" && view.status !== "FAILED";
   const stale = !!pf && fp !== fingerprint(d) && !launched;
-  const holdersTotal = planAmounts(d).reduce((a, l) => a + l, 0n);
+  const holdersTotal = [...bundleAmounts(d), ...planAmounts(d)].reduce((a, l) => a + l, 0n);
 
   const groups: { title: string; step: number; items: [string, string][] }[] = [
     {
@@ -40,7 +40,7 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
         ["Comisiones", d.feeMode === "creator" ? "Creator Fees" : "Holder Rewards"],
         ["Wallet dev", byId.get(d.devWalletId)?.label ?? "—"],
         ["Dev buy", fmtLamports(toLamports(d.devBuy), 3)],
-        ["Modo", d.launchMode === "quick" ? `Quick · ${d.plan.length} wallets` : d.launchMode === "pro" ? `Pro · ${d.plan.length} wallets · esperas ${fmtMs(delayTimeline(d).at(-1) ?? 0)}` : "Manual"],
+        ["Modo", d.launchMode === "quick" ? `Quick · ${d.bundle?.length ?? 0} bundle · ${d.plan.length} snipe` : d.launchMode === "pro" ? `Pro · ${d.bundle?.length ?? 0} bundle · ${d.plan.length} snipe · esperas ${fmtMs(delayTimeline(d).at(-1) ?? 0)}` : "Manual"],
         ["Slippage", `${d.slippage} %`],
       ],
     },
@@ -49,7 +49,8 @@ export function StepReview({ goto }: { goto: (step: number) => void }) {
       step: 3,
       items: [
         ["Compras holders", fmtLamports(holdersTotal, 3)],
-        ["Transacciones", String(1 + (buysAfterCreate(d) ? d.plan.length : 0))],
+        ["Bundle / snipe", buysAfterCreate(d) ? `${d.bundle?.length ?? 0} / ${d.plan.length}` : "—"],
+        ["Transacciones", String(1 + (buysAfterCreate(d) ? (d.bundle?.length ?? 0) + d.plan.length : 0))],
       ],
     },
   ];

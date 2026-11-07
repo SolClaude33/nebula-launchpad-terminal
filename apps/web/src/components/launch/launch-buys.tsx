@@ -32,7 +32,7 @@ export function buyState(b: Buy, now: number) {
   return { icon: <Clock className="size-3.5 shrink-0 text-muted" aria-hidden />, text: "en cola", short: "en cola", tone: "text-muted" };
 }
 
-export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, "mode" | "buys">; max?: string }) {
+export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, "mode" | "buys" | "bundleResult">; max?: string }) {
   const live = view.buys.some((b) => b.status === "PENDING");
   const now = useNow(live);
   const ok = view.buys.filter((b) => b.status === "OK").length;
@@ -41,6 +41,8 @@ export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, 
       <p className="mt-3 mb-1.5 flex items-center gap-1.5 text-[12px] text-muted">
         {live && <Loader2 className="size-3 animate-spin" aria-hidden />} Compras · {ok}/{view.buys.length}
       </p>
+      {view.bundleResult?.transport === "simulated" && <p className="mb-1.5 text-[11.5px] text-warn">Bundle simulado en local. No se llamó al Block Engine y no hay bundle_id.</p>}
+      {view.bundleResult?.transport === "block-engine" && <p className="num mb-1.5 text-[11.5px] text-faint">{view.bundleResult.bundleId ? `Bundle ${view.bundleResult.bundleId}` : "Bundle enviado al Block Engine"} · {view.bundleResult.status}{view.bundleResult.message ? ` · ${view.bundleResult.message}` : ""}</p>}
       <ul className={`scroll-thin ${max} space-y-1.5 overflow-y-auto`}>
         {view.buys.map((b) => {
           const st = buyState(b, now);
@@ -53,7 +55,9 @@ export function LaunchBuys({ view, max = "max-h-48" }: { view: Pick<LaunchView, 
               </div>
               <div className="num mt-0.5 flex flex-wrap gap-x-2 pl-5.5 text-[11px] text-faint">
                 <span className={st.tone}>{st.text}</span>
-                {view.mode === "pro" && <span>espera {fmtMs(b.delayMs ?? 0)}</span>}
+                {b.role === "bundle" && <span>bundle</span>}
+                {b.role === "snipe" && <span>snipe</span>}
+                {view.mode === "pro" && b.role !== "bundle" && <span>espera {fmtMs(b.delayMs ?? 0)}</span>}
                 {b.sentAfterMs != null && <span title="Envío, en ms desde la confirmación de la creación">salió T+{fmtMs(b.sentAfterMs)}</span>}
                 {b.confirmedAfterMs != null && <span title="Confirmación, en ms desde la confirmación de la creación">confirmó T+{fmtMs(b.confirmedAfterMs)}</span>}
               </div>

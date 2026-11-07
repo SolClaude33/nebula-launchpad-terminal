@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, GripVertical, Landmark, Plus, X } from "lucide-react";
-import { amountText, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fmtMs, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
+import { MAX_BUNDLE_BUYS, amountText, bundleAmounts, buysAfterCreate, delayOf, delayTimeline, fieldErrors, fmtMs, fundingNeeds, num, planAmounts, toLamports, useDraft } from "@/lib/draft";
 import { fmtLamports, useChain, useJitoTip } from "@/lib/chain";
 import { DisperseDialog } from "@/components/wallets/funds-dialogs";
 import { SectionTitle } from "./ui";
@@ -68,8 +68,10 @@ function PlanRow({ i, dev, label, address, amount, have, shortBy, dragging, onDr
         )}
       </span>
       {cols === COLS_PRO &&
-        (dev || !pro ? (
+        (dev ? (
           <span className="num text-right text-[12px] text-muted">T+0 ms</span>
+        ) : !pro ? (
+          <span className="text-right text-[12px] text-muted">en el bundle</span>
         ) : (
           <span className="flex flex-col items-end gap-0.5">
             <span className="relative">
@@ -112,6 +114,8 @@ export function StepFunding() {
   const needs = fundingNeeds(d, { balances, addressOf, tipLamports: jitoTip });
   const byNeed = new Map(needs.map((n) => [n.walletId, n]));
   const amounts = planAmounts(d);
+  const bAmounts = bundleAmounts(d);
+  const bundle = d.bundle ?? [];
   const shortList = needs.filter((n) => n.short > 0n);
   const maxShort = shortList.reduce((a, n) => (n.short > a ? n.short : a), 0n);
   const toSend = shortList.reduce((a, n) => a + n.short, 0n);
@@ -130,18 +134,31 @@ export function StepFunding() {
   const def = funders.find((f) => f.isDefaultFunder);
   const folders = useMemo(() => [...new Set(wallets.flatMap((w) => w.folderIds))], [wallets]);
   const roles = [...new Set(wallets.map((w) => w.role).filter(Boolean))] as string[];
+  const bundleTransport = useChain((s) => s.status?.jito?.bundle);
   const candidates = wallets.filter(
-    (w) => w.kind === "wallet" && !w.archived && w.id !== d.devWalletId && !d.plan.includes(w.id) && (filter === "all" || (filter.startsWith("role:") ? w.role === filter.slice(5) : w.folderIds.includes(filter.slice(7)))),
+    (w) => w.kind === "wallet" && !w.archived && w.id !== d.devWalletId && !d.plan.includes(w.id) && !bundle.includes(w.id) && (filter === "all" || (filter.startsWith("role:") ? w.role === filter.slice(5) : w.folderIds.includes(filter.slice(7)))),
   );
-
-  const move = (from: number, to: number) => {
-    if (to < 0 || to >= d.plan.length) return;
-    const plan = d.plan.slice();
-    const [it] = plan.splice(from, 1);
-    plan.splice(to, 0, it);
-    set({ plan });
+  const addBundle = (ids: string[]) => {
+    const room = Math.max(0, MAX_BUNDLE_BUYS - bundle.length);
+    const next = ids.filter((id) => !bundle.includes(id) && id !== d.devWalletId).slice(0, room);
+    if (!next.length) return;
+    set({ bundle: [...bundle, ...next], plan: d.plan.filter((id) => !next.includes(id)) });
   };
-  const rowProps = (id: string, i: number, dev = false): RowProps => {
+  const addSnipe = (ids: string[]) => {
+    const next = ids.filter((id) => !d.plan.includes(id) && id !== d.devWalletId);
+    if (!next.length) return;
+    set({ plan: [...d.plan, ...next], bundle: bundle.filter((id) => !next.includes(id)) });
+  };
+
+  const moveList = (list: "plan" | "bundle", from: number, to: number) => {
+    const cur = list === "plan" ? d.plan : bundle;
+    if (to < 0 || to >= cur.length) return;
+    const next = cur.slice();
+    const [it] = next.splice(from, 1);
+    next.splice(to, 0, it);
+    set(list === "plan" ? { plan: next } : { bundle: next });
+  };
+  const rowProps = (id: string, i: number, dev = false, list: "plan" | "bundle" = "plan"): RowProps => {
     const w = byId.get(id);
     const n = byNeed.get(id);
     return {
@@ -150,27 +167,27 @@ export function StepFunding() {
       dev,
       label: w?.label,
       address: w?.address,
-      amount: dev ? toLamports(d.devBuy) : amounts[i],
+      amount: dev ? toLamports(d.devBuy) : list === "bundle" ? bAmounts[i] : amounts[i],
       have: n?.have,
       shortBy: n?.short ?? 0n,
       cols,
       amountEdit: custom && !dev ? { value: amountText(d, id), invalid: !(num(amountText(d, id)) > 0), onChange: (v) => set({ amounts: { ...d.amounts, [id]: v } }) } : undefined,
-      pro: isPro && !dev ? { value: d.delaysMs?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delaysMs: { ...d.delaysMs, [id]: v } }) } : undefined,
+      pro: isPro && !dev && list === "plan" ? { value: d.delaysMs?.[id] ?? "", at: timeline[i] ?? 0, invalid: Number.isNaN(delayOf(d, id)), onChange: (v) => set({ delaysMs: { ...d.delaysMs, [id]: v } }) } : undefined,
       dragging: dragId === id,
       onDragStart: () => setDragId(id),
       onDrop: () => {
-        const from = d.plan.indexOf(dragId ?? "");
-        if (from >= 0) move(from, i);
+        const from = (list === "bundle" ? bundle : d.plan).indexOf(dragId ?? "");
+        if (from >= 0) moveList(list, from, i);
         setDragId(null);
       },
-      onMove: (to) => move(i, to),
-      onRemove: () => set({ plan: d.plan.filter((p) => p !== id) }),
+      onMove: (to) => moveList(list, i, to),
+      onRemove: () => set(dev ? {} : bundle.includes(id) ? { bundle: bundle.filter((p) => p !== id) } : { plan: d.plan.filter((p) => p !== id) }),
     };
   };
 
   return (
     <div className="rise">
-      <SectionTitle index="Paso 3 de 4 · Financiación" title="Fondos del plan" body="Cada wallet necesita su compra más fees y su cuenta de token. Lo que falte se dispersa desde el funder." />
+      <SectionTitle index="Paso 3 de 4 · Financiación" title="Fondos del plan" body="El bundle compra en el mismo envío atómico que la creación (Jito, 5 transacciones como máximo). El snipe compra después, cuando ese envío ha aterrizado. Lo que falte se dispersa desde el funder." />
 
       <div className="mb-5 grid grid-cols-3 gap-3">
         <div className="panel p-4">
@@ -193,8 +210,8 @@ export function StepFunding() {
         </div>
         <div className="panel p-4">
           <p className="telemetry">Wallets en el plan</p>
-          <p className="num mt-1.5 text-[20px]">{buysAfterCreate(d) ? d.plan.length : 0}</p>
-          <p className="text-[11.5px] text-faint">{isPro ? `compran en este orden; esperas que suman ${fmtMs(timeline.at(-1) ?? 0)}` : buysAfterCreate(d) ? "compran en este orden tras crear el token" : "modo Manual: solo dev"}</p>
+          <p className="num mt-1.5 text-[20px]">{buysAfterCreate(d) ? bundle.length + d.plan.length : 0}</p>
+          <p className="text-[11.5px] text-faint">{buysAfterCreate(d) ? `${bundle.length} en el bundle · ${d.plan.length} en snipe${isPro ? ` · esperas ${fmtMs(timeline.at(-1) ?? 0)}` : ""}` : "modo Manual: solo dev"}</p>
         </div>
       </div>
 
@@ -241,17 +258,20 @@ export function StepFunding() {
                   </option>
                 ))}
               </select>
-              <button onClick={() => set({ plan: [...d.plan, ...candidates.map((c) => c.id)] })} disabled={candidates.length === 0} className="btn h-8 text-[12.5px]">
-                Añadir las {candidates.length}
+              <button onClick={() => addSnipe(candidates.map((c) => c.id))} disabled={candidates.length === 0} className="btn h-8 text-[12.5px]">
+                Al snipe ({candidates.length})
+              </button>
+              <button onClick={() => addBundle(candidates.map((c) => c.id))} disabled={candidates.length === 0 || bundle.length >= MAX_BUNDLE_BUYS} className="btn h-8 text-[12.5px]">
+                Al bundle
               </button>
             </div>
             <ul className="scroll-thin mt-2 max-h-40 space-y-1 overflow-y-auto">
               {candidates.slice(0, 50).map((c) => (
-                <li key={c.id}>
-                  <button onClick={() => set({ plan: [...d.plan, c.id] })} className="flex w-full items-center justify-between rounded-[var(--radius-sm)] px-2 py-1 text-left text-[12.5px] hover:bg-surface-2">
-                    <span>{c.label}</span>
-                    <span className="num text-faint">{fmtLamports(balances[c.address], 3)}</span>
-                  </button>
+                <li key={c.id} className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-[12.5px] hover:bg-surface-2">
+                  <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                  <span className="num text-faint">{fmtLamports(balances[c.address], 3)}</span>
+                  <button onClick={() => addBundle([c.id])} disabled={bundle.length >= MAX_BUNDLE_BUYS} className="btn h-7 px-2 text-[11.5px]">Bundle</button>
+                  <button onClick={() => addSnipe([c.id])} className="btn h-7 px-2 text-[11.5px]">Snipe</button>
                 </li>
               ))}
               {candidates.length === 0 && <li className="px-2 py-1 text-[12px] text-faint">No hay más wallets con este filtro.</li>}
@@ -259,9 +279,13 @@ export function StepFunding() {
           </div>
         )}
         {custom && fe.amounts && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.amounts}</p>}
+        {fe.overlap && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.overlap}</p>}
+        {fe.bundle && <p className="border-b border-line px-4 py-2 text-[11.5px] text-sell">{fe.bundle}</p>}
+        {bundle.length > 0 && bundleTransport === "unavailable" && <p className="border-b border-line bg-[var(--warn-soft)] px-4 py-2 text-[11.5px] text-warn">Jito no puede enviar este bundle desde el perfil actual. No se sustituye por un envío normal.</p>}
+        {bundle.length > 0 && bundleTransport === "mock" && <p className="border-b border-line px-4 py-2 text-[11.5px] text-faint">En pruebas el bundle se aplica en local y queda marcado como simulado. No sale un bundle_id del Block Engine.</p>}
         {isPro && (
           <p className={`border-b border-line px-4 py-2 text-[11.5px] ${delayErr ? "text-sell" : "text-faint"}`}>
-            {delayErr ?? "La espera de cada wallet cuenta desde que SALE la compra anterior (la primera, desde que se confirma la creación). Las confirmaciones no frenan la siguiente compra."}
+            {delayErr ?? "La espera es solo del snipe: cuenta desde que SALE la compra anterior (la primera, desde que aterriza la creación o el bundle). El bundle no espera."}
           </p>
         )}
         {tooTight && !delayErr && (
@@ -279,8 +303,11 @@ export function StepFunding() {
         </div>
         <ol id="plan">
           {d.devWalletId ? <PlanRow {...rowProps(d.devWalletId, 0, true)} /> : <li className="px-4 py-3 text-[12.5px] text-warn">Elige la wallet dev en el paso 2.</li>}
-          {buysAfterCreate(d) && d.plan.map((id, i) => <PlanRow key={id} {...rowProps(id, i)} />)}
-          {buysAfterCreate(d) && d.plan.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-muted">Añade wallets holder al plan.</li>}
+          {buysAfterCreate(d) && <li className="border-b border-line bg-surface-2/20 px-4 py-2 text-[11.5px] text-muted">Bundle · {bundle.length}/{MAX_BUNDLE_BUYS}. Entran con la creación, en este orden, o no entra ninguna.</li>}
+          {buysAfterCreate(d) && bundle.map((id, i) => <PlanRow key={`b-${id}`} {...rowProps(id, i, false, "bundle")} />)}
+          {buysAfterCreate(d) && <li className="border-b border-line bg-surface-2/20 px-4 py-2 text-[11.5px] text-muted">Snipe · compran después de que el lanzamiento haya aterrizado.</li>}
+          {buysAfterCreate(d) && d.plan.map((id, i) => <PlanRow key={id} {...rowProps(id, i, false, "plan")} />)}
+          {buysAfterCreate(d) && bundle.length + d.plan.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-muted">Añade wallets al bundle, al snipe, o pasa a Manual.</li>}
         </ol>
       </div>
 

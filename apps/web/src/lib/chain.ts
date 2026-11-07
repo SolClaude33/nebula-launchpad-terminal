@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 
 export type ChainStatus = { profile: "test" | "mainnet"; mode: "rpc" | "mock" | "off"; healthy: boolean; host: string | null; latencyMs: number | null; usingBackup: boolean; error: string | null; sendPerSec?: number; jito?: JitoStatus };
 /** F2 · bloque 5: propina de Jito por compra, venta y creación ("0" si está apagado); `simulated` en el perfil de pruebas. */
-export type JitoStatus = { enabled: boolean; tipLamports: string; simulated: boolean };
+export type JitoStatus = { enabled: boolean; tipLamports: string; simulated: boolean; bundle?: "block-engine" | "mock" | "unavailable" };
 
 /** Propina de Jito por transacción (0n si está apagado). */
 export const useJitoTip = () => {

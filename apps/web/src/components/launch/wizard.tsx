@@ -6,7 +6,7 @@ import { ArrowLeft, ArrowRight, Check, RotateCcw, TriangleAlert, X } from "lucid
 import { issues, useDraft } from "@/lib/draft";
 import { applyLaunchPreset, listPresets, REVIEW_LABEL } from "@/lib/presets";
 import { toast } from "@/lib/toast";
-import { useJitoTip } from "@/lib/chain";
+import { useChain, useJitoTip } from "@/lib/chain";
 import { PresetMenu } from "./preset-menu";
 import { useLaunchRun } from "@/lib/launch-run";
 import { useLaunchData } from "./use-launch-data";
@@ -33,6 +33,7 @@ export function LaunchWizard() {
   const loadRun = useLaunchRun((s) => s.load);
   const { balances, addressOf, wallets, loaded } = useLaunchData();
   const jitoTip = useJitoTip();
+  const bundleTransport = useChain((s) => s.status?.jito?.bundle);
   const set = useDraft((s) => s.set);
   const [step, setStep] = useState(1);
 
@@ -90,7 +91,7 @@ export function LaunchWizard() {
       }, 60);
   };
 
-  const all = issues(d, { balances, addressOf, tipLamports: jitoTip });
+  const all = issues(d, { balances, addressOf, tipLamports: jitoTip, bundleTransport });
   const stepIssues = (s: number) => all.filter((i) => i.step === s).length;
 
   if (!hydrated) return <div className="skeleton m-6 h-[70vh]" aria-busy="true" />;

@@ -11,6 +11,7 @@ import { VaultError } from "./signer";
 import type { ChainManager } from "./chain-manager";
 import { assertUriForProfile, type MetadataStore } from "./ipfs";
 import { txFee } from "./chain/fees";
+import { MAX_BUNDLE_BUYS, bundleTransport } from "./chain/jito";
 
 const url = z.string().trim().max(200).refine((v) => v === "" || /^https?:\/\/\S+$/.test(v), "URL completa, con https://");
 export const LaunchConfig = z.object({
@@ -29,6 +30,11 @@ export const LaunchConfig = z.object({
    * desde la creación confirmada). Las confirmaciones no frenan la siguiente compra. Sin aleatoriedad.
    */
   holders: z.array(z.object({ walletId: z.string(), lamports: z.string().regex(/^\d+$/), delayMs: z.number().int().min(0).max(10_000).default(0) })).max(40).default([]),
+  /**
+   * Wallets cuya compra va en el bundle atómico con la creación (Jito, máx. 5 tx: la creación ocupa una).
+   * `holders` es el snipe: compra después, cuando el bundle ha aterrizado. Una wallet no puede estar en los dos.
+   */
+  bundle: z.array(z.object({ walletId: z.string().min(1), lamports: z.string().regex(/^\d+$/) })).max(MAX_BUNDLE_BUYS).default([]),
   slippagePct: z.number().min(0.1).max(50),
   mayhem: z.boolean().default(false),
   feeMode: z.enum(["creator", "holders"]),
@@ -46,8 +52,24 @@ export const LaunchConfig = z.object({
     })
     .nullable()
     .default(null),
+}).superRefine((c, ctx) => {
+  const msg = launchRoleError(c);
+  if (msg) ctx.addIssue({ code: "custom", message: msg });
 });
 export type LaunchConfig = z.infer<typeof LaunchConfig>;
+
+/** Bundle y snipe son listas distintas. El solapamiento, el dev, el monto 0 y el tope de Jito se rechazan aquí. */
+export function launchRoleError(c: { mode: LaunchConfig["mode"]; devWalletId: string; holders: { walletId: string; lamports: string }[]; bundle?: { walletId: string; lamports: string }[] }): string | null {
+  const bundle = c.bundle ?? [];
+  if (c.mode === "manual" && (bundle.length > 0 || c.holders.length > 0)) return "El modo Manual solo crea el token con el dev buy: no admite wallets de bundle ni de snipe.";
+  if (c.mode !== "manual" && bundle.length + c.holders.length === 0) return `El modo ${MODE_LABEL[c.mode]} necesita al menos una wallet en el bundle o en el snipe.`;
+  if (bundle.length > MAX_BUNDLE_BUYS) return `Jito admite 5 transacciones por bundle y la creación ocupa una: como máximo ${MAX_BUNDLE_BUYS} compras en el bundle.`;
+  const ids = [...bundle.map((b) => b.walletId), ...c.holders.map((h) => h.walletId)];
+  if (new Set(ids).size !== ids.length) return "Hay wallets repetidas, o una misma wallet está en el bundle y en el snipe.";
+  if (ids.includes(c.devWalletId)) return "La wallet dev ya compra en la creación: no puede estar también en el bundle ni en el snipe.";
+  if ([...bundle, ...c.holders].some((x) => BigInt(x.lamports) <= 0n)) return "Cada compra del bundle y del snipe tiene que ser mayor que 0.";
+  return null;
+}
 /** Quick y Pro compran con las wallets del plan tras crear el token; Manual solo crea con el dev buy. */
 const buysAfterCreate = (mode: LaunchConfig["mode"]) => mode !== "manual";
 const MODE_LABEL: Record<LaunchConfig["mode"], string> = { quick: "Quick", pro: "Pro", manual: "Manual" };
@@ -124,18 +146,19 @@ export class Launches {
     const created = this.db().prepare("SELECT updated_at FROM tx WHERE idempotency_key = ? AND status = 'CONFIRMED'").get(`launch:${id}:create`) as { updated_at: number } | undefined;
     const buys = (
       this.db()
-        .prepare("SELECT b.ord, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt, t.status AS txStatus, t.updated_at AS txUpdatedAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
-        .all(id) as { ord: number; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null; txStatus: string | null; txUpdatedAt: number | null }[]
+        .prepare("SELECT b.ord, b.role, b.wallet_id AS walletId, w.label, b.lamports, b.status, b.tokens, b.signature, b.reason, t.created_at AS sentAt, t.status AS txStatus, t.updated_at AS txUpdatedAt FROM launch_buy b LEFT JOIN wallet w ON w.id = b.wallet_id LEFT JOIN tx t ON t.idempotency_key = 'launch:' || b.launch_id || ':buy:' || b.wallet_id WHERE b.launch_id = ? ORDER BY b.ord")
+        .all(id) as { ord: number; role: string; walletId: string; label: string | null; lamports: number; status: string; tokens: string | null; signature: string | null; reason: string | null; sentAt: number | null; txStatus: string | null; txUpdatedAt: number | null }[]
     ).map(({ sentAt, txStatus, txUpdatedAt, ...b }) => ({
       ...b,
-      delayMs: cfg.mode === "pro" ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0,
+      delayMs: cfg.mode === "pro" && b.role !== "bundle" ? (cfg.holders.find((h) => h.walletId === b.walletId)?.delayMs ?? 0) : 0,
       // Envío y confirmación reales, en ms desde la confirmación de la creación; `sentAt` (epoch) para la cuenta en vivo
       sentAt: b.status === "PENDING" && txStatus === "SENT" ? sentAt : null,
       sentAfterMs: created && sentAt !== null ? Math.max(0, sentAt - created.updated_at) : null,
       confirmedAfterMs: created && txStatus === "CONFIRMED" && txUpdatedAt !== null ? Math.max(0, txUpdatedAt - created.updated_at) : null,
     }));
     const scheduled = r.scheduled_at !== null && (r.schedule_state === "WAITING" || r.schedule_state === "PAUSED" || r.schedule_state === "FAILED") && r.status === "PREPARED";
-    return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
+    const bundleResult = JSON.parse(kvGet(this.db(), `launch-bundle:${id}`) ?? "null") as { transport: "simulated" | "block-engine"; bundleId: string | null; status: string; message?: string } | null;
+    return { id: r.id, status: r.status, pausedFrom: r.paused_from, mint: r.mint, createSignature: r.create_sig, error: r.error, name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, mode: cfg.mode, preflight: cfg.preflight ?? null, buys, bundleResult, updatedAt: r.updated_at, schedule: scheduled ? { at: r.scheduled_at!, state: r.schedule_state!, error: r.schedule_error, cancellableUntil: r.scheduled_at! - SCHEDULE_CANCEL_CUTOFF_MS } : null };
   }
 
   /** Lanzamientos ya creados en cadena (para abrir su Live Workspace). */
@@ -239,10 +262,9 @@ export class Launches {
     if (existing && !["PREPARED", "FAILED"].includes(existing.status)) return this.view(cfg.draftId);
     const chain = this.chain.get();
     const dev = this.wallet(cfg.devWalletId);
+    const bundle = (cfg.bundle ?? []).map((h) => ({ ...h, w: this.wallet(h.walletId) }));
     const holders = buysAfterCreate(cfg.mode) ? cfg.holders.map((h) => ({ ...h, w: this.wallet(h.walletId) })) : [];
-    if (buysAfterCreate(cfg.mode) && holders.length === 0) throw Object.assign(new Error(`El modo ${MODE_LABEL[cfg.mode]} necesita al menos una wallet holder.`), { statusCode: 400 });
-    if (new Set(holders.map((h) => h.walletId)).size !== holders.length) throw Object.assign(new Error("Hay wallets repetidas en el plan."), { statusCode: 400 });
-    if (holders.some((h) => h.walletId === dev.id)) throw Object.assign(new Error("La wallet dev no puede estar también como holder."), { statusCode: 400 });
+    for (const h of [...bundle, ...holders]) if (h.w.kind !== "wallet") throw Object.assign(new Error(`${h.w.label} no es una wallet operativa.`), { statusCode: 400 });
 
     // Mint: se genera una sola vez por borrador y se sella antes de enviar nada (REQ-LAUNCH-006). Un mint vanity
     // ligado al borrador (vanity.ts) manda mientras la creación no se haya enviado nunca.
@@ -261,13 +283,13 @@ export class Launches {
       checks.push({ label: "Tabla de direcciones de Nébula (una sola vez)", kind: "setup", ok: false, action: "create-alt", reason: `Falta crearla. Cuesta ~${(Number(alt.rentLamports) / 1e9).toFixed(4)} SOL de rent y la paga la wallet dev; se recupera cerrándola en Ajustes cuando ya no vayas a lanzar más.` });
     }
     const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: meta.uri, creator: dev.address, mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
-    const sim = alt.ready ? await chain.sender.send(tx, { idempotencyKey: `launch:${cfg.draftId}:preflight:${Date.now()}`, simulateOnly: true }) : { status: "failed" as const, code: "SIMULATION_FAILED" as const, message: "Se simulará cuando exista la tabla de direcciones." };
-    // F2 · bloque 5: la propina de Jito va dentro de la creación si cabe en 1.232 bytes; si no, la creación sale sin
-    // propina y solo por el RPC (nunca se parte del dev buy). La creación inicializa la curva, así que nadie puede
-    // operar antes que el dev buy: sin Jito solo se pierde latencia, no protección.
+    const transport = bundleTransport(this.chain.jito(), chain.kind === "mock" ? "mock" : "rpc");
+    // Con compras en el bundle la propina única va en la última de esas compras, no en la creación.
+    const sim = alt.ready ? await chain.sender.send(tx, { idempotencyKey: `launch:${cfg.draftId}:preflight:${Date.now()}`, simulateOnly: true, ...(bundle.length ? { tipLamports: 0n } : {}) }) : { status: "failed" as const, code: "SIMULATION_FAILED" as const, message: "Se simulará cuando exista la tabla de direcciones." };
     const wantTip = this.chain.tipFor("create");
-    const tipNote =
-      wantTip === 0n || sim.status !== "simulated"
+    const tipNote = bundle.length
+      ? undefined
+      : wantTip === 0n || sim.status !== "simulated"
         ? undefined
         : (sim.tipLamports ?? 0n) > 0n
           ? `Lleva la propina de Jito (${(Number(sim.tipLamports) / 1e9).toLocaleString("es-ES", { maximumFractionDigits: 9 })} SOL) y sale también por el Block Engine.`
@@ -277,14 +299,31 @@ export class Launches {
         ? { label: "Crear token + dev buy (una sola transacción)", kind: "simulated", ok: true, units: sim.unitsConsumed, ...(tipNote ? { note: tipNote } : {}) }
         : { label: "Crear token + dev buy (una sola transacción)", kind: "simulated", ok: false, reason: sim.status === "failed" || sim.status === "pending" ? sim.message : "La simulación no devolvió resultado" },
     );
-    if (holders.length) {
-      const bal = await chain.reader.balances(holders.map((h) => h.w.address));
+    if (bundle.length) {
+      const blocked = transport === "unavailable";
+      checks.push({
+        label: `Bundle de lanzamiento (${bundle.length} compras + creación)`,
+        kind: "checked",
+        ok: !blocked,
+        ...(blocked
+          ? { reason: this.chain.jito().enabled ? "Este perfil no llama al Block Engine. Un envío por el RPC no sería un bundle atómico, así que no se envía nada." : "El bundle necesita Jito activado en Ajustes, con propina de al menos 1.000 lamports. Sin Block Engine no hay envío atómico y no se lanza por el RPC como si lo fuera." }
+          : { note: transport === "mock" ? "Se aplica atómico en el simulador local. No se llama a sendBundle y no hay bundle_id." : "sendBundle al Block Engine. El bundle_id solo significa que lo recibió; el aterrizaje se comprueba en la cadena." }),
+      });
+    }
+    const spenders = [
+      ...bundle.map((h, i) => ({ ...h, role: "bundle" as const, tip: i === bundle.length - 1 })),
+      ...holders.map((h) => ({ ...h, role: "snipe" as const, tip: true })),
+    ];
+    if (spenders.length) {
+      const bal = await chain.reader.balances(spenders.map((h) => h.w.address));
       const fee = txFee(1, 400_000, this.priority());
       const tip = this.chain.tipFor("buy");
-      for (const h of holders) {
-        const need = BigInt(h.lamports) + fee + tip + ATA_BUFFER;
+      for (const h of spenders) {
+        const paysTip = h.tip && tip > 0n && (h.role === "snipe" || bundle.length > 0);
+        const need = BigInt(h.lamports) + fee + (paysTip ? tip : 0n) + ATA_BUFFER;
         const have = bal.get(h.w.address) ?? 0n;
-        checks.push(have >= need ? { label: `Compra · ${h.w.label}`, kind: "checked", ok: true } : { label: `Compra · ${h.w.label}`, kind: "checked", ok: false, reason: `Saldo insuficiente: tiene ${(Number(have) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (compra + fees${tip ? " + propina Jito" : ""} + cuenta de token)` });
+        const name = h.role === "bundle" ? "Bundle" : "Snipe";
+        checks.push(have >= need ? { label: `${name} · ${h.w.label}`, kind: "checked", ok: true } : { label: `${name} · ${h.w.label}`, kind: "checked", ok: false, reason: `Saldo insuficiente: tiene ${(Number(have) / 1e9).toFixed(4)} SOL y necesita ${(Number(need) / 1e9).toFixed(4)} (compra + fees${paysTip ? " + propina Jito" : ""} + cuenta de token)` });
       }
     }
     const ok = checks.every((c) => c.ok);
@@ -312,16 +351,17 @@ export class Launches {
     if (!cfg.preflight?.ok || r.preflight_fp !== fp(LaunchConfig.parse(cfg), r.mint, this.chain.tipFor("create"))) throw Object.assign(new Error("El dry-run no está en verde para esta configuración (o cambió la propina de Jito). Vuelve a simular."), { statusCode: 409 });
     assertUriForProfile(this.profile, cfg.uri);
     const db = this.db();
+    const bundle = cfg.bundle ?? [];
+    const snipes = buysAfterCreate(cfg.mode) ? cfg.holders : [];
     db.transaction(() => {
       db.prepare("DELETE FROM launch_buy WHERE launch_id = ?").run(id);
-      if (buysAfterCreate(cfg.mode)) {
-        const ins = db.prepare("INSERT INTO launch_buy(launch_id, ord, wallet_id, lamports, status) VALUES(?, ?, ?, ?, 'PENDING')");
-        cfg.holders.forEach((h, i) => ins.run(id, i, h.walletId, Number(h.lamports)));
-      }
+      const ins = db.prepare("INSERT INTO launch_buy(launch_id, ord, wallet_id, lamports, status, role) VALUES(?, ?, ?, ?, 'PENDING', ?)");
+      bundle.forEach((h, i) => ins.run(id, i, h.walletId, Number(h.lamports), "bundle"));
+      snipes.forEach((h, i) => ins.run(id, bundle.length + i, h.walletId, Number(h.lamports), "snipe"));
       // lanzar a mano un programado lo da por disparado (no vuelve a lanzarse a su hora)
       db.prepare("UPDATE launch SET status = 'CREATING', schedule_state = CASE WHEN schedule_state IS NULL THEN NULL ELSE 'FIRED' END, updated_at = ? WHERE id = ?").run(Date.now(), id);
     })();
-    logActivity(db, "launch.start", `Lanzamiento de $${cfg.symbol} (${buysAfterCreate(cfg.mode) ? `${MODE_LABEL[cfg.mode]}, ${cfg.holders.length} holders` : "Manual"}) · mint ${r.mint}`);
+    logActivity(db, "launch.start", `Lanzamiento de $${cfg.symbol} (${buysAfterCreate(cfg.mode) ? `${MODE_LABEL[cfg.mode]}, ${bundle.length} en el bundle, ${snipes.length} en snipe` : "Manual"}) · mint ${r.mint}`);
     void this.run(id);
     return this.view(id);
   }
@@ -500,6 +540,70 @@ export class Launches {
     return rows.length;
   }
 
+  /** Bundle atómico (creación + compras marcadas). El snipe no corre si esto no aterriza entero. */
+  private async submitBundle(id: string, cfg: Stored, devAddress: string): Promise<boolean> {
+    const chain = this.chain.get();
+    const transport = bundleTransport(this.chain.jito(), chain.kind === "mock" ? "mock" : "rpc");
+    const remember = (status: string, bundleId: string | null, message?: string) => kvSet(this.db(), `launch-bundle:${id}`, JSON.stringify({ transport: transport === "mock" ? "simulated" : "block-engine", bundleId, status, message }));
+    if (transport === "unavailable") {
+      const message = "No se puede enviar el bundle con la configuración actual de Jito. No se ha lanzado nada.";
+      remember("failed", null, message);
+      this.set(id, "FAILED", { error: message });
+      this.skipSnipes(id, "El bundle no se envió: el snipe no se dispara.");
+      logActivity(this.db(), "launch.failed", `Lanzamiento de $${cfg.symbol} fallido: ${message}`);
+      return true;
+    }
+    const r = this.row(id)!;
+    const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, creator: devAddress, mint: r.mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
+    const built = await chain.adapter.buildLaunchBundleBuys({ mint: r.mint, creator: devAddress, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders", buys: cfg.bundle.map((b) => ({ user: this.wallet(b.walletId).address, lamports: BigInt(b.lamports) })) });
+    const res = await chain.sender.sendBundle(
+      [{ tx, idempotencyKey: `launch:${id}:create` }, ...cfg.bundle.map((b, i) => ({ tx: built[i], idempotencyKey: `launch:${id}:buy:${b.walletId}` }))],
+      { bundleKey: `launch:${id}:bundle` },
+    );
+    if (res.status === "confirmed") {
+      remember("confirmed", res.bundleId);
+      this.set(id, "CREATED", { create_sig: res.signatures[0] });
+      await this.markBundleBuys(id, r.mint, res.signatures, res.signatures.map(() => true));
+      logActivity(this.db(), "launch.bundle", res.simulated ? `Bundle de $${cfg.symbol} simulado en local: atómico, sin Block Engine y sin bundle_id.` : `Bundle de $${cfg.symbol} aterrizado (${res.bundleId}).`);
+      return false;
+    }
+    if (res.status === "pending") {
+      remember("pending", res.bundleId, res.message);
+      this.pause(id, "CREATING");
+      logActivity(this.db(), "launch.bundle", `Bundle de $${cfg.symbol} pendiente: ${res.message}`);
+      return true;
+    }
+    if (res.status === "partial") {
+      remember("partial", res.bundleId, res.message);
+      this.set(id, "FAILED", { create_sig: res.ok[0] ? res.signatures[0] : undefined, error: res.message });
+      await this.markBundleBuys(id, r.mint, res.signatures, res.ok);
+      this.skipSnipes(id, "El bundle no aterrizó completo: el snipe no se dispara.");
+      logActivity(this.db(), "launch.failed", `Bundle de $${cfg.symbol} a medias: ${res.message}`);
+      return true;
+    }
+    remember("failed", null, res.message);
+    this.set(id, "FAILED", { error: res.message });
+    this.db().prepare("UPDATE launch_buy SET status = 'FAILED', reason = ? WHERE launch_id = ? AND role = 'bundle' AND status = 'PENDING'").run(res.message, id);
+    this.skipSnipes(id, "El bundle no se envió: el snipe no se dispara.");
+    logActivity(this.db(), "launch.failed", `Bundle de $${cfg.symbol} rechazado: ${res.message}`);
+    return true;
+  }
+
+  private async markBundleBuys(id: string, mint: string, signatures: string[], ok: boolean[]) {
+    const rows = this.db().prepare("SELECT ord, wallet_id FROM launch_buy WHERE launch_id = ? AND role = 'bundle' ORDER BY ord").all(id) as { ord: number; wallet_id: string }[];
+    const upd = this.db().prepare("UPDATE launch_buy SET status = ?, tokens = ?, signature = ?, reason = ? WHERE launch_id = ? AND ord = ?");
+    for (let i = 0; i < rows.length; i++) {
+      const sig = signatures[i + 1] ?? null;
+      const good = ok[i + 1] === true;
+      const tokens = good ? (await this.chain.get().reader.tokenBalance(mint, this.wallet(rows[i].wallet_id).address).catch(() => 0n)).toString() : null;
+      upd.run(good ? "OK" : "FAILED", tokens, sig, good ? null : "Esta compra del bundle no se confirmó.", id, rows[i].ord);
+    }
+  }
+
+  private skipSnipes(id: string, why: string) {
+    this.db().prepare("UPDATE launch_buy SET status = 'SKIPPED', reason = ? WHERE launch_id = ? AND role = 'snipe' AND status = 'PENDING'").run(why, id);
+  }
+
   private async run(id: string) {
     if (this.running.has(id)) return;
     this.running.add(id);
@@ -510,8 +614,11 @@ export class Launches {
       const dev = this.wallet(cfg.devWalletId);
 
       if (r.status === "CREATING") {
-        // Tras un reinicio: si el mint ya existe en cadena, la creación ya aterrizó
-        if (await chain.reader.accountExists(r.mint)) this.set(id, "CREATED");
+        const bundle = cfg.bundle ?? [];
+        if (bundle.length) {
+          const stopped = await this.submitBundle(id, cfg, dev.address);
+          if (stopped) return;
+        } else if (await chain.reader.accountExists(r.mint)) this.set(id, "CREATED");
         else {
           await chain.launchAlt.status(); // carga la tabla de direcciones (p. ej. tras un reinicio)
           const tx = await chain.adapter.buildCreateTx({ name: cfg.name, symbol: cfg.symbol, uri: cfg.uri, creator: dev.address, mint: r.mint, devBuyLamports: BigInt(cfg.devBuyLamports), slippagePct: cfg.slippagePct, mayhem: cfg.mayhem, holderReward: cfg.feeMode === "holders" });
@@ -531,7 +638,7 @@ export class Launches {
         r = this.row(id)!;
       }
       if (r.status === "BUYING") {
-        const buys = this.db().prepare("SELECT ord, wallet_id, lamports FROM launch_buy WHERE launch_id = ? AND status = 'PENDING' ORDER BY ord").all(id) as { ord: number; wallet_id: string; lamports: number }[];
+        const buys = this.db().prepare("SELECT ord, wallet_id, lamports FROM launch_buy WHERE launch_id = ? AND status = 'PENDING' AND role = 'snipe' ORDER BY ord").all(id) as { ord: number; wallet_id: string; lamports: number }[];
         const upd = this.db().prepare("UPDATE launch_buy SET status = ?, tokens = ?, signature = ?, reason = ? WHERE launch_id = ? AND ord = ?");
         const guard = cfg.guard ?? null;
         // la ventana del guard empieza al pasar a las compras (justo tras la creación confirmada)
@@ -547,7 +654,7 @@ export class Launches {
           await this.testHooks.beforeBuy?.(id, b.ord);
           // Espera fija (sin aleatoriedad). Se corta si el lanzamiento deja de estar en BUYING (pausa, bloqueo);
           // al reanudar, la espera de la wallet en curso cuenta de nuevo desde ese momento.
-          const delayMs = pro ? (cfg.holders[b.ord]?.delayMs ?? 0) : 0;
+          const delayMs = pro ? (cfg.holders.find((h) => h.walletId === b.wallet_id)?.delayMs ?? 0) : 0;
           if (delayMs > 0) {
             const until = lastStart + delayMs;
             while (Date.now() < until) {
@@ -617,7 +724,7 @@ export class Launches {
         this.set(id, "DONE");
       }
       const v = this.view(id);
-      if (v.status === "DONE") logActivity(this.db(), "launch.done", `Lanzado $${cfg.symbol} · mint ${r.mint}${buysAfterCreate(cfg.mode) ? ` · ${(v.buys as { status: string }[]).filter((b) => b.status === "OK").length}/${cfg.holders.length} compras` : ""}`);
+      if (v.status === "DONE") logActivity(this.db(), "launch.done", `Lanzado $${cfg.symbol} · mint ${r.mint}${v.buys.length ? ` · ${v.buys.filter((b) => b.status === "OK").length}/${v.buys.length} compras` : ""}`);
     } catch (e) {
       const cur = this.row(id);
       if (e instanceof VaultError && e.code === "LOCKED" && cur) this.pause(id, cur.status === "PAUSED" ? "CREATING" : cur.status);
