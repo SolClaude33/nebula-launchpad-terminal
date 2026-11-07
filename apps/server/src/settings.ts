@@ -22,6 +22,9 @@ export const SETTINGS_DEFAULTS: Omit<SettingsDto, "ipfsKeySet" | "rpcKeySet" | "
   keyboardLayout: "qwerty",
   theme: "dark",
   ipfsGateway: "https://ipfs.io/ipfs/",
+  // REVIEW-F1 P1-4: límites del proveedor de RPC (0 = sin límite). Preset Helius Free: 8 y 1.
+  rpcMaxRps: 0,
+  rpcSendPerSec: 0,
 };
 
 export type StoredSettings = typeof SETTINGS_DEFAULTS;

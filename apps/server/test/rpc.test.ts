@@ -70,3 +70,71 @@ describe("Errores transitorios del RPC", () => {
     expect(calls).toBe(3);
   });
 });
+
+describe("REVIEW-F1 P1-4 · límites del proveedor (Helius Free) y 429", () => {
+  // Stub con contadores: getSlot normal; sendTransaction responde 429 las primeras `fail429` veces
+  const mk = async (fail429 = 0) => {
+    const hits: { method: string; at: number }[] = [];
+    const batches: number[] = [];
+    let left = fail429;
+    const srv = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const msgs = JSON.parse(body);
+        const batch = Array.isArray(msgs) ? msgs : [msgs];
+        for (const m of batch) hits.push({ method: m.method, at: Date.now() });
+        batches.push(batch.length);
+        if (batch[0].method === "sendTransaction" && left > 0) {
+          left--;
+          res.statusCode = 429;
+          res.setHeader("content-type", "application/json");
+          return res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32005, message: "Too many requests" }, id: batch[0].id }));
+        }
+        const out = batch.map((m) => ({ jsonrpc: "2.0", id: m.id, result: m.method === "sendTransaction" ? "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYVCJjBRAHtKJQKQMFZkr5abPwnRoSLRp6jg5Yzm2LZ6mjKQtz7yWc" : m.method === "getTransaction" ? null : 4242 }));
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(Array.isArray(msgs) ? out : out[0]));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    return { srv, hits, batches, url: `http://127.0.0.1:${(srv.address() as { port: number }).port}` };
+  };
+
+  it("con 10 peticiones/s, 25 lecturas a la vez tardan ≥ 1,4 s y nunca hay más de 10 en una ventana de 1 s (más la ráfaga inicial)", async () => {
+    const s = await mk();
+    const pool = new RpcPool([{ http: s.url }], 1000, { rps: 10 });
+    const t = Date.now();
+    await Promise.all(Array.from({ length: 25 }, () => pool.run((c) => c.getSlot())));
+    expect(Date.now() - t).toBeGreaterThanOrEqual(1400);
+    const at = s.hits.map((h) => h.at);
+    for (const a of at) expect(at.filter((b) => b > a + 1000 - 1 && b <= a + 2000).length).toBeLessThanOrEqual(11);
+    s.srv.close();
+  });
+
+  it("sendTransaction a 1/s: tres envíos se espacian ≥ 1 s; un 429 al enviar se reintenta con la misma transacción", async () => {
+    const s = await mk(2);
+    const pool = new RpcPool([{ http: s.url }], 1000, { sendRps: 1 });
+    const raw = Buffer.alloc(200, 1);
+    // el 429 lo absorben los reintentos del pool (1 s y 2 s): el tercer intento entra
+    const sig = await pool.run((c) => c.sendRawTransaction(raw, { skipPreflight: true }), { send: true });
+    expect(sig).toMatch(/^5VER/);
+    expect(s.hits.filter((h) => h.method === "sendTransaction")).toHaveLength(3);
+    const t = Date.now();
+    await pool.run((c) => c.sendRawTransaction(raw, { skipPreflight: true }), { send: true });
+    await pool.run((c) => c.sendRawTransaction(raw, { skipPreflight: true }), { send: true });
+    expect(Date.now() - t).toBeGreaterThanOrEqual(1800);
+    s.srv.close();
+  }, 20_000);
+
+  it("un lote de 25 firmas sale en lotes de 10 como máximo (un lote cuenta como N peticiones)", async () => {
+    const s = await mk();
+    const { createChain } = await import("../src/chain");
+    const chain = createChain({ profile: "mainnet", mode: "rpc", endpoints: [{ http: s.url }], db: () => null as never, sign: () => new Uint8Array(), priorityMicroLamports: () => 1, limits: { rps: 100 } });
+    await chain.reader.transactions(Array.from({ length: 25 }, (_, i) => `sig${i}`));
+    chain.stop();
+    // tres lotes: 10 + 10 + 5 getTransaction (cada lote llega en una petición HTTP)
+    expect(s.hits.filter((h) => h.method === "getTransaction")).toHaveLength(25);
+    expect(Math.max(...s.batches)).toBeLessThanOrEqual(10);
+    s.srv.close();
+  });
+});

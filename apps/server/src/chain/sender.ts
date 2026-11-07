@@ -7,7 +7,7 @@ import { txFee } from "./fees";
 import type { DB } from "../db";
 import { VaultError } from "../signer";
 import type { RpcPool } from "./rpc";
-import { isNetworkError } from "./rpc";
+import { isNetworkError, isRateLimited } from "./rpc";
 import type { MessageSigner, PreparedTx, SendErrorCode, SendResult, TxSender } from "./types";
 import type { PumpPayload } from "./pumpfun";
 
@@ -141,8 +141,14 @@ export class SolanaSender implements TxSender {
   private async broadcast(vtx: VersionedTransaction) {
     for (let i = 0; ; i++) {
       try {
-        return await this.pool.run((c) => c.sendRawTransaction(vtx.serialize(), { skipPreflight: true, maxRetries: 3 }));
+        return await this.pool.run((c) => c.sendRawTransaction(vtx.serialize(), { skipPreflight: true, maxRetries: 3 }), { send: true });
       } catch (e) {
+        // REVIEW-F1 P1-4: un 429 significa que el RPC no aceptó la transacción: se reenvía la MISMA
+        // transacción firmada (misma firma: nunca duplica) en vez de dejar la orden pendiente y en pausa
+        if (i < 5 && isRateLimited(e)) {
+          await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+          continue;
+        }
         // Surfpool trae cuentas de mainnet bajo demanda y a veces el RPC público corta la petición
         if (i < 5 && /Failed to fetch accounts from remote/.test(String((e as Error).message))) {
           await new Promise((r) => setTimeout(r, 1500 * (i + 1)));

@@ -21,12 +21,43 @@ export const isTransientRpcError = (e: unknown) => TRANSIENT_ERR.test(String((e 
 
 type Slot = { ep: Endpoint; conn: Connection; healthy: boolean; latencyMs: number | null };
 
+/**
+ * REVIEW-F1 P1-4: límites del proveedor (p. ej. Helius Free: 10 peticiones/s y sendTransaction a 1/s).
+ * 0 o ausente = sin límite. `cost` cuenta las peticiones de un lote JSON-RPC.
+ */
+export type RpcLimits = { rps?: number; sendRps?: number };
+
+/** Cubo de fichas: ráfaga de hasta `rate` y recarga continua; una petición cara deja el saldo en negativo y espera. */
+export class TokenBucket {
+  private tokens: number;
+  private last = Date.now();
+  constructor(private rate: number) {
+    this.tokens = rate;
+  }
+  async take(cost = 1) {
+    if (!this.rate || this.rate <= 0) return;
+    const now = Date.now();
+    this.tokens = Math.min(this.rate, this.tokens + ((now - this.last) / 1000) * this.rate);
+    this.last = now;
+    this.tokens -= cost;
+    if (this.tokens < 0) await new Promise((r) => setTimeout(r, Math.ceil((-this.tokens / this.rate) * 1000)));
+  }
+}
+
+const RATE_LIMITED = /429|Too Many Requests|rate limit|-32005/i;
+export const isRateLimited = (e: unknown) => RATE_LIMITED.test(String((e as Error)?.message ?? e));
+
 export class RpcPool {
   private slots: Slot[];
   private active = 0;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(endpoints: Endpoint[], private timeoutMs = 1200) {
+  private bucket: TokenBucket;
+  private sendBucket: TokenBucket;
+
+  constructor(endpoints: Endpoint[], private timeoutMs = 1200, limits: RpcLimits = {}) {
+    this.bucket = new TokenBucket(limits.rps ?? 0);
+    this.sendBucket = new TokenBucket(limits.sendRps ?? 0);
     const eps = endpoints.filter((e) => e.http);
     if (eps.length === 0) throw new Error("No hay RPC configurado");
     // Cada petición tiene un tiempo máximo: así un RPC colgado no bloquea el failover
@@ -43,6 +74,7 @@ export class RpcPool {
   }
 
   private async probe(s: Slot) {
+    if (s === this.slots[this.active]) await this.bucket.take(1); // el health check también cuenta para el límite
     const t = Date.now();
     try {
       await Promise.race([s.conn.getSlot("processed"), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), this.timeoutMs))]);
@@ -73,19 +105,23 @@ export class RpcPool {
   }
 
   /** Ejecuta `fn` contra el RPC activo; ante un error de red pasa al siguiente endpoint sano y reintenta. */
-  async run<T>(fn: (c: Connection) => Promise<T>): Promise<T> {
+  async run<T>(fn: (c: Connection) => Promise<T>, opts: { cost?: number; send?: boolean } = {}): Promise<T> {
     let lastErr: unknown;
+    const limited = async () => {
+      if (opts.send) await this.sendBucket.take(1);
+      await this.bucket.take(opts.cost ?? 1);
+    };
     for (let attempt = 0; attempt < this.slots.length; attempt++) {
       const s = this.slots[this.active];
       try {
-        return await this.withRetry(() => fn(s.conn));
+        return await this.withRetry(async () => (await limited(), fn(s.conn)));
       } catch (e) {
         if (!isNetworkError(e)) throw e;
         // Con un solo RPC no hay a dónde cambiar: un timeout (p. ej. el fork de Surfpool trayendo cuentas
         // de mainnet) se reintenta una vez en el mismo endpoint antes de marcarlo como caído
         if (this.slots.length === 1 && attempt === 0 && /timeout/i.test(String((e as Error)?.message ?? e))) {
           try {
-            return await this.withRetry(() => fn(s.conn));
+            return await this.withRetry(async () => (await limited(), fn(s.conn)));
           } catch (e2) {
             if (!isNetworkError(e2)) throw e2;
             lastErr = e2;
@@ -109,7 +145,8 @@ export class RpcPool {
         return await fn();
       } catch (e) {
         if (i >= 3 || !isTransientRpcError(e)) throw e;
-        await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+        // un 429 pide esperar más que un error interno
+        await new Promise((r) => setTimeout(r, (isRateLimited(e) ? 1000 : 400) * (i + 1)));
       }
     }
   }

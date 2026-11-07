@@ -96,7 +96,12 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
     },
     transactions: async (sigs) => {
       if (sigs.length === 0) return [];
-      const txs = await pool.run((c) => c.getTransactions(sigs, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }));
+      // Lotes de 10 como máximo: un lote JSON-RPC cuenta como N peticiones para el proveedor (REVIEW-F1 P1-4)
+      const txs: Awaited<ReturnType<import("@solana/web3.js").Connection["getTransactions"]>> = [];
+      for (let i = 0; i < sigs.length; i += 10) {
+        const part = sigs.slice(i, i + 10);
+        txs.push(...(await pool.run((c) => c.getTransactions(part, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }), { cost: part.length })));
+      }
       const out: RawTx[] = [];
       txs.forEach((t, i) => {
         if (!t?.meta) return;
@@ -221,13 +226,13 @@ function rpcReader(pool: RpcPool, profile: Profile): ChainReader {
   };
 }
 
-export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number }): Chain {
+export function createChain(opts: { profile: Profile; mode: "rpc" | "mock"; endpoints: Endpoint[]; db: () => DB; sign: MessageSigner; priorityMicroLamports: () => number; limits?: import("./rpc").RpcLimits }): Chain {
   if (opts.mode === "mock") {
     const env = createMockEnv(opts.sign, undefined, opts.priorityMicroLamports, opts.db);
     return { ...env, kind: "mock", status: () => ({ healthy: true, host: "mock", latencyMs: 0, usingBackup: false, endpoints: 1 }), stop: () => {}, reconcile: async () => 0 };
   }
   assertProfileRpc(opts.profile, opts.endpoints);
-  const pool = new RpcPool(opts.endpoints);
+  const pool = new RpcPool(opts.endpoints, undefined, opts.limits);
   pool.start();
   const sender = new SolanaSender(pool, opts.db, opts.sign, { computeUnitLimit: 400_000, priorityMicroLamports: opts.priorityMicroLamports });
   let rentMin: bigint | null = null;

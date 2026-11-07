@@ -18,7 +18,7 @@ Criterio de salida de F1 (§12): la prueba de humo tiene que pasar. Hay que hace
     - `getProgramAccounts` a 5/s.
     - 5 conexiones WebSocket.
     - 1 M de créditos al mes.
-  - Si una orden multi-wallet choca con el límite (HTTP 429), Nébula reintenta. Aun así, usa el modo **Escalonado** cuando operes con varias wallets en Free.
+  - En Ajustes, pulsa **«Usar el preset Helius Free (8 y 1)»**. Así Nébula limita a 8 peticiones/s y 1 envío/s y no choca con el límite. Si aun así llega un 429 al enviar, reenvía la misma transacción firmada (nunca duplica).
   - Helius corta un WebSocket inactivo a los 10 minutos. Si se cae, el Live sigue sondeando firmas cada 2 s.
   - **Respaldo (opcional):** el RPC público `https://api.mainnet-beta.solana.com`, con WS `wss://api.mainnet-beta.solana.com`. Está muy limitado, pero vale para el failover.
   - Helius también ofrece «Sender» para enviar transacciones, pero exige una propina por transacción. Nébula **no lo usa** en F1: Jito y las propinas quedan para F2.
@@ -52,6 +52,7 @@ Criterio de salida de F1 (§12): la prueba de humo tiene que pasar. Hay que hace
   - Tras guardar, las URL muestran `?api-key={key}` y la clave aparece como «cifrada».
   - El chip de arriba muestra `mainnet.helius-rpc.com` y la latencia en verde.
   - Si el chip dice «Falta la clave del RPC principal», pégala en el campo «Clave del RPC principal».
+  - En el mismo bloque, pulsa **«Usar el preset Helius Free (8 y 1)»** (peticiones/s = 8, envíos/s = 1) y guarda.
 - [ ] Opcional: respaldo con el RPC público (HTTP y WS de arriba). Sin clave.
 - [ ] **Jito** aparece como «próximamente · F2». No hay nada que configurar.
 - [ ] **IPFS.** Pega el JWT de Pinata y pulsa **Probar** («Pinata acepta la clave»). Después, Guardar.

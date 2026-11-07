@@ -94,6 +94,9 @@ export const SettingsDto = z.object({
   theme: z.enum(["dark", "light"]),
   /** Pasarela pública con la que se forman las URI de metadatos (Pinata solo sube). */
   ipfsGateway: z.string().max(200),
+  /** Límites del proveedor de RPC (0 = sin límite). Helius Free: 10 peticiones/s y 1 envío/s. */
+  rpcMaxRps: z.number().int().min(0).max(1000),
+  rpcSendPerSec: z.number().min(0).max(100),
   /** Secretos: el GET solo devuelve si están configurados, nunca el valor. */
   ipfsKeySet: z.boolean(),
   rpcKeySet: z.boolean(),

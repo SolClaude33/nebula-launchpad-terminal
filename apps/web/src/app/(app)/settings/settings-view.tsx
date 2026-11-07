@@ -147,14 +147,23 @@ const wsOk = (v: string) => v === "" || /^wss?:\/\/\S+$/.test(v);
 
 function RpcSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: string) => Promise<boolean> }) {
   const st = useChain((c) => c.status);
-  const [f, setF] = useState({ ph: s.rpcPrimaryHttp, pw: s.rpcPrimaryWs, bh: s.rpcBackupHttp, bw: s.rpcBackupWs, key: "", bkey: "" });
+  const [f, setF] = useState({ ph: s.rpcPrimaryHttp, pw: s.rpcPrimaryWs, bh: s.rpcBackupHttp, bw: s.rpcBackupWs, key: "", bkey: "", rps: String(s.rpcMaxRps), send: String(s.rpcSendPerSec).replace(".", ",") });
   const [busy, setBusy] = useState(false);
-  const errs = { ph: !f.ph ? "Obligatorio" : !httpOk(f.ph) ? "URL http(s):// completa" : null, pw: !wsOk(f.pw) ? "URL ws(s):// completa" : null, bh: !httpOk(f.bh) ? "URL http(s):// completa" : null, bw: !wsOk(f.bw) ? "URL ws(s):// completa" : null };
+  const rps = Number(f.rps);
+  const sendPs = Number(f.send.replace(",", "."));
+  const errs = {
+    ph: !f.ph ? "Obligatorio" : !httpOk(f.ph) ? "URL http(s):// completa" : null,
+    pw: !wsOk(f.pw) ? "URL ws(s):// completa" : null,
+    bh: !httpOk(f.bh) ? "URL http(s):// completa" : null,
+    bw: !wsOk(f.bw) ? "URL ws(s):// completa" : null,
+    rps: Number.isInteger(rps) && rps >= 0 && rps <= 1000 ? null : "Entero de 0 a 1.000",
+    send: Number.isFinite(sendPs) && sendPs >= 0 && sendPs <= 100 ? null : "De 0 a 100",
+  };
   const bad = Object.values(errs).some(Boolean);
-  const dirty = f.ph !== s.rpcPrimaryHttp || f.pw !== s.rpcPrimaryWs || f.bh !== s.rpcBackupHttp || f.bw !== s.rpcBackupWs || f.key !== "" || f.bkey !== "";
+  const dirty = f.ph !== s.rpcPrimaryHttp || f.pw !== s.rpcPrimaryWs || f.bh !== s.rpcBackupHttp || f.bw !== s.rpcBackupWs || f.key !== "" || f.bkey !== "" || rps !== s.rpcMaxRps || sendPs !== s.rpcSendPerSec;
   const submit = async () => {
     setBusy(true);
-    const ok = await save({ rpcPrimaryHttp: f.ph, rpcPrimaryWs: f.pw, rpcBackupHttp: f.bh, rpcBackupWs: f.bw, ...(f.key ? { rpcKey: f.key } : {}), ...(f.bkey ? { rpcBackupKey: f.bkey } : {}) }, "RPC");
+    const ok = await save({ rpcPrimaryHttp: f.ph, rpcPrimaryWs: f.pw, rpcBackupHttp: f.bh, rpcBackupWs: f.bw, rpcMaxRps: rps, rpcSendPerSec: sendPs, ...(f.key ? { rpcKey: f.key } : {}), ...(f.bkey ? { rpcBackupKey: f.bkey } : {}) }, "RPC");
     setBusy(false);
     if (ok) setF((x) => ({ ...x, key: "", bkey: "" }));
   };
@@ -206,6 +215,12 @@ function RpcSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: string
           hint={needsKey(f.ph) ? <>La URL usa <span className="num">{RPC_KEY_PLACEHOLDER}</span>: aquí va la clave.</> : <>Puedes pegar la URL completa del proveedor: la clave se separa sola y la URL queda con <span className="num">{RPC_KEY_PLACEHOLDER}</span>.</>}
         />
         <SecretInput id="rpc-bkey" label="Clave del RPC de respaldo" set={s.rpcBackupKeySet} value={f.bkey} onChange={(v) => setF({ ...f, bkey: v })} onClear={() => save({ rpcBackupKey: "" }, "Clave del RPC de respaldo")} />
+        <Field id="rpc-rps" label="Límite de peticiones por segundo" error={errs.rps} hint="0 = sin límite. Evita los 429 de los planes gratuitos.">
+          <input id="rpc-rps" inputMode="numeric" value={f.rps} onChange={(e) => setF({ ...f, rps: e.target.value.trim() })} className="field num h-9 text-[12.5px]" aria-invalid={!!errs.rps} />
+        </Field>
+        <Field id="rpc-send" label="Envíos de transacciones por segundo" error={errs.send} hint={<>0 = sin límite. Las órdenes multi-wallet se espacian solas.{" "}<button type="button" onClick={() => setF({ ...f, rps: "8", send: "1" })} className="text-accent-b underline-offset-2 hover:underline">Usar el preset Helius Free (8 y 1)</button></>}>
+          <input id="rpc-send" inputMode="decimal" value={f.send} onChange={(e) => setF({ ...f, send: e.target.value.trim() })} className="field num h-9 text-[12.5px]" aria-invalid={!!errs.send} />
+        </Field>
       </div>
       <div className="mt-4 flex items-center justify-between gap-3">
         <p className="text-[11.5px] text-faint">Al guardar se reconecta y se reinician los vigilantes del Live. Con la bóveda bloqueada, un RPC con clave queda desconectado.</p>

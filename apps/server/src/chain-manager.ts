@@ -58,6 +58,7 @@ export class ChainManager {
         db: this.opts.db,
         sign: (a, m) => this.opts.vault.signMessage(a, m),
         priorityMicroLamports: () => this.priority(),
+        limits: { rps: storedSettings(this.opts.db()).rpcMaxRps, sendRps: storedSettings(this.opts.db()).rpcSendPerSec },
       });
       // NFR-TX-005: conciliar lo que quedó en SENT de una ejecución anterior
       this.chain.reconcile().then(
