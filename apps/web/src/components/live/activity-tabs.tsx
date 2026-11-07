@@ -55,7 +55,7 @@ export function ActivityTabs() {
           </span>
         )}
       </div>
-      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} tabIndex={0} className="scroll-thin min-h-0 flex-1 overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent-b">
         {tab === "trades" && <TradesTable onlyOwn={onlyOwn} />}
         {tab === "holders" && <HoldersTable />}
         {tab === "wallets" && <WalletsTable />}

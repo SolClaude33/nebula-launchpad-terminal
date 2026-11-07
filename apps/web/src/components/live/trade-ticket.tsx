@@ -151,17 +151,20 @@ export function TradeTicket() {
         </div>
       </div>
 
-      <dl className="mt-4 space-y-1.5 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 p-3 text-[12px]" aria-busy={!quote && !quoteError}>
+      <div className="mt-4 rounded-[var(--radius-sm)] border border-line bg-surface-2/40 p-3 text-[12px]" aria-busy={!quote && !quoteError}>
+      <dl className="space-y-1.5">
         <Row label={buy ? `Compras (${okCount} × ${fmtSol(lamToSol(lamports), 3)})` : `Recibes aprox. (${okCount} wallets)`} value={c ? fmtSol(lamToSol(c.volume), 4) : "—"} strong />
         <Row label="Fee de red" value={c ? fmtSol(lamToSol(c.network), 6) : "—"} />
         <Row label="Priority fee" value={c ? fmtSol(lamToSol(c.priority), 5) : "—"} />
         {c && BigInt(c.rent) > 0n && <Row label="Rent de cuentas nuevas" value={fmtSol(lamToSol(c.rent), 5)} hint="Cuenta de token y cuentas del programa que crea la primera compra. La de token se recupera al cerrarla vacía." />}
         <Row label={`Fee del pad${quote ? ` (${(quote.padFeeBps / 100).toLocaleString("es-ES")} %)` : ""}`} value={c ? fmtSol(lamToSol(c.padFee), 5) : "—"} hint="La informa el adaptador con las fees reales del programa; ya va incluida en el precio." />
-        <div className="my-1 border-t border-line" />
+      </dl>
+      <dl className="mt-2.5 border-t border-line pt-2.5">
         <Row label={buy ? "Total a gastar" : "Coste de la operación"} value={c ? fmtSol(lamToSol(c.total), 4) : "—"} strong />
+      </dl>
         {skipped.length > 0 && <p className="pt-1 text-[11.5px] text-warn">{skipped.length === 1 ? `${skipped[0].label} se omitirá: ${skipped[0].reason}` : `${skipped.length} wallets se omitirán (saldo o tokens insuficientes).`}</p>}
         {quoteError && <p className="pt-1 text-[11.5px] text-sell">{quoteError}</p>}
-      </dl>
+      </div>
 
       <button
         onClick={submit}

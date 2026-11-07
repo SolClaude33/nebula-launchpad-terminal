@@ -162,8 +162,8 @@ export function LaunchSummary({ goto }: { goto: (step: number, field?: string) =
             <dt className="font-medium">Total aproximado</dt>
             <dd className="num text-[16px] font-medium">{fmtLamports(total, 4)}</dd>
           </div>
-          <p className="text-[11.5px] text-faint">Más el rent de creación (mint y curva) y la priority fee de Ajustes. Fee del pad: {q ? `${(q.padFeeBps / 100).toLocaleString("es-ES")} %` : "—"}, incluida en las compras.</p>
         </dl>
+        <p className="mt-2 text-[11.5px] text-faint">Más el rent de creación (mint y curva) y la priority fee de Ajustes. Fee del pad: {q ? `${(q.padFeeBps / 100).toLocaleString("es-ES")} %` : "—"}, incluida en las compras.</p>
       </div>
 
       <div className="panel p-4">

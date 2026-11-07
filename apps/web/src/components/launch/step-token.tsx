@@ -133,7 +133,7 @@ export function StepToken() {
               </div>
             )}
           </div>
-          <input ref={fileRef} type="file" accept={[...IMG_TYPES, ...VID_TYPES].join(",")} className="sr-only" id="image" onChange={(e) => onFile(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept={[...IMG_TYPES, ...VID_TYPES].join(",")} className="sr-only" id="image" aria-label="Imagen o vídeo del token (JPG, PNG, GIF, WebP, MP4 o WebM)" onChange={(e) => onFile(e.target.files?.[0])} />
           <div aria-live="polite" className="mt-2 space-y-2 text-[12px]">
             {fileError && <p className="text-sell">{fileError}</p>}
             {up.status === "done" && (

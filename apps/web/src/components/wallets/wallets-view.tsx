@@ -321,45 +321,51 @@ function VirtualTable({ list, folders, sel, toggle, allSel, toggleAll, balances,
   const fname = (id: string) => folders.find((f) => f.id === id)?.name ?? "—";
   const cols = "grid-cols-[36px_minmax(120px,1.2fr)_minmax(150px,1.4fr)_96px_minmax(0,1fr)_110px]";
   return (
-    <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
-      <div role="row" className={`grid ${cols} items-center gap-2 border-b border-line bg-surface-1 px-4 py-2`}>
-        <input type="checkbox" checked={allSel} onChange={toggleAll} aria-label="Seleccionar todas las visibles" className="size-3.5 accent-[var(--accent-a)]" />
-        <span className="telemetry">Nombre</span>
-        <span className="telemetry">Dirección</span>
-        <span className="telemetry">Rol</span>
-        <span className="telemetry">Carpetas</span>
-        <span className="telemetry text-right">Saldo</span>
+    <div role="table" aria-label="Wallets" aria-rowcount={list.length + 1} className="flex min-h-0 flex-1 flex-col text-[12.5px]">
+      <div role="row" aria-rowindex={1} className={`grid ${cols} items-center gap-2 border-b border-line bg-surface-1 px-4 py-2`}>
+        <span role="columnheader" className="flex">
+          <input type="checkbox" checked={allSel} onChange={toggleAll} aria-label="Seleccionar todas las visibles" className="size-3.5 accent-[var(--accent-a)]" />
+        </span>
+        <span role="columnheader" className="telemetry">Nombre</span>
+        <span role="columnheader" className="telemetry">Dirección</span>
+        <span role="columnheader" className="telemetry">Rol</span>
+        <span role="columnheader" className="telemetry">Carpetas</span>
+        <span role="columnheader" className="telemetry text-right">Saldo</span>
       </div>
       {list.length === 0 ? (
         <p className="p-8 text-center text-muted">Nada coincide con los filtros.</p>
       ) : (
         <div ref={ref} onScroll={(e) => setTop(e.currentTarget.scrollTop)} className="scroll-thin relative min-h-0 flex-1 overflow-y-auto" role="rowgroup">
-          <div style={{ height: list.length * ROW_H }} className="relative">
+          <div role="presentation" style={{ height: list.length * ROW_H }} className="relative">
             {list.slice(start, end).map((w, i) => {
               const checked = sel.has(w.id);
               return (
                 <div
                   key={w.id}
                   role="row"
-                  aria-selected={checked}
+                  aria-rowindex={start + i + 2}
                   className={`absolute inset-x-0 grid ${cols} items-center gap-2 border-b border-line/50 px-4 transition-colors ${checked ? "bg-[color-mix(in_oklab,var(--accent-a)_9%,transparent)]" : "hover:bg-surface-2/50"} ${w.archived ? "opacity-55" : ""}`}
                   style={{ top: (start + i) * ROW_H, height: ROW_H }}
                 >
-                  <input type="checkbox" checked={checked} onChange={() => toggle(w.id)} aria-label={`Seleccionar ${w.label}`} className="size-3.5 accent-[var(--accent-a)]" />
-                  <span className="flex min-w-0 items-center gap-1.5 truncate font-medium">
+                  <span role="cell" className="flex">
+                    <input type="checkbox" checked={checked} onChange={() => toggle(w.id)} aria-label={`Seleccionar ${w.label}`} className="size-3.5 accent-[var(--accent-a)]" />
+                  </span>
+                  <span role="cell" className="flex min-w-0 items-center gap-1.5 truncate font-medium">
                     {w.isDefaultFunder && <Star className="size-3 shrink-0 fill-warn text-warn" aria-label="predeterminado" />}
                     <span className="truncate">{w.label}</span>
                     {w.archived && <span className="chip h-4 px-1 text-[9.5px]">archivada</span>}
                   </span>
-                  <Address value={w.address} head={5} tail={5} className="text-muted" />
-                  <span>{w.role ? <span className={`chip h-5 px-1.5 text-[10.5px] ${w.role === "dev" ? "border-warn/30 text-warn" : ""}`}>{w.role}</span> : <span className="text-faint">—</span>}</span>
-                  <span className="flex min-w-0 gap-1 overflow-hidden">
+                  <span role="cell" className="min-w-0">
+                    <Address value={w.address} head={5} tail={5} className="text-muted" />
+                  </span>
+                  <span role="cell">{w.role ? <span className={`chip h-5 px-1.5 text-[10.5px] ${w.role === "dev" ? "border-warn/30 text-warn" : ""}`}>{w.role}</span> : <span className="text-faint">—</span>}</span>
+                  <span role="cell" className="flex min-w-0 gap-1 overflow-hidden">
                     {w.folderIds.length ? w.folderIds.map((f) => <span key={f} className="chip h-5 shrink-0 px-1.5 text-[10.5px]">{fname(f)}</span>) : <span className="text-faint">—</span>}
                   </span>
                   {balances[w.address] !== undefined ? (
-                    <span className={`num text-right ${balances[w.address] > 0n ? "text-fg" : "text-faint"}`}>{fmtLamports(balances[w.address], 3)}</span>
+                    <span role="cell" className={`num text-right ${balances[w.address] > 0n ? "text-fg" : "text-faint"}`}>{fmtLamports(balances[w.address], 3)}</span>
                   ) : (
-                    <span className="num text-right text-faint" title={balancesError ?? "Leyendo saldo…"}>
+                    <span role="cell" className="num text-right text-faint" title={balancesError ?? "Leyendo saldo…"}>
                       {balancesError ? "sin RPC" : "conectando…"}
                     </span>
                   )}

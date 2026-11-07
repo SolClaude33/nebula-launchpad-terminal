@@ -202,9 +202,7 @@ export function DashboardView() {
             <Row k="Propinas Jito" v={fmt(-t.jitoLamports)} />
             <Row k="Comisiones reclamadas" v={fmt(t.claimsLamports)} />
             <Row k="Realizado (coste medio)" v={fmt(t.realizedLamports, true)} muted hint="Ventas menos el coste base de lo vendido" />
-            <div className="border-t border-line pt-2">
-              <Row k="P&L" v={fmt(t.pnlLamports, true)} strong hint="Realizado − fees de red − Jito + comisiones" />
-            </div>
+            <Row k="P&L" v={fmt(t.pnlLamports, true)} strong hint="Realizado − fees de red − Jito + comisiones" className="border-t border-line pt-2" />
             <Row k="Posición abierta (al precio actual)" v={fmt(t.unrealizedLamports, true)} muted />
             <Row k="Rent en cuentas (recuperable, aparte)" v={fmt(-t.rentLamports)} muted hint="Cuentas de token y de volumen que crean las compras y la creación del token" />
             <Row k="Trades propios" v={String(t.trades)} muted />
@@ -238,9 +236,9 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
   );
 }
 
-function Row({ k, v, hint, muted, strong }: { k: string; v: string; hint?: string; muted?: boolean; strong?: boolean }) {
+function Row({ k, v, hint, muted, strong, className = "" }: { k: string; v: string; hint?: string; muted?: boolean; strong?: boolean; className?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3" title={hint}>
+    <div className={`flex items-baseline justify-between gap-3 ${className}`} title={hint}>
       <dt className={muted ? "text-faint" : "text-muted"}>{k}</dt>
       <dd className={`num ${strong ? "text-[14px] font-semibold text-fg" : muted ? "text-faint" : "text-fg"}`}>{v}</dd>
     </div>

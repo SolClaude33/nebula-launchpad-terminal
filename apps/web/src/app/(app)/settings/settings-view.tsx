@@ -307,7 +307,7 @@ function TradingSection({ s, save }: { s: SettingsDto; save: (p: Patch, what: st
 /** REQ-SET-001 · Jito: decidido el 2026-11-06 que queda para F2. Hoy no se envía ninguna propina. */
 function JitoSection() {
   return (
-    <section aria-labelledby="jito-t" className="panel p-5 opacity-80">
+    <section aria-labelledby="jito-t" className="panel p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="telemetry">Envíos</p>
