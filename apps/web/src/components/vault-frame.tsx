@@ -61,7 +61,7 @@ export function Wordmark({ sub }: { sub: string }) {
   return (
     <>
       <h1
-        className="rise font-display text-[88px] leading-[0.9] tracking-[-0.02em] italic"
+        className="rise font-display text-[88px] leading-[0.9] tracking-[-0.02em]"
         style={{
           animationDelay: "120ms",
           background: "linear-gradient(180deg, var(--text) 30%, color-mix(in oklab, var(--accent) 70%, var(--text)) 100%)",

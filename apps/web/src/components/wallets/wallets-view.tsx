@@ -120,7 +120,7 @@ export function WalletsView({ kind }: { kind: Kind }) {
       <section aria-label={title} className="panel reticle flex min-h-0 flex-col overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line px-4 py-3">
           <div>
-            <h1 className="font-display text-[26px] leading-none italic">{title}</h1>
+            <h1 className="font-display text-[26px] leading-none">{title}</h1>
             <p className="num mt-1 text-[11.5px] text-faint">
               {ofKind.length} en total · {list.length} visibles · {selected.length} seleccionadas · saldo {fmtLamports(totalLamports, 3)}
             </p>
@@ -386,7 +386,7 @@ function EmptyState({ kind, onCreate, onImport }: { kind: Kind; onCreate: () => 
         <span className="absolute inset-2 rounded-full border border-dashed border-accent-b/40" />
         <KeyRound className="size-6 text-accent" aria-hidden />
       </div>
-      <h2 className="font-display mt-5 text-[26px] italic">{kind === "funder" ? "Aún no hay funder" : "Aún no hay wallets"}</h2>
+      <h2 className="font-display mt-5 text-[26px]">{kind === "funder" ? "Aún no hay funder" : "Aún no hay wallets"}</h2>
       <p className="mt-1.5 max-w-sm text-[13px] text-muted">{kind === "funder" ? "El funder es la wallet desde la que financias las demás. Crea uno o importa una clave existente." : "Crea de 1 a 100 de golpe o importa las que ya tienes. Las claves se cifran en la bóveda al instante."}</p>
       <div className="mt-5 flex gap-2">
         <button onClick={onImport} className="btn h-10 px-4">

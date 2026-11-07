@@ -91,7 +91,7 @@ export function Sidebar() {
           <span className="size-2 rounded-full bg-white/90 shadow-[0_0_8px_white]" />
           <span className="absolute inset-[5px] rounded-full border border-white/40" />
         </span>
-        {!collapsed && <span className="font-display text-[22px] leading-none italic">Nébula</span>}
+        {!collapsed && <span className="font-display text-[22px] leading-none">Nébula</span>}
       </div>
 
       <nav className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-2">

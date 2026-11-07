@@ -82,7 +82,7 @@
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-  --font-display: var(--font-instrument), ui-serif, Georgia, serif;
+  --font-display: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -147,6 +147,12 @@
 }
 
 @layer components {
+  /* Títulos y marca: Geist en seminegrita, sin cursiva (más legible que la serif). */
+  .font-display {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums slashed-zero;

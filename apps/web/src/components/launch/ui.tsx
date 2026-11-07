@@ -85,7 +85,7 @@ export function SectionTitle({ index, title, body }: { index: string; title: str
   return (
     <div className="mb-5">
       <p className="telemetry">{index}</p>
-      <h2 className="font-display mt-1 text-[30px] leading-tight italic">{title}</h2>
+      <h2 className="font-display mt-1 text-[30px] leading-tight">{title}</h2>
       {body && <p className="mt-1 max-w-xl text-[13.5px] text-muted">{body}</p>}
     </div>
   );

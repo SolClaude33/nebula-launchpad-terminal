@@ -17,7 +17,7 @@ export function TokenGlyph({ symbol, size = 52 }: { symbol: string; size?: numbe
     >
       <span className="absolute inset-[18%] rounded-full border border-white/25" />
       <span className="absolute size-[28%] translate-x-[38%] -translate-y-[30%] rounded-full bg-accent-b/80 blur-[1px]" />
-      <span className="font-display relative text-[22px] text-white italic" style={{ fontSize: size * 0.42 }}>
+      <span className="font-display relative text-[22px] text-white" style={{ fontSize: size * 0.42 }}>
         {(symbol[0] ?? "?").toUpperCase()}
       </span>
     </span>

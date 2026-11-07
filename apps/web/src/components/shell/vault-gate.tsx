@@ -54,7 +54,7 @@ function ApiDown({ message }: { message: string }) {
   return (
     <div className="mx-auto mt-24 max-w-md text-center">
       <ServerCrash className="mx-auto size-8 text-warn" aria-hidden />
-      <h2 className="font-display mt-4 text-[28px] italic">API local sin respuesta</h2>
+      <h2 className="font-display mt-4 text-[28px]">API local sin respuesta</h2>
       <p className="mt-2 text-[13.5px] text-muted">{message}</p>
       <p className="mt-4 text-[12.5px] text-faint">
         Arranca todo con <span className="num text-muted">pnpm dev</span> en la raíz del proyecto.
