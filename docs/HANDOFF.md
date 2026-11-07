@@ -2,7 +2,9 @@
 
 Documento para retomar el trabajo en otra sesión. El contexto general está en `AGENTS.md` y en la spec `REQUERIMIENTOS.md`. El historial detallado está en la nota de Obsidian `Projects/Nebula launchpad terminal.md`.
 
-## Estado: F1 completa en el perfil `test`: los 24 E2E en verde. Falta la prueba de humo en mainnet (la hace Nicol con Helius). Jito pasa a F2.
+## Estado: F1 cerrada (2026-11-07, decisión de Nicol). En curso: F2 (`docs/F2.md`).
+
+F1: los 24 E2E en verde en el perfil `test` y prueba de humo en mainnet con $BOB (lanzamiento Pro, compras y reclamo verificados en cadena; no hubo venta desde Nébula). Jito pasa a F2. Nicol piensa contratar Helius Developer (5 envíos/s y conexiones con stake).
 
 Todo está en commits locales, sin push.
 - **F0:** aprobado.
@@ -128,9 +130,7 @@ Nicol lanzó $BOB (mint `BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`, modo Pro
 
 ## Próximo paso
 
-1. **Nicol:** ejecutar la prueba de humo en mainnet con `docs/SMOKE-MAINNET.md` (Helius Free + Pinata) y devolver las firmas y los costes mostrados. Claude los verificará en solo lectura.
-   En el paso 2 de la checklist, pulsa «Usar el preset Helius Free (8 y 1)» antes de guardar el RPC.
-2. Con la prueba de humo superada se cumple el criterio de salida de F1 (§12) y se puede pasar a F2: Jito, más pads, ladder/trailing y presets.
+F2, por bloques, según `docs/F2.md`. Cuando Nicol contrate Helius Developer: en Ajustes, peticiones/s 40–50 y envíos/s 5 (hay que añadir ese preset).
 
 ## Decisiones pendientes de Nicol
 

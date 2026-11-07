@@ -8,7 +8,7 @@ Cada escenario se ejecuta en el perfil `test` y vive en uno o varios de estos si
 | **API · Surfpool** | `pnpm test:chain` | El mismo test contra un fork local de mainnet |
 | **UI** | `pnpm test:e2e` | Playwright en el Edge del sistema contra la app real y Surfpool. El lanzador (`scripts/e2e.mjs`) gestiona los datos temporales, Surfpool y la API (control en 4390). |
 
-Estado: ✅ verde · ⏳ pendiente (solo la prueba de humo en mainnet, que ejecuta Nicol).
+Estado: ✅ verde. F1 cerrada el 2026-11-07 por decisión de Nicol (ver la fila de la prueba de humo).
 
 ## Última ejecución (2026-11-07)
 
@@ -82,10 +82,10 @@ Medido con `pnpm build && node scripts/js-budget.mjs`: build de producción y Ed
 | E2E-22 | Copia y restauración | API: `vault.test.ts`, `backups.test.ts` (también una copia automática, y la purga de copias al cambiar la contraseña — REVIEW-F1 P1-5) | ✅ |
 | E2E-23 | Dashboard | API · mock + Surfpool: `dashboard.test.ts` · UI: `04-live` | ✅ |
 | E2E-24 | Accesibilidad (axe a 1024 y 1440) | UI: `05-a11y`, 11 rutas + /unlock | ✅ |
-| — | Prueba de humo en mainnet (Helius) | Manual, la ejecuta Nicol: `docs/SMOKE-MAINNET.md` | ⏳ |
+| — | Prueba de humo en mainnet (Helius) | Manual, la ejecutó Nicol el 2026-11-07 con $BOB (`BD2sP62o5227iMQVdAnxVdQA99onA4DSTZJh82prqTac`). Verificado en cadena (solo lectura): creación + dev buy en una sola tx, 2 compras Pro, reclamo de comisiones (`CollectCreatorFee`, +0,00885 SOL netos a la dev) y 2 transferencias. **No se hizo una venta desde Nébula** (la venta está cubierta por E2E-11 y `test:chain`). | ✅ parcial |
 | — | Presupuesto de JS (§8.6) | `scripts/js-budget.mjs`: máximo 216,8 KB de 300 | ✅ |
 
-**Criterio de salida de F1 (§12):** los 24 escenarios E2E están en verde en el perfil `test`. Falta solo la prueba de humo en mainnet, que ejecuta Nicol.
+**Criterio de salida de F1 (§12):** los 24 escenarios E2E están en verde en el perfil `test` y la prueba de humo en mainnet se hizo (sin venta). Nicol dio F1 por cerrada el 2026-11-07.
 
 ## Cómo repetirlo
 
